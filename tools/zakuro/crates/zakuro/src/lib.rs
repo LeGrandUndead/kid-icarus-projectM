@@ -13,6 +13,7 @@ mod menus;
 mod present;
 mod pc_presentation;
 mod ram_snapshot;
+mod kiu_jump;
 mod recompile;
 mod report;
 mod settings;
@@ -116,6 +117,7 @@ pub fn run(linked: Option<Linked>) {
         resize_after_full_screen: false,
         land_publications: 0,
         land_seen: None,
+        space_jump: kiu_jump::SpaceJump::default(),
     };
 
     if let Some(frames) = app.options.headless {
@@ -377,6 +379,8 @@ struct App {
     /// counter and the last frame land gameplay (or the Power Palette) was seen.
     land_publications: u64,
     land_seen: Option<u64>,
+    /// KIU: Space uses the equipped Sky Jump (kiu_jump.rs).
+    space_jump: kiu_jump::SpaceJump,
 }
 
 /// how long each step of the loop took, its mean and its longest.
@@ -734,6 +738,10 @@ impl App {
         // gets through even if the menu opened meanwhile.
         let pointer_menu = self.presentation.enabled && self.presentation.context(self.mouse_captured, !to_game) == pc_presentation::InputContext::PointerMenu;
         if self.presentation.enabled && event.repeat { return; }
+        if self.pc_controls && self.mouse_captured && to_game && code == self.settings.keys.pc_jump && self.settings.kiu_space_jump {
+            if pressed && !event.repeat { self.space_jump.request(); }
+            return;
+        }
         let pc_key = self.pc_controls && !pointer_menu && (to_game || !pressed) && self.keyboard.pc_key(event.physical_key, pressed);
         if !pc_key && (to_game || !pressed) {
             self.keyboard.key(event.physical_key, pressed);
@@ -1120,7 +1128,7 @@ impl App {
         const LAND_GRACE: u64 = 20;
         let on_land = self.land_seen.is_some_and(|seen| game.frame.saturating_sub(seen) <= LAND_GRACE);
         self.keyboard.set_wheel_allowed(self.settings.kiu_wheel_powers && on_land);
-        let input = match &mut game.replay {
+        let mut input = match &mut game.replay {
             Some(replay) => replay.input(game.frame),
             None => {
                 let mut keyboard = self.keyboard.state(self.mouse_sensitivity);
@@ -1134,6 +1142,15 @@ impl App {
                 } else { self.gamepads.apply(keyboard) }
             }
         };
+        if game.replay.is_none() {
+            // While a Space jump steps through the palette, its D-pad presses
+            // replace the player's power keys and wheel for those frames.
+            let was_active = self.space_jump.active();
+            let jump = self.space_jump.step(&mut game.system.memory, self.mouse_captured && on_land);
+            if was_active || self.space_jump.active() || !jump.is_empty() {
+                { use zakuro_core::services::hid::PadState; input.buttons = (input.buttons - (PadState::LEFT | PadState::RIGHT | PadState::DOWN)) | jump; }
+            }
+        }
         if let Some(trace) = &mut self.input_trace {
             trace.sample(game.frame, raw_mouse, self.mouse_captured, input, game.replay.is_some(), true);
         }

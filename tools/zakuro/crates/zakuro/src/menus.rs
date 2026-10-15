@@ -448,6 +448,7 @@ impl Menus {
             ui.checkbox(&mut settings.kiu_wheel_powers, "KIU: mouse wheel selects powers on land");
             ui.add_enabled(settings.kiu_wheel_powers, egui::Checkbox::new(&mut settings.kiu_wheel_reverse, "Reverse wheel direction"));
             ui.label(RichText::new("Selecting never uses a power. In flight the wheel does nothing.").weak());
+            ui.checkbox(&mut settings.kiu_space_jump, "KIU: jump key uses Sky Jump (must be equipped)");
 
             ui.separator();
             ui.heading("Controller");

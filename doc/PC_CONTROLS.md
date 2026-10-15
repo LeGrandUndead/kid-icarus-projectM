@@ -12,6 +12,7 @@ Use `Launch-KIU.cmd`. There is one control scheme; F3 no longer changes it.
 - Left click: attack while captured. X/Z: confirm/back, Enter: Start.
 - E: air super attack / use the selected land power, while captured.
 - 1 / 3: select previous/next land power, while captured.
+- Space (October 15, PC interface build): uses the equipped Sky Jump without selecting it, then returns to the selected power. Does nothing if Sky Jump is not equipped. See doc/POWER_STATE.md.
 - Mouse wheel (October 15, PC interface build): down = next land power, up = previous, while captured and only on land. Selecting never uses a power.
 
 Controller merging is unchanged. The normal launcher uses the working O2 DLL.

@@ -87,6 +87,7 @@ pub struct Keys {
     pub pc_action: KeyCode,
     pub pc_power_previous: KeyCode,
     pub pc_power_next: KeyCode,
+    pub pc_jump: KeyCode,
 }
 
 impl Default for Keys {
@@ -111,13 +112,14 @@ impl Default for Keys {
             pc_action: KeyCode::KeyE,
             pc_power_previous: KeyCode::Digit1,
             pc_power_next: KeyCode::Digit3,
+            pc_jump: KeyCode::Space,
         }
     }
 }
 
 impl Keys {
     /// every binding with the name it goes by, to show and change them.
-    pub fn all_mut(&mut self) -> [(&'static str, &mut KeyCode); 19] {
+    pub fn all_mut(&mut self) -> [(&'static str, &mut KeyCode); 20] {
         [
             ("A", &mut self.a),
             ("B", &mut self.b),
@@ -138,6 +140,7 @@ impl Keys {
             ("KIU: special / use power", &mut self.pc_action),
             ("KIU: previous power", &mut self.pc_power_previous),
             ("KIU: next power", &mut self.pc_power_next),
+            ("KIU: jump (Sky Jump)", &mut self.pc_jump),
         ]
     }
 }
@@ -249,6 +252,8 @@ pub struct Settings {
     pub kiu_wheel_powers: bool,
     /// KIU: reverse the wheel (wheel up selects the next power).
     pub kiu_wheel_reverse: bool,
+    /// KIU: the jump key uses the equipped Sky Jump without selecting it.
+    pub kiu_space_jump: bool,
 }
 
 impl Default for Settings {
@@ -270,6 +275,7 @@ impl Default for Settings {
             pad: PadButtons::default(),
             kiu_wheel_powers: true,
             kiu_wheel_reverse: false,
+            kiu_space_jump: true,
         }
     }
 }

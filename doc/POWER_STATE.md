@@ -34,7 +34,32 @@ Idol Transformation (0x06), then ids 0x0F, 0x11, 0x32, 0x33, 0x3B
 - **Which code reads the selection.** Hooking that reader (like the land
   camera hook in `kiu_mouse.rs`) is the robust way to locate the structure.
 
-## Plan for Space jump (variant 2: Jump equipped, Space invokes it)
+## Space jump: what was built and tested (October 15, 16:00-16:45)
+
+`crates/zakuro/src/kiu_jump.rs`, key `KIU: jump (Sky Jump)` (default Space),
+setting "KIU: jump key uses Sky Jump" in Settings > Controls.
+
+- The palette is found by a signature search in FCRAM (0x14000000-
+  0x1C000000): count 2-12, selection below it, entries `(slot << 16) | id`
+  in order with distinct ids, unused slots empty, count repeated at +0x70
+  with a display order. Two traps found in testing: a look-alike in the main
+  heap (0x08048158, likely the saved equipment) and many one-entry lists;
+  both are excluded. One snapshot had exactly one match, and it tracked the
+  selection (0x14F3C668 that session).
+- Writing the selected slot into this structure does NOT work: the bubble
+  showed Sky Jump, but E then used another power and the wheel started from
+  the wrong slot. The palette cursor is stored elsewhere.
+- Working method: read the list only, then press the D-pad like a player
+  (shortest way round to Sky Jump, the use press, 12 frames, the same steps
+  back). Each press is held 3 frames with 4 released, as for the wheel.
+  Nothing is written to game memory.
+- Practice Range result: Space gave the same animation as selecting Sky
+  Jump and pressing E, and the selection returned to Idol Transformation.
+  Whether Pit rises fully there could not be judged from screenshots; the
+  Practice Range does not spend uses. A chapter's land section is the next
+  check. Delay before the jump: 7 frames per step (about 0.12 s each).
+
+## Original plan for Space jump (variant 2: Jump equipped, Space invokes it)
 
 1. Locate the palette each land session (code hook, or a signature scan:
    count <= 12, selected < count, entry high halves 0..count-1).
