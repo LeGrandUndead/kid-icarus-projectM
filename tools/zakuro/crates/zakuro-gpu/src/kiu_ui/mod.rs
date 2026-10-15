@@ -93,7 +93,13 @@ struct State {
     uploads: Vec<OverlayTexture>,
     free: Vec<u64>,
     census: Option<census::Census>,
+    /// HD versions of catalogued textures from the local pack
+    /// (KIU_HUD_PACK, tools/recomp/build_hud_hd_pack.py), by catalog hash.
+    hd: HashMap<u64, Option<std::sync::Arc<Hd>>>,
 }
+
+/// Base level of an enlarged original (same UV layout, more texels).
+struct Hd { width: u32, height: u32, texels: Vec<[u8; 4]> }
 
 /// Parses `ui-sources.tsv` (`hash<TAB>role<TAB>name…`) or the October 14
 /// `portrait-hashes.txt` (one hash per line, all portraits).
@@ -238,6 +244,11 @@ pub(crate) fn push(hash: u64, width: u32, height: u32, texels: &[[u8; 4]],
     let needs_texture = matches!(role, Role::Portrait | Role::Insert) || island.is_some();
     let texture = if needs_texture {
         let texels = &texels[..(width * height) as usize];
+        let hd = s.hd.entry(hash).or_insert_with(|| {
+            let replacement = crate::replacements::load_hud(crate::raster::fingerprint(texels.as_flattened()), width, height)?;
+            let base = (replacement.width * replacement.height) as usize;
+            Some(std::sync::Arc::new(Hd { width: replacement.width, height: replacement.height, texels: replacement.texels[..base].to_vec() }))
+        }).clone();
         let env = crate::tev::TexEnv::read(registers);
         let fade = bake::alpha_is_a_fade(&env, primary, texels);
         let baked_primary = if fade { [primary[0], primary[1], primary[2], 1.0] } else { primary };
@@ -250,7 +261,11 @@ pub(crate) fn push(hash: u64, width: u32, height: u32, texels: &[[u8; 4]],
             None => {
                 let id = s.next;
                 s.next += 1;
-                s.uploads.push(OverlayTexture { id, offset: None, size: [width, height], pixels: bake::bake(&env, baked_primary, texels), linear: true });
+                let (size, pixels) = match &hd {
+                    Some(hd) => ([hd.width, hd.height], bake::bake(&env, baked_primary, &hd.texels)),
+                    None => ([width, height], bake::bake(&env, baked_primary, texels)),
+                };
+                s.uploads.push(OverlayTexture { id, offset: None, size, pixels, linear: true });
                 s.cache.insert(key, id);
                 id
             }

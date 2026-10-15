@@ -1114,7 +1114,7 @@ impl TextureCache {
 
 /// a quick hash of a texture's bytes, to notice when they change. four
 /// running hashes side by side, which the CPU works on at once.
-fn fingerprint(bytes: &[u8]) -> u64 {
+pub(crate) fn fingerprint(bytes: &[u8]) -> u64 {
     const K: u64 = 0x517C_C1B7_2722_0A95;
     let step = |hash: u64, word: u64| (hash.rotate_left(5) ^ word).wrapping_mul(K);
     let mut lanes = [bytes.len() as u64, 1, 2, 3];

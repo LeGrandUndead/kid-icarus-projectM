@@ -41,6 +41,7 @@ def main() -> int:
     ap.add_argument("--experimental", action="store_true", help="separate experimental executable, settings and copied saves")
     ap.add_argument("--single-screen", action="store_true", help="isolated single-screen compositor test build")
     ap.add_argument("--dialogue-preview", action="store_true", help="isolated original-portrait gameplay preview")
+    ap.add_argument("--original-hud-resolution", action="store_true", help="PC interface: do not use the local HD HUD pack (build/texture-work/hud-hd)")
     ap.add_argument("--pc-interface", action="store_true", help="gameplay preview + original specials/powers/counters HUD and automatic pause panel (separate executable, preview profile)")
     ap.add_argument("--no-native-hud", action="store_true", help="PC interface: keep only the portraits, for comparison")
     ap.add_argument("--ui-census", action="store_true", help="PC interface: record catalogued lower-screen draws to a CSV for tracing")
@@ -124,13 +125,19 @@ def main() -> int:
     env.pop("KIU_SINGLE_SCREEN", None)
     env.pop("KIU_NATIVE_DIALOGUE", None)
     env.pop("KIU_GAMEPLAY_CAMERA_SCALE", None)
-    for name in ("KIU_NATIVE_UI", "KIU_NATIVE_HUD", "KIU_UI_CENSUS", "KIU_RAM_SNAPSHOT"):
+    for name in ("KIU_NATIVE_UI", "KIU_NATIVE_HUD", "KIU_UI_CENSUS", "KIU_RAM_SNAPSHOT", "KIU_HUD_PACK"):
         env.pop(name, None)
     if args.pc_interface:
         sources = ROOT / "build/native-ui/ui-sources.tsv"
         if not sources.is_file(): ap.error("Original UI catalog missing; run: python tools/recomp/prepare_native_ui_sources.py")
         env["KIU_NATIVE_UI"] = str(sources)
         if args.no_native_hud: env["KIU_NATIVE_HUD"] = "0"
+        # HD HUD: the game's own HUD atlases enlarged locally from the ROM
+        # (tools/recomp/build_hud_hd_pack.py). Only those atlases are in it.
+        hud_hd = ROOT / "build/texture-work/hud-hd"
+        if hud_hd.is_dir() and not args.original_hud_resolution:
+            env["KIU_HUD_PACK"] = str(hud_hd.resolve())
+            print("HD HUD: original HUD art enlarged from your ROM (--original-hud-resolution to compare).", flush=True)
         if camera_override or args.original_aspect: env["KIU_GAMEPLAY_CAMERA_SCALE"] = str(args.camera_scale)
     elif args.dialogue_preview:
         sources = ROOT / "build/native-ui/dialogue-sources/portrait-hashes.txt"

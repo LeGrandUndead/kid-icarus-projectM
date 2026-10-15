@@ -123,3 +123,29 @@ cross-built from the same source (stripped, about 14.8 MB).
 Tab (lower-screen panel), F9 (original two screens), `--no-native-hud`
 (portraits/inserts only), Settings > Interface toggles, and the unchanged
 October 14 preview launcher.
+
+## HD HUD from the game's own art (October 15, late)
+
+User direction: no new art style; the HUD must stay the game's own, "an HD
+and PC-ported version of the HUD we have". No redrawing, no AI.
+
+- `tools/recomp/build_hud_hd_pack.py` enlarges the four HUD atlases 4x from
+  the user's ROM exports (gm_00 frames/digits/plates, gm_02 ornaments/trays,
+  gc_00 wings/orbs/medallions, mr power icons): premultiplied bicubic, then
+  the soft edges of flat black/white/empty shapes are narrowed back to about
+  one pixel. Shaded areas keep plain interpolation. The pack lives in
+  `build/texture-work/hud-hd` (local, never committed).
+- The PC launcher passes it as `KIU_HUD_PACK`; only the relocated HUD layers
+  use it (`kiu_ui`). `--original-hud-resolution` compares with the original.
+- Checked in the Practice Range: the pack loads (`HD texture: ... ->
+  1024x1024` for gm_00, gc_00, mr) and the palette/bank draw correctly. A
+  short audio hitch happens the first time each atlas is baked.
+- Not yet: the game's own top HUD (health bar, score). Feeding the same pack
+  to the main renderer (`KIU_TEXTURE_PACK`) made the title demo go black
+  after a few seconds in one test; it is disabled until that is understood.
+
+Census findings used for the next step (per-element PC layout): the counters
+plate is two gm_00 white scroll blobs tinted pale, with the small digit row
+and gc_00 heart/bank medallions plus the purple intensity pill; the land
+palette is a gm_00 dark tray, 9-slice white highlight pieces, gc_00 gold
+arrows and the small digit row for uses.

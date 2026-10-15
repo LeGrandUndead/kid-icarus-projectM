@@ -6,13 +6,23 @@ struct Pack { root: PathBuf, names: HashSet<String> }
 
 fn pack() -> Option<&'static Pack> {
     static PACK: OnceLock<Option<Pack>> = OnceLock::new();
-    PACK.get_or_init(|| {
-        let root = PathBuf::from(std::env::var_os("KIU_TEXTURE_PACK")?);
+    PACK.get_or_init(|| open("KIU_TEXTURE_PACK")).as_ref()
+}
+
+/// The HD HUD pack (KIU_HUD_PACK), used only by the relocated PC HUD layers.
+fn hud_pack() -> Option<&'static Pack> {
+    static PACK: OnceLock<Option<Pack>> = OnceLock::new();
+    PACK.get_or_init(|| open("KIU_HUD_PACK")).as_ref()
+}
+
+fn open(variable: &str) -> Option<Pack> {
+    {
+        let root = PathBuf::from(std::env::var_os(variable)?);
         let names = std::fs::read_dir(&root).ok()?.filter_map(Result::ok)
             .filter(|e| e.file_type().is_ok_and(|t| t.is_file()))
             .filter_map(|e| e.file_name().into_string().ok()).collect();
         Some(Pack { root, names })
-    }).as_ref()
+    }
 }
 
 pub(crate) struct Replacement {
@@ -30,7 +40,14 @@ fn scale(width: u32, height: u32, w: u32, h: u32) -> Option<u32> {
 }
 
 pub(crate) fn load(hash: u64, width: u32, height: u32, levels: u8) -> Option<Replacement> {
-    let pack = pack()?;
+    load_from(pack()?, hash, width, height, levels)
+}
+
+pub(crate) fn load_hud(hash: u64, width: u32, height: u32) -> Option<Replacement> {
+    load_from(hud_pack()?, hash, width, height, 1)
+}
+
+fn load_from(pack: &Pack, hash: u64, width: u32, height: u32, levels: u8) -> Option<Replacement> {
     let name = format!("{width}x{height}-{hash:016X}.png");
     if !pack.names.contains(&name) { return None; }
     let result = (|| -> Result<Replacement, String> {
