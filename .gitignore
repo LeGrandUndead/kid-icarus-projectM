@@ -1,0 +1,32 @@
+# User-supplied game content and game-derived output stay local.
+/ROM/
+/TEMP/
+*.3ds
+*.cci
+*.cxi
+*.cia
+/doc/stuff/
+/doc/rom_census/
+/build/
+/archive/
+/user/
+/tools/3dsrecomp/
+/tools/zakuro/target/
+/tools/zakuro/user/
+/tools/zakuro/roms/
+/tools/zakuro/dump/
+/tools/zakuro/sysdata/
+/tools/toolchains/
+/tools/python-libs/
+/tools/ghidra project/
+/tools/ghidra_12.1.4_PUBLIC_20260921/
+/tools/3dstool/
+/tools/DotNet.3DS.Toolkit.v1.4.6/
+/tools/EveryFileExplorer/
+/tools/HxDSetup/
+/tools/SPICA/
+__pycache__/
+*.pyc
+# Mockups contain screenshots of game art
+/mocks/
+*.log
