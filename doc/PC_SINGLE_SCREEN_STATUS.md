@@ -140,9 +140,22 @@ and PC-ported version of the HUD we have". No redrawing, no AI.
 - Checked in the Practice Range: the pack loads (`HD texture: ... ->
   1024x1024` for gm_00, gc_00, mr) and the palette/bank draw correctly. A
   short audio hitch happens the first time each atlas is baked.
-- Not yet: the game's own top HUD (health bar, score). Feeding the same pack
-  to the main renderer (`KIU_TEXTURE_PACK`) made the title demo go black
-  after a few seconds in one test; it is disabled until that is understood.
+- Also the game's own top HUD (health bar, score and the other top-screen
+  HUD pieces): the main renderer uses the HD atlas only for draws of the
+  game's 2D HUD program, with a separate cache entry; every other use of the
+  same atlas keeps the original texels. (Giving the atlas to every draw made
+  the title demo go black; that path stays off.) Chapter 1 checked: health
+  bar, score, orbs, counters, portraits and the Medusa insert all correct,
+  no black screen in the title demo.
+- No hitch: the HD atlases are decoded in the background at start-up and
+  each tinted version is baked off the emulation thread; the original
+  resolution is shown for the few frames until it is ready.
+- Power names and other lower-screen text: the game writes this text into a
+  small buffer first (512x128). When that buffer changes, the renderer copies
+  it to the host once (no stall: read when its batch is done), at twice the
+  3DS resolution, and kiu_ui shows it like the other layers. Text goes with
+  the topmost layer under it: power names in their bubble above the Power
+  Palette, the Practice Range weapon card with its own text.
 
 Census findings used for the next step (per-element PC layout): the counters
 plate is two gm_00 white scroll blobs tinted pale, with the small digit row

@@ -156,6 +156,20 @@ pub(super) struct Shading<'a> {
     pub(super) cull: u32,
 }
 
+/// A lower-screen HUD draw that samples a small buffer the game drew into
+/// first: the text of the Power Palette (power names).
+fn lower_screen_text(draw: &Draw, drawn: &DrawnTexture) -> bool {
+    crate::kiu_ui::enabled() && drawn.width * drawn.height <= 512 * 256
+        && matches!(draw.geometry, Geometry::Shaded(s) if s.viewport == (0.0, 0.0, 240.0, 320.0) && kiu_hud_shader(s))
+}
+
+/// The game's 2D HUD program drawing independent rectangles (health bar,
+/// score and the other top-screen HUD pieces), whatever the options.
+fn kiu_hud_shader(shading: &Shading) -> bool {
+    super::kiu_linear_shader_key(shading.unit) == Some(18295097681142006406)
+        && super::kiu_quad_indices(shading.indices)
+}
+
 fn kiu_hud_atlas(shading: &Shading) -> bool {
     static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *ENABLED.get_or_init(|| std::env::var_os("KIU_EXPERIMENTAL_HUD").is_some())
@@ -180,14 +194,16 @@ fn capture_ui<M: GpuMemory>(memory:&mut M, draw:&Draw) {
             draw.registers[REG_TEXTURE_CONFIG], draw.registers[0x101], s.indices.len()));
     };
     let Some(texture)=draw.textures[0].as_ref() else {reject("no texture 0");return};
-    let Some(role)=crate::kiu_ui::role(texture.source_hash) else {reject("no source hash");return};
+    // Text drawn into a buffer first (power names): its latest host copy.
+    let text=texture.drawn.and_then(|d| crate::kiu_ui::text(d.addr,[d.width,d.height]));
+    let Some(role)=(if text.is_some() {Some(crate::kiu_ui::Role::Unlisted)} else {crate::kiu_ui::role(texture.source_hash)}) else {reject("no source hash");return};
     // Colors are only reproduced for the standard 2D layout pipeline: one
     // texture, normal alpha blending. Menu atlases are only evidence (UVs).
     let exact = draw.registers[REG_TEXTURE_CONFIG]&7==1 && draw.registers[0x101]==0x01760000;
     let failed = if role!=crate::kiu_ui::Role::Menu && !exact {Some("pipeline (texture units/blend)")}
         else if super::kiu_linear_shader_key(s.unit)!=Some(18295097681142006406) {Some("vertex shader")}
         else if !super::kiu_quad_indices(s.indices) || s.indices.len()>6*MAX_UI_QUADS {Some("not a quad batch")}
-        else if texture.drawn.is_some() {Some("render-target texture")}
+        else if texture.drawn.is_some() && text.is_none() {Some("render-target texture")}
         else if texture.width*texture.height>512*512
             || (role!=crate::kiu_ui::Role::Unlisted && texture.width*texture.height>256*256) {Some("texture too large")}
         else {None};
@@ -223,7 +239,10 @@ fn capture_ui<M: GpuMemory>(memory:&mut M, draw:&Draw) {
         if quad.iter().any(|o|o[1]!=primary || !o[..3].iter().flatten().all(|v|v.is_finite()) || o[0][3].abs()<0.0001) {continue;}
         let xy=std::array::from_fn(|i| {let p=quad[i][0];[(1.0-p[1]/p[3])*160.0,(1.0-p[0]/p[3])*120.0]});
         let uv=std::array::from_fn(|i|[quad[i][2][0],quad[i][2][1]]);
-        crate::kiu_ui::push(texture.source_hash.unwrap(),texture.width,texture.height,&texture.texels,draw.registers,primary,xy,uv);
+        match &text {
+            Some(t) => crate::kiu_ui::push(t.hash,t.size[0],t.size[1],&t.texels,draw.registers,primary,xy,uv),
+            None => crate::kiu_ui::push(texture.source_hash.unwrap(),texture.width,texture.height,&texture.texels,draw.registers,primary,xy,uv),
+        }
     }
 }
 /// Longest text/counter batch copied from one lower-screen draw.
@@ -667,6 +686,14 @@ struct Local {
 }
 
 /// a texture copied from a surface the GPU drew.
+struct TextRead {
+    buffer: Buffer,
+    /// the surface generation requested, and the batch that copies it.
+    generation: u64,
+    batch: u64,
+    waiting: bool,
+}
+
 struct Copied {
     image: Image,
     surface: usize,
@@ -1252,6 +1279,9 @@ pub struct Hardware {
     textures: HashMap<usize, Texture>,
     /// textures copied from surfaces, by what they are.
     copies: HashMap<DrawnTexture, Copied>,
+    /// host copies of lower-screen text the game draws into a buffer first
+    /// (power names), read back when the buffer changes, for kiu_ui.
+    text_reads: HashMap<DrawnTexture, TextRead>,
     /// what unused texture units sample.
     blank: Image,
     /// the tables' generation and where the batch copied them.
@@ -1441,6 +1471,7 @@ impl Hardware {
                 surfaces: Vec::new(),
                 textures: HashMap::new(),
                 copies: HashMap::new(),
+                text_reads: HashMap::new(),
                 tables: None,
                 recording: false,
                 uploads: false,
@@ -2183,8 +2214,11 @@ impl Hardware {
 
     /// the texture's image, including every decoded mip level, uploaded the
     /// first time it is drawn with.
-    fn texture(&mut self, bound: &BoundTexture) -> Result<(vk::ImageView, u8), String> {
-        let key = Arc::as_ptr(&bound.texels) as *const u8 as usize;
+    fn texture(&mut self, bound: &BoundTexture, hud: bool) -> Result<(vk::ImageView, u8), String> {
+        // A HUD draw may use the HD HUD pack; every other use of the same
+        // atlas keeps the original texels (separate cache entry, low bit).
+        let hud = hud && crate::replacements::hud_pack_enabled();
+        let key = Arc::as_ptr(&bound.texels) as *const u8 as usize | hud as usize;
         if let Some(texture) = self.textures.get_mut(&key) {
             texture.used = self.batch;
             return Ok((texture.image.view, texture.extra_levels));
@@ -2194,7 +2228,9 @@ impl Hardware {
         static EXPERIMENTAL: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
         let experimental = *EXPERIMENTAL.get_or_init(|| std::env::var_os("KIU_TEXTURE_PACK").is_some());
         let hash = if experimental { super::fingerprint(bound.texels[..(bound.width * bound.height) as usize].as_flattened()) } else { 0 };
-        let replacement = if experimental { crate::replacements::load(hash, bound.width, bound.height, bound.mip_levels) } else { None };
+        let replacement = if experimental { crate::replacements::load(hash, bound.width, bound.height, bound.mip_levels) }
+            else if hud { crate::replacements::load_hud(super::fingerprint(bound.texels[..(bound.width * bound.height) as usize].as_flattened()), bound.width, bound.height, bound.mip_levels) }
+            else { None };
         let (width, height, levels, extra_levels, texels) = match &replacement {
             Some(image) => (image.width, image.height, image.levels, image.extra_levels, image.texels.as_slice()),
             None => (bound.width, bound.height, bound.mip_levels, 0, bound.texels.as_ref()),
@@ -2966,8 +3002,12 @@ impl Hardware {
             match bound {
                 Some(bound) => {
                     let (view, extra) = match bound.drawn {
-                        Some(drawn) => (self.copy_texture(&drawn)?, 0),
-                        None => self.texture(bound)?,
+                        Some(drawn) => {
+                            let view = self.copy_texture(&drawn)?;
+                            if unit == 0 && lower_screen_text(draw, &drawn) { self.read_text(&drawn)?; }
+                            (view, 0)
+                        }
+                        None => self.texture(bound, unit == 0 && matches!(draw.geometry, Geometry::Shaded(s) if kiu_hud_shader(s)))?,
                     };
                     views[unit] = view;
                     let mut sampling = bound.sampling;
@@ -3584,6 +3624,77 @@ impl Hardware {
         Ok(view)
     }
 
+    /// records a host copy of a lower-screen text buffer when it changed
+    /// since the last copy (power names change rarely; no stall: the copy is
+    /// read once its batch is done, see `retire_oldest`).
+    fn read_text(&mut self, texture: &DrawnTexture) -> Result<(), String> {
+        let Some(copy) = self.copies.get(texture) else { return Ok(()) };
+        let (generation, image) = (copy.generation, copy.image.image);
+        if self.text_reads.get(texture).is_some_and(|read| read.generation == generation) {
+            return Ok(());
+        }
+        let n = self.scale;
+        let (width, height) = (texture.width * n, texture.height * n);
+        let size = (width * height * 4) as u64;
+        if self.text_reads.get(texture).is_none_or(|read| read.buffer.size < size || read.waiting) {
+            if let Some(old) = self.text_reads.remove(texture) {
+                if old.waiting { self.text_reads.insert(*texture, old); return Ok(()); }
+                // SAFETY: not waiting means its batch is done
+                unsafe {
+                    self.device.destroy_buffer(old.buffer.buffer, None);
+                    self.device.free_memory(old.buffer.memory, None);
+                }
+            }
+            let buffer = self.buffer(size, vk::BufferUsageFlags::TRANSFER_DST, true)?;
+            self.text_reads.insert(*texture, TextRead { buffer, generation: 0, batch: 0, waiting: false });
+        }
+        self.end_rendering();
+        self.unfenced = true;
+        self.barrier();
+        let batch = self.batch;
+        let read = self.text_reads.get_mut(texture).expect("made above");
+        let region = [vk::BufferImageCopy::default()
+            .image_subresource(vk::ImageSubresourceLayers::default().aspect_mask(vk::ImageAspectFlags::COLOR).layer_count(1))
+            .image_extent(vk::Extent3D { width, height, depth: 1 })];
+        let to_host = [vk::MemoryBarrier2::default()
+            .src_stage_mask(vk::PipelineStageFlags2::ALL_COMMANDS)
+            .src_access_mask(vk::AccessFlags2::MEMORY_WRITE)
+            .dst_stage_mask(vk::PipelineStageFlags2::HOST)
+            .dst_access_mask(vk::AccessFlags2::HOST_READ)];
+        // SAFETY: recording, outside rendering, from the copy (general
+        // layout, written by the transfer above the barrier) into a buffer
+        // of its size that the host reads only once this batch is done
+        unsafe {
+            self.device.cmd_copy_image_to_buffer(self.commands, image, vk::ImageLayout::GENERAL, read.buffer.buffer, &region);
+            self.device.cmd_pipeline_barrier2(self.commands, &vk::DependencyInfo::default().memory_barriers(&to_host));
+        }
+        self.unfenced = true;
+        read.generation = generation;
+        read.batch = batch;
+        read.waiting = true;
+        Ok(())
+    }
+
+    /// hands finished text copies to kiu_ui.
+    fn deliver_text(&mut self, finished: Option<u64>) -> Result<(), String> {
+        let Some(finished) = finished else { return Ok(()) };
+        let n = self.scale;
+        for (texture, read) in self.text_reads.iter_mut() {
+            if !read.waiting || read.batch > finished { continue; }
+            read.waiting = false;
+            if read.buffer.incoherent {
+                let range = [vk::MappedMemoryRange::default().memory(read.buffer.memory).offset(0).size(vk::WHOLE_SIZE)];
+                // SAFETY: the memory is mapped and the GPU is done with it
+                unsafe { self.device.invalidate_mapped_memory_ranges(&range) }.map_err(vk_error("invalidate memory"))?;
+            }
+            let (width, height) = (texture.width * n, texture.height * n);
+            // SAFETY: the batch that filled the buffer is done
+            let data = unsafe { std::slice::from_raw_parts(read.buffer.mapped, (width * height * 4) as usize) };
+            crate::kiu_ui::set_text(texture.addr, [texture.width, texture.height], [width, height], data);
+        }
+        Ok(())
+    }
+
     /// records a texture read out of a depth surface, its depth and stencil
     /// copied into a buffer and then made into the colors their bytes read
     /// as.
@@ -4197,6 +4308,7 @@ impl Hardware {
         let batch = frame.pending.take();
         self.add_times(frame.commands)?;
         self.free.push(frame);
+        self.deliver_text(batch)?;
         // pictures for screens are read out before a later batch can draw
         // over them
         for index in 0..self.surfaces.len() {

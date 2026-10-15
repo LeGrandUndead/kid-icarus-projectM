@@ -81,7 +81,9 @@ const STALE_FRAMES: u32 = 6;
 struct State {
     catalog: HashMap<u64, Source>,
     names: Vec<String>,
-    cache: HashMap<Vec<u32>, u64>,
+    /// baked texture per (texture, combiner state): host id, and whether it
+    /// is already the HD version.
+    cache: HashMap<Vec<u32>, (u64, bool)>,
     next: u64,
     pending: Vec<Layer>,
     shown: Vec<Layer>,
@@ -95,7 +97,19 @@ struct State {
     census: Option<census::Census>,
     /// HD versions of catalogued textures from the local pack
     /// (KIU_HUD_PACK, tools/recomp/build_hud_hd_pack.py), by catalog hash.
-    hd: HashMap<u64, Option<std::sync::Arc<Hd>>>,
+    hd: HashMap<u64, HdState>,
+    /// HD loads and bakes run off the emulation thread (no audio hitch);
+    /// until one is ready the original-resolution texture is shown.
+    jobs: Option<std::sync::mpsc::Sender<Done>>,
+    done: Option<std::sync::mpsc::Receiver<Done>>,
+    baking: HashSet<Vec<u32>>,
+}
+
+enum HdState { Loading, Ready(std::sync::Arc<Hd>), Missing }
+
+enum Done {
+    Loaded(u64, Option<std::sync::Arc<Hd>>),
+    Baked(Vec<u32>, [u32; 2], Vec<u8>),
 }
 
 /// Base level of an enlarged original (same UV layout, more texels).
@@ -134,7 +148,10 @@ fn state() -> Option<&'static Mutex<State>> {
         let count = |role| catalog.values().filter(|s| s.role == role).count();
         log::info!("Original PC interface layers: {} portrait, {} insert, {} HUD, {} menu, {} decor textures",
             count(Role::Portrait), count(Role::Insert), count(Role::Hud), count(Role::Menu), count(Role::Decor));
-        Some(Mutex::new(State { catalog, names, next: 1u64 << 61, census: census::Census::from_environment(), ..State::default() }))
+        let (jobs, done) = std::sync::mpsc::channel();
+        crate::replacements::hud_pack_enabled(); // starts decoding the HD HUD atlases
+        Some(Mutex::new(State { catalog, names, next: 1u64 << 61, census: census::Census::from_environment(),
+            jobs: Some(jobs), done: Some(done), ..State::default() }))
     }).as_ref()
 }
 
@@ -154,6 +171,7 @@ pub fn end_frame() -> BottomScene {
     let Some(state) = state() else { return BottomScene::default() };
     let Ok(mut s) = state.lock() else { return BottomScene::default() };
     let s = &mut *s;
+    apply_hd_jobs(s);
     let fresh = s.bottom_draws > 0;
     if fresh {
         s.shown = std::mem::take(&mut s.pending);
@@ -187,7 +205,7 @@ fn evict(s: &mut State) {
     if s.cache.len() < CACHE_LIMIT { return; }
     let live: HashSet<u64> = s.shown.iter().chain(&s.pending).map(|l| l.texture).collect();
     let mut freed = Vec::new();
-    s.cache.retain(|_, id| if live.contains(id) { true } else { freed.push(*id); false });
+    s.cache.retain(|_, (id, _)| if live.contains(id) { true } else { freed.push(*id); false });
     s.free.extend(freed);
 }
 
@@ -233,6 +251,17 @@ pub(crate) fn push(hash: u64, width: u32, height: u32, texels: &[[u8; 4]],
         None => { s.names.push(label.to_owned()); s.names.len() - 1 }
     };
     if s.pending.len() >= MAX_LAYERS || texels.len() < (width * height) as usize { return; }
+    // Text and other unlisted art goes with the layer it is written on: the
+    // most recent picture panel or HUD piece under it (the Practice Range
+    // weapon card's text with the card, a power name with its HUD bubble).
+    let role = if role == Role::Unlisted {
+        let c = layout::center(layout::bounds(&xy));
+        let under = s.pending.iter().rev().find(|l| (l.role == Role::Insert || l.island.is_some()) && {
+            let b = layout::bounds(&l.xy);
+            c[0] >= b[0] && c[0] <= b[2] && c[1] >= b[1] && c[1] <= b[3]
+        });
+        match under { Some(l) if l.role == Role::Insert => Role::Insert, _ => role }
+    } else { role };
     // Decide placement first: unplaced HUD/menu/decor draws need no texture.
     let hud_like = matches!(role, Role::Hud | Role::Unlisted);
     let island = if hud_like && !layout::is_touch_marker(&xy, s.touch) { layout::island_for(&xy) } else { None };
@@ -244,11 +273,7 @@ pub(crate) fn push(hash: u64, width: u32, height: u32, texels: &[[u8; 4]],
     let needs_texture = matches!(role, Role::Portrait | Role::Insert) || island.is_some();
     let texture = if needs_texture {
         let texels = &texels[..(width * height) as usize];
-        let hd = s.hd.entry(hash).or_insert_with(|| {
-            let replacement = crate::replacements::load_hud(crate::raster::fingerprint(texels.as_flattened()), width, height)?;
-            let base = (replacement.width * replacement.height) as usize;
-            Some(std::sync::Arc::new(Hd { width: replacement.width, height: replacement.height, texels: replacement.texels[..base].to_vec() }))
-        }).clone();
+        let hd = hd_for(s, hash, texels, width, height);
         let env = crate::tev::TexEnv::read(registers);
         let fade = bake::alpha_is_a_fade(&env, primary, texels);
         let baked_primary = if fade { [primary[0], primary[1], primary[2], 1.0] } else { primary };
@@ -256,20 +281,25 @@ pub(crate) fn push(hash: u64, width: u32, height: u32, texels: &[[u8; 4]],
         key.extend(baked_primary.map(f32::to_bits));
         for base in [0xc0, 0xc8, 0xd0, 0xd8, 0xf0, 0xf8] { key.extend_from_slice(&registers[base..base + 5]); }
         key.extend([registers[0xe0], registers[0xfd]]);
-        let id = match s.cache.get(&key) {
-            Some(&id) => id,
+        let (id, is_hd) = match s.cache.get(&key) {
+            Some(&entry) => entry,
             None => {
                 let id = s.next;
                 s.next += 1;
-                let (size, pixels) = match &hd {
-                    Some(hd) => ([hd.width, hd.height], bake::bake(&env, baked_primary, &hd.texels)),
-                    None => ([width, height], bake::bake(&env, baked_primary, texels)),
-                };
-                s.uploads.push(OverlayTexture { id, offset: None, size, pixels, linear: true });
-                s.cache.insert(key, id);
-                id
+                s.uploads.push(OverlayTexture { id, offset: None, size: [width, height], pixels: bake::bake(&env, baked_primary, texels), linear: true });
+                s.cache.insert(key.clone(), (id, false));
+                (id, false)
             }
         };
+        if let (false, Some(hd), Some(jobs)) = (is_hd, hd, &s.jobs) {
+            if s.baking.insert(key.clone()) {
+                let jobs = jobs.clone();
+                std::thread::spawn(move || {
+                    let pixels = bake::bake(&env, baked_primary, &hd.texels);
+                    let _ = jobs.send(Done::Baked(key, [hd.width, hd.height], pixels));
+                });
+            }
+        }
         if let Some(root) = crate::diagnostics::draw_capture_path() {
             capture_for_diagnostics(root, s.pending.len(), hash, &env, primary, texels, width, height, xy, uv);
         }
@@ -277,6 +307,57 @@ pub(crate) fn push(hash: u64, width: u32, height: u32, texels: &[[u8; 4]],
     } else { None };
     let (texture, alpha) = texture.unwrap_or((0, 1.0));
     s.pending.push(Layer { role, name, texture, xy, uv, alpha, island });
+}
+
+/// The HD version of a catalogued texture, if the local pack has one and it
+/// has finished loading. The first request starts the load in the background.
+fn hd_for(s: &mut State, hash: u64, texels: &[[u8; 4]], width: u32, height: u32) -> Option<std::sync::Arc<Hd>> {
+    match s.hd.get(&hash) {
+        Some(HdState::Ready(hd)) => return Some(hd.clone()),
+        Some(_) => return None,
+        None => {}
+    }
+    let Some(jobs) = s.jobs.clone() else { return None };
+    if !crate::replacements::hud_pack_enabled() {
+        s.hd.insert(hash, HdState::Missing);
+        return None;
+    }
+    s.hd.insert(hash, HdState::Loading);
+    let texels = texels.to_vec();
+    std::thread::spawn(move || {
+        let hd = crate::replacements::load_hud(crate::raster::fingerprint(texels.as_flattened()), width, height, 1).map(|r| {
+            let base = (r.width * r.height) as usize;
+            std::sync::Arc::new(Hd { width: r.width, height: r.height, texels: r.texels[..base].to_vec() })
+        });
+        let _ = jobs.send(Done::Loaded(hash, hd));
+    });
+    None
+}
+
+/// Takes finished background loads and bakes. A finished bake replaces the
+/// original-resolution texture in the cache and in the layers shown now.
+fn apply_hd_jobs(s: &mut State) {
+    let Some(done) = &s.done else { return };
+    let finished: Vec<Done> = done.try_iter().collect();
+    for job in finished {
+        match job {
+            Done::Loaded(hash, hd) => {
+                s.hd.insert(hash, hd.map_or(HdState::Missing, HdState::Ready));
+            }
+            Done::Baked(key, size, pixels) => {
+                s.baking.remove(&key);
+                let Some(&(old, false)) = s.cache.get(&key) else { continue };
+                let id = s.next;
+                s.next += 1;
+                s.uploads.push(OverlayTexture { id, offset: None, size, pixels, linear: true });
+                s.cache.insert(key, (id, true));
+                for layer in s.shown.iter_mut().chain(s.pending.iter_mut()) {
+                    if layer.texture == old { layer.texture = id; }
+                }
+                s.free.push(old);
+            }
+        }
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -297,6 +378,53 @@ fn capture_for_diagnostics(root: &std::path::Path, index: usize, hash: u64, env:
 /// PICA's V origin is opposite the top-down decoded texture rows, just as
 /// raster.frag converts V before sampling. Host overlay shaders do not.
 fn overlay_uv(uv: [f32; 2]) -> [f32; 2] { [uv[0], 1.0 - uv[1]] }
+
+/// Lower-screen text the game draws into a buffer first (power names),
+/// copied back from the GPU when it changes. Kept at twice the original
+/// resolution: sharper than the 3DS, small enough to bake quickly.
+pub(crate) struct Text {
+    pub hash: u64,
+    pub size: [u32; 2],
+    pub texels: std::sync::Arc<Vec<[u8; 4]>>,
+}
+
+fn texts() -> &'static Mutex<HashMap<(u32, [u32; 2]), std::sync::Arc<Text>>> {
+    static TEXTS: OnceLock<Mutex<HashMap<(u32, [u32; 2]), std::sync::Arc<Text>>>> = OnceLock::new();
+    TEXTS.get_or_init(Default::default)
+}
+
+/// A finished copy of a text buffer: `native` is its 3DS size, `scaled`
+/// the size of `rgba` (rows top first, as decoded textures have them).
+pub(crate) fn set_text(addr: u32, native: [u32; 2], scaled: [u32; 2], rgba: &[u8]) {
+    if !enabled() || native[0] == 0 || native[1] == 0 { return; }
+    let target = [native[0] * 2, native[1] * 2];
+    let (fx, fy) = (scaled[0] as f32 / target[0] as f32, scaled[1] as f32 / target[1] as f32);
+    let mut texels = Vec::with_capacity((target[0] * target[1]) as usize);
+    for y in 0..target[1] {
+        let (y0, y1) = ((y as f32 * fy) as u32, (((y + 1) as f32 * fy).ceil() as u32).min(scaled[1]).max(1));
+        for x in 0..target[0] {
+            let (x0, x1) = ((x as f32 * fx) as u32, (((x + 1) as f32 * fx).ceil() as u32).min(scaled[0]).max(1));
+            let mut sum = [0u32; 4];
+            let mut count = 0;
+            for sy in y0..y1.max(y0 + 1) {
+                for sx in x0..x1.max(x0 + 1) {
+                    let at = ((sy.min(scaled[1] - 1) * scaled[0] + sx.min(scaled[0] - 1)) * 4) as usize;
+                    for c in 0..4 { sum[c] += rgba[at + c] as u32; }
+                    count += 1;
+                }
+            }
+            texels.push(sum.map(|v| (v / count.max(1)) as u8));
+        }
+    }
+    let hash = crate::raster::fingerprint(texels.as_flattened()) | 1 << 63;
+    if let Ok(mut map) = texts().lock() {
+        map.insert((addr, native), std::sync::Arc::new(Text { hash, size: target, texels: std::sync::Arc::new(texels) }));
+    }
+}
+
+pub(crate) fn text(addr: u32, native: [u32; 2]) -> Option<std::sync::Arc<Text>> {
+    texts().lock().ok()?.get(&(addr, native)).cloned()
+}
 
 /// The relocated layers for this window, placed in the window rectangle.
 pub fn overlay(width: u32, height: u32, visible: bool) -> Overlay {

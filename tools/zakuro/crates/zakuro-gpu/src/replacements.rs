@@ -12,7 +12,29 @@ fn pack() -> Option<&'static Pack> {
 /// The HD HUD pack (KIU_HUD_PACK), used only by the relocated PC HUD layers.
 fn hud_pack() -> Option<&'static Pack> {
     static PACK: OnceLock<Option<Pack>> = OnceLock::new();
-    PACK.get_or_init(|| open("KIU_HUD_PACK")).as_ref()
+    PACK.get_or_init(|| {
+        let pack = open("KIU_HUD_PACK")?;
+        // Decode the few HUD atlases once, in the background, at start-up:
+        // the first HUD frame then needs no PNG decoding (no audio hitch).
+        let names: Vec<String> = pack.names.iter().filter(|n| n.ends_with(".png")).cloned().collect();
+        std::thread::spawn(|| {
+            for name in names {
+                let Some(pack) = hud_pack() else { return };
+                let Some((size, hash)) = name.trim_end_matches(".png").split_once('-') else { continue };
+                let Some((w, h)) = size.split_once('x') else { continue };
+                let (Ok(w), Ok(h), Ok(hash)) = (w.parse(), h.parse(), u64::from_str_radix(hash, 16)) else { continue };
+                if let Some(image) = decode(pack, hash, w, h, 1) {
+                    if let Ok(mut cache) = decoded().lock() { cache.insert((name, 1), image); }
+                }
+            }
+        });
+        Some(pack)
+    }).as_ref()
+}
+
+fn decoded() -> &'static std::sync::Mutex<std::collections::HashMap<(String, u8), Replacement>> {
+    static CACHE: OnceLock<std::sync::Mutex<std::collections::HashMap<(String, u8), Replacement>>> = OnceLock::new();
+    CACHE.get_or_init(Default::default)
 }
 
 fn open(variable: &str) -> Option<Pack> {
@@ -25,6 +47,7 @@ fn open(variable: &str) -> Option<Pack> {
     }
 }
 
+#[derive(Clone)]
 pub(crate) struct Replacement {
     pub width: u32,
     pub height: u32,
@@ -43,11 +66,22 @@ pub(crate) fn load(hash: u64, width: u32, height: u32, levels: u8) -> Option<Rep
     load_from(pack()?, hash, width, height, levels)
 }
 
-pub(crate) fn load_hud(hash: u64, width: u32, height: u32) -> Option<Replacement> {
-    load_from(hud_pack()?, hash, width, height, 1)
+pub(crate) fn load_hud(hash: u64, width: u32, height: u32, levels: u8) -> Option<Replacement> {
+    let pack = hud_pack()?;
+    let name = format!("{width}x{height}-{hash:016X}.png");
+    if let Some(image) = decoded().lock().ok().and_then(|cache| cache.get(&(name, levels)).cloned()) {
+        return Some(image);
+    }
+    load_from(pack, hash, width, height, levels)
 }
 
+pub(crate) fn hud_pack_enabled() -> bool { hud_pack().is_some() }
+
 fn load_from(pack: &Pack, hash: u64, width: u32, height: u32, levels: u8) -> Option<Replacement> {
+    decode(pack, hash, width, height, levels)
+}
+
+fn decode(pack: &Pack, hash: u64, width: u32, height: u32, levels: u8) -> Option<Replacement> {
     let name = format!("{width}x{height}-{hash:016X}.png");
     if !pack.names.contains(&name) { return None; }
     let result = (|| -> Result<Replacement, String> {
