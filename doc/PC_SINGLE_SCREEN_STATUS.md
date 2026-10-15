@@ -20,7 +20,32 @@ No other executable, launcher or save was replaced. The game's save format is
 untouched; PC options live in the profile's `roaming/zakuro/kiu-interface.txt`
 and `pc-interface-camera.txt`.
 
+## HUD layout v2 (October 15 evening, design board "V2")
+
+The user's choice from doc/PC_INTERFACE_DESIGN_DIRECTION.md, implemented in
+`kiu_ui/layout.rs` (pure geometry, 18 tests):
+
+- **Action group** (air special orbs / land Power Palette) directly under the
+  game's own health bar, top left, indented past the wing.
+- **Counters** (intensity, hearts, bank) directly under the score, top right.
+- **Portraits** stand on the bottom edge in the corners, at most 27% of the
+  view height and 14% of its width each, beside the subtitles instead of over
+  them. Speakers from the left half of the original screen go left.
+- **Picture inserts** get a picture area on the left (30%-71% of the height,
+  up to 34% of the width), between the HUD and the left portrait, so they no
+  longer cover the middle of the action.
+
+Checked in play the same evening (Chapter 1 at 2.1, Practice Range): orbs
+under the health bar, counters updating under the score, Medusa alone
+bottom-left, Palutena and Pit together in both corners with captions
+between them, Power Palette with its tray top-left on land. The Medusa NES
+insert was not reached in that run; its placement is covered by tests only.
+Reminder: these layers only show while the mouse is captured (F2).
+
 ## Verified in play (October 15, Chapter 1, intensity 2.0, no hearts bet)
+
+The portrait and insert positions in this section are the earlier v1
+layout, replaced by v2 above.
 
 Three live sessions driven on the user's PC with screenshots and two censuses
 (`build/native-ui/census/20261015-074420-*`, `-075436-*`):

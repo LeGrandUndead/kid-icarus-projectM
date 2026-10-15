@@ -20,8 +20,8 @@ pub struct Island {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Anchor {
-    /// Bottom-left window corner.
-    BottomLeft,
+    /// Under the game's own health bar, top left (design v2).
+    BelowHealthLeft,
     /// Right window edge, below the game's own top-screen score.
     BelowScoreRight,
 }
@@ -29,7 +29,7 @@ pub enum Anchor {
 /// Air special gauges and the land Power Palette share the lower-left corner
 /// of the original screen (October 2026 captures `frame-audit.png`:
 /// orbs at about x 5-95 / y 190-237, palette x 0-125 / y 200-240).
-pub const ACTION: Island = Island { name: "action", source: [0.0, 150.0, 170.0, 240.0], anchor: Anchor::BottomLeft };
+pub const ACTION: Island = Island { name: "action", source: [0.0, 150.0, 170.0, 240.0], anchor: Anchor::BelowHealthLeft };
 /// Intensity, hearts collected and the heart bank, top right of the original
 /// screen (about x 215-318 / y 2-40 in the same captures).
 pub const COUNTERS: Island = Island { name: "counters", source: [196.0, 0.0, 320.0, 48.0], anchor: Anchor::BelowScoreRight };
@@ -73,37 +73,53 @@ pub fn is_touch_marker(xy: &[[f32; 2]; 4], touch: Option<[f32; 2]>) -> bool {
 /// Host pixels per guest pixel for relocated HUD islands.
 pub fn hud_scale(height: f32, hud: f32) -> f32 { height / 240.0 * 0.5 * hud.clamp(0.5, 2.0) }
 
-/// Host pixels per guest pixel for portraits: a portrait column is about 30%
-/// of the window height (the October 14 preview used 28%).
-pub fn portrait_scale(width: f32, height: f32) -> f32 { (height * 0.30 / 240.0).min(width * 0.22 / 256.0) }
+/// Design v2 (doc/PC_INTERFACE_DESIGN_DIRECTION.md, user choice of October
+/// 15): portraits stand in the bottom corners beside the subtitles, at most
+/// this share of the view width each, so captions keep the middle.
+pub const PORTRAIT_HEIGHT: f32 = 0.27;
+pub const PORTRAIT_WIDTH: f32 = 0.14;
+
+/// Host pixels per guest pixel for portraits.
+pub fn portrait_scale(width: f32, height: f32) -> f32 {
+    (height * PORTRAIT_HEIGHT / 240.0).min(width * PORTRAIT_WIDTH / 256.0)
+}
 
 /// The game draws its subtitles in the lower quarter of the main view
-/// (October 14 captures: caption baseline at about 83% of the height).
-/// Portraits stand on this line so they never cover a caption.
+/// (October 14 captures: caption text between about 76% and 92% of the
+/// height, roughly 15% to 85% of the width).
 pub const SUBTITLE_TOP: f32 = 0.74;
 
 /// Lower-screen picture inserts (gag art, cutaway comics, boss and rival
-/// title cards) are shown on a surface above the action, top center, the
-/// whole original lower-screen space scaled to this share of the height.
-/// The art covers part of that space; at 0.5 the chapter 1 NES insert is
-/// about a quarter of the view height (0.34 looked too small in play).
-pub const INSERT_HEIGHT: f32 = 0.5;
-pub const INSERT_TOP: f32 = 0.05;
+/// title cards) get a picture area on the left, below the health/power
+/// group and above the bottom-left portrait, never the middle of the action.
+/// The whole original lower-screen space is mapped into it, so the game's
+/// own position, arrows, labels and motion stay together.
+pub const PICTURE_TOP: f32 = 0.30;
+pub const PICTURE_BOTTOM: f32 = 0.71;
+pub const PICTURE_WIDTH: f32 = 0.34;
 
-pub fn insert_scale(width: f32, height: f32) -> f32 { (height * INSERT_HEIGHT / 240.0).min(width * 0.6 / 320.0) }
+pub fn insert_scale(width: f32, height: f32) -> f32 {
+    (height * (PICTURE_BOTTOM - PICTURE_TOP) / 240.0).min(width * PICTURE_WIDTH / 320.0)
+}
 
-/// Maps a point of an insert layer into the window, keeping the game's own
-/// position and motion inside the original screen.
+/// Maps a point of an insert layer into the picture area.
 pub fn place_insert(p: [f32; 2], width: f32, height: f32) -> [f32; 2] {
     let s = insert_scale(width, height);
-    [width * 0.5 + (p[0] - 160.0) * s, height * INSERT_TOP + p[1] * s]
+    [margin(height) + p[0] * s, height * PICTURE_TOP + p[1] * s]
 }
 
 pub fn margin(height: f32) -> f32 { height * 0.015 }
 
-/// Top of the counters island: below the game's own score, which occupies
-/// about the top 18% of the main view.
-const BELOW_SCORE: f32 = 0.19;
+/// Top of the counters island: just below the game's own score (its digits
+/// end at about 13% of the view height).
+const BELOW_SCORE: f32 = 0.145;
+/// Top of the action group: just below the game's own health bar (its wing
+/// ends at about 13% of the height), indented past the wing.
+const BELOW_HEALTH: f32 = 0.135;
+const HEALTH_INDENT: f32 = 0.045;
+/// Orbs and the Power Palette sit in the lower part of the action source
+/// (y 180-240); this guest row is placed at BELOW_HEALTH.
+const ACTION_CONTENT_TOP: f32 = 180.0;
 
 /// Maps an island element point into the window.
 pub fn place_island(p: [f32; 2], island: Island, width: f32, height: f32, hud: f32) -> [f32; 2] {
@@ -111,25 +127,26 @@ pub fn place_island(p: [f32; 2], island: Island, width: f32, height: f32, hud: f
     let m = margin(height);
     let [l, t, r, b] = island.source;
     match island.anchor {
-        Anchor::BottomLeft => [m + (p[0] - l) * s, height - m - (b - p[1]) * s],
+        Anchor::BelowHealthLeft => [width * HEALTH_INDENT + (p[0] - l) * s, height * BELOW_HEALTH + (p[1] - ACTION_CONTENT_TOP) * s],
         Anchor::BelowScoreRight => [width - m - (r - p[0]) * s, height * BELOW_SCORE + (p[1] - t) * s],
     }
 }
 
 /// Maps a portrait point into the window. Speakers on the left half of the
 /// original screen stay on the left, the others on the right; both stand on
-/// the subtitle line, above the action island (bottom left).
+/// the bottom edge in their corner, beside the subtitles.
 pub fn place_portrait(p: [f32; 2], right: bool, width: f32, height: f32) -> [f32; 2] {
     let s = portrait_scale(width, height);
     let m = margin(height);
     [if right { width - m - (320.0 - p[0]) * s } else { m + p[0] * s },
-     height * SUBTITLE_TOP - (240.0 - p[1]) * s]
+     height - (240.0 - p[1]) * s]
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     fn quad(l: f32, t: f32, r: f32, b: f32) -> [[f32; 2]; 4] { [[l, t], [r, t], [l, b], [r, b]] }
+    const SIZES: [(f32, f32); 5] = [(1920.0, 1080.0), (1280.0, 720.0), (2560.0, 1440.0), (3840.0, 2160.0), (1024.0, 768.0)];
 
     #[test]
     fn orbs_and_palette_join_the_action_island() {
@@ -154,44 +171,53 @@ mod tests {
         assert!(!is_touch_marker(&quad(0.0, 0.0, 320.0, 240.0), Some([160.0, 120.0])));
     }
 
+    fn action_box(w: f32, h: f32, hud: f32) -> Rect {
+        let a = place_island([0.0, ACTION_CONTENT_TOP], ACTION, w, h, hud);
+        let b = place_island([170.0, 240.0], ACTION, w, h, hud);
+        [a[0], a[1], b[0], b[1]]
+    }
+
     #[test]
-    fn islands_stay_on_screen_and_do_not_overlap_at_common_sizes() {
-        for (w, h) in [(1920.0, 1080.0), (1280.0, 720.0), (2560.0, 1440.0), (3840.0, 2160.0), (1024.0, 768.0)] {
+    fn hud_groups_sit_under_health_and_score_on_screen() {
+        for (w, h) in SIZES {
             for hud in [0.5, 1.0, 2.0] {
-                let a = [place_island([0.0, 150.0], ACTION, w, h, hud), place_island([170.0, 240.0], ACTION, w, h, hud)];
+                let a = action_box(w, h, hud);
                 let c = [place_island([196.0, 0.0], COUNTERS, w, h, hud), place_island([320.0, 48.0], COUNTERS, w, h, hud)];
-                for p in a.iter().chain(&c) { assert!(p[0] >= 0.0 && p[0] <= w && p[1] >= 0.0 && p[1] <= h, "{p:?} {w}x{h} {hud}"); }
-                assert!(a[1][1] <= h && a[0][1] > c[1][1], "action below counters");
-                // the island keeps its aspect
-                let (aw, ah) = (a[1][0] - a[0][0], a[1][1] - a[0][1]);
-                assert!((aw / ah - 170.0 / 90.0).abs() < 0.001);
+                for p in [[a[0], a[1]], [a[2], a[3]], c[0], c[1]] {
+                    assert!(p[0] >= 0.0 && p[0] <= w && p[1] >= 0.0 && p[1] <= h, "{p:?} {w}x{h} {hud}");
+                }
+                assert!((a[1] - h * 0.135).abs() < 0.01, "content starts under the health bar");
+                assert!(a[2] < c[0][0], "action left of counters");
+                assert!(c[0][1] >= h * 0.14 && a[3] < h * SUBTITLE_TOP, "under the score, above captions");
+                let (aw, ah) = (a[2] - a[0], a[3] - a[1]);
+                assert!((aw / ah - 170.0 / 60.0).abs() < 0.001, "the group keeps its aspect");
             }
         }
     }
 
     #[test]
-    fn portraits_stay_out_of_the_subtitles_and_the_action_island() {
-        for (w, h) in [(1920.0, 1080.0), (1280.0, 720.0), (2560.0, 1440.0), (3840.0, 2160.0)] {
-            for right in [false, true] {
-                let top = place_portrait([0.0, 0.0], right, w, h)[1];
-                let bottom = place_portrait([320.0, 240.0], right, w, h)[1];
-                assert!(bottom <= h * SUBTITLE_TOP + 0.01, "covers subtitles");
-                assert!(top >= h * BELOW_SCORE, "covers health/score");
-                // above the action island up to a 125% HUD (larger sizes may overlap by choice)
-                assert!(bottom <= place_island([0.0, 150.0], ACTION, w, h, 1.25)[1] + 0.01);
-            }
-            assert!((place_portrait([320.0, 240.0], true, w, h)[0] - (w - margin(h))).abs() < 0.01);
+    fn portraits_stand_in_the_bottom_corners_beside_the_subtitles() {
+        for (w, h) in SIZES {
+            let left = [place_portrait([0.0, 0.0], false, w, h), place_portrait([256.0, 240.0], false, w, h)];
+            let right = [place_portrait([64.0, 0.0], true, w, h), place_portrait([320.0, 240.0], true, w, h)];
+            assert!((left[1][1] - h).abs() < 0.01 && (right[1][1] - h).abs() < 0.01, "on the bottom edge");
+            assert!(left[0][1] >= h * 0.72, "no taller than the caption band");
+            assert!(left[1][0] <= w * 0.16 + 0.01, "left one stays left of the captions");
+            assert!(right[0][0] >= w * 0.84 - 0.01, "right one stays right of the captions");
+            assert!((right[1][0] - (w - margin(h))).abs() < 0.01);
+            assert!(left[0][1] > action_box(w, h, 2.0)[3], "below the HUD at any size");
         }
     }
 
     #[test]
-    fn inserts_are_centered_above_portraits_and_subtitles() {
-        for (w, h) in [(1920.0, 1080.0), (1280.0, 720.0), (1024.0, 768.0), (3840.0, 2160.0)] {
+    fn pictures_use_the_left_area_between_hud_and_portrait() {
+        for (w, h) in SIZES {
             let a = place_insert([0.0, 0.0], w, h);
             let b = place_insert([320.0, 240.0], w, h);
-            assert!(((a[0] + b[0]) * 0.5 - w * 0.5).abs() < 0.01);
-            assert!(a[0] >= 0.0 && b[0] <= w && a[1] > 0.0 && b[1] < h * SUBTITLE_TOP);
-            assert!(((b[0] - a[0]) / (b[1] - a[1]) - 320.0 / 240.0).abs() < 0.001);
+            assert!(a[0] >= 0.0 && b[0] <= w * (PICTURE_WIDTH + 0.02), "left side, not the middle");
+            assert!(a[1] > action_box(w, h, 1.25)[3], "below the power group up to a 125% HUD");
+            assert!(b[1] <= place_portrait([0.0, 0.0], false, w, h)[1] + 0.01, "above the bottom-left portrait");
+            assert!(((b[0] - a[0]) / (b[1] - a[1]) - 320.0 / 240.0).abs() < 0.001, "aspect kept");
         }
     }
 }
