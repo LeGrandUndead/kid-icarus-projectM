@@ -1,0 +1,211 @@
+<!doctype html>
+<html><head><meta charset="utf-8">
+<style>
+@font-face{font-family:Cinzel;src:url(node_modules/@fontsource/cinzel/files/cinzel-latin-700-normal.woff2);font-weight:700}
+@font-face{font-family:Cinzel;src:url(node_modules/@fontsource/cinzel/files/cinzel-latin-900-normal.woff2);font-weight:900}
+@font-face{font-family:Marcellus;src:url(node_modules/@fontsource/marcellus/files/marcellus-latin-400-normal.woff2)}
+@font-face{font-family:Rounded;src:url(node_modules/@fontsource/m-plus-rounded-1c/files/m-plus-rounded-1c-latin-800-normal.woff2);font-weight:800}
+@font-face{font-family:Rounded;src:url(node_modules/@fontsource/m-plus-rounded-1c/files/m-plus-rounded-1c-latin-500-normal.woff2);font-weight:500}
+@font-face{font-family:Rajdhani;src:url(node_modules/@fontsource/rajdhani/files/rajdhani-latin-700-normal.woff2);font-weight:700}
+@font-face{font-family:Rajdhani;src:url(node_modules/@fontsource/rajdhani/files/rajdhani-latin-500-normal.woff2);font-weight:500}
+@font-face{font-family:Exo;src:url(node_modules/@fontsource/exo-2/files/exo-2-latin-800-normal.woff2);font-weight:800}
+html,body{margin:0;width:1920px;height:1080px;overflow:hidden;background:#000}
+#scene{position:absolute;inset:0;background-size:cover}
+.abs{position:absolute}
+svg{overflow:visible}
+.dim{position:absolute;inset:0;background:rgba(6,8,20,.55)}
+</style></head>
+<body><div id="scene"></div><div id="hud"></div>
+<script>
+const q = new URLSearchParams(location.search);
+const STYLE = q.get('style'), SCENE = q.get('scene'), MODE = q.get('mode') || 'play';
+document.getElementById('scene').style.backgroundImage =
+  `url(${SCENE === 'land' ? 'land_view_clean.png' : SCENE === 'medusa' ? 'medusa_view_clean.png' : 'air_dialogue_view_clean.png'})`;
+const hud = document.getElementById('hud');
+const add = (html) => hud.insertAdjacentHTML('beforeend', html);
+
+// Sample values (illustrative)
+const V = {health: .72, recent: .82, score: '12,480', intensity: '4.5', hearts: 128, bank: '6,324',
+  orbs: [1, .4], powers: ['jump','heal','shield','bolt','eye','burst'], sel: 3,
+  names: {jump:'Sky Jump', heal:'Heal', shield:'Guard', bolt:'Lightning', eye:'Auto-Aim', burst:'Burst'},
+  uses: {jump:4, heal:2, shield:6, bolt:3, eye:1, burst:5}};
+
+// Original pictograms, 24x24, drawn for this project.
+const ICON = {
+ jump:'<path d="M12 4l5 6h-3v6h-4v-6H7z"/><path d="M3 15c3 0 5 1 6 4M21 15c-3 0-5 1-6 4" fill="none" stroke-width="1.8"/>',
+ heal:'<path d="M12 20s-7-4.4-7-9.6A4 4 0 0112 8a4 4 0 017 2.4C19 15.6 12 20 12 20z"/><path d="M12 10.5v5M9.5 13h5" stroke="#fff" stroke-width="1.8"/>',
+ shield:'<path d="M12 3l7 3v5c0 5-3.4 8.4-7 10-3.6-1.6-7-5-7-10V6z"/><path d="M12 7v10" stroke="#fff" stroke-width="1.4" opacity=".7"/>',
+ bolt:'<path d="M13.5 2L5 13.5h5.5L9 22l9.5-12.5H13z"/>',
+ eye:'<circle cx="12" cy="12" r="7.5" fill="none" stroke-width="2"/><circle cx="12" cy="12" r="2.6"/><path d="M12 1.5v5M12 17.5v5M1.5 12h5M17.5 12h5" stroke-width="2"/>',
+ burst:'<path d="M12 2l2.2 6.2L20.5 6l-3.3 5.6L23 13l-6 1.6 2.5 6-5.3-3.5L12 23l-1.6-5.9L5 20.6l2.4-6L1 13l5.8-1.4L3.5 6l6.3 2.2z"/>'};
+const icon = (k, size, fill, stroke) => `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="${fill}" stroke="${stroke||fill}" stroke-linecap="round" stroke-linejoin="round">${ICON[k]}</svg>`;
+const heartGlyph = (s, c) => `<svg width="${s}" height="${s}" viewBox="0 0 24 24"><path fill="${c}" d="M12 21s-8-5-8-11a4.5 4.5 0 018-2.8A4.5 4.5 0 0120 10c0 6-8 11-8 11z"/></svg>`;
+
+function featherWing(x, y, sc, fill, stroke) {
+  // five primaries fanning up and back from the shoulder, plus a covert row
+  const f = [[-82, 30], [-66, 40], [-50, 50], [-34, 56], [-18, 58], [-2, 52], [12, 40]];
+  return `<g transform="translate(${x} ${y}) scale(${sc})" fill="${fill}" stroke="${stroke}" stroke-width="1.6" stroke-linejoin="round">${
+    f.map(([a,l])=>`<path transform="rotate(${180-a})" d="M0 0C6 -9 ${l*.6} -13 ${l} -4C${l*.75} 2 ${l*.4} 6 0 0z"/>`).join('')}
+    <path d="M4 2C-6 -10 -20 -18 -34 -16C-24 -8 -16 2 -4 10z"/></g>`;
+}
+/* ---------------- Direction A: Skyworld marble & gold ---------------- */
+function styleA() {
+  const gold = '#d9b35b', gold2 = '#8a6421', marble = '#f4f1ea';
+  const defs = `<defs>
+    <linearGradient id="aGold" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#fff1c2"/><stop offset=".45" stop-color="${gold}"/><stop offset="1" stop-color="${gold2}"/></linearGradient>
+    <linearGradient id="aMarble" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#ffffff"/><stop offset=".6" stop-color="${marble}"/><stop offset="1" stop-color="#d9d3c6"/></linearGradient>
+    <linearGradient id="aRed" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ff8a8a"/><stop offset=".5" stop-color="#e0263a"/><stop offset="1" stop-color="#8e0f22"/></linearGradient>
+    <radialGradient id="aOrb" cx=".35" cy=".3" r=".8"><stop offset="0" stop-color="#e9fbff"/><stop offset=".35" stop-color="#5fd0ff"/><stop offset="1" stop-color="#0b4d9a"/></radialGradient>
+    <filter id="aSh"><feDropShadow dx="0" dy="3" stdDeviation="3" flood-opacity=".55"/></filter></defs>`;
+  // Ionic volute end cap
+  const volute = (x, y, flip) => `<g transform="translate(${x} ${y}) scale(${flip?-1:1} 1)"><path d="M0 0c10 0 16-6 16-13s-5-11-10-11-8 3-8 7 3 6 6 6 4-2 4-4" fill="none" stroke="url(#aGold)" stroke-width="4" stroke-linecap="round"/></g>`;
+  const wing = `<g fill="url(#aMarble)" stroke="${gold2}" stroke-width="1.5">
+     <path d="M70 46C46 44 22 30 10 10c16 6 34 8 58 10z"/><path d="M70 54C44 56 20 50 4 36c18 2 38 2 64 4z"/><path d="M70 62C48 68 28 68 12 60c18-2 36-6 56-10z"/></g>`;
+  const W = 760;
+  add(`<svg class="abs" style="left:44px;top:34px" width="${W}" height="120" filter="url(#aSh)">${defs}
+    <circle cx="70" cy="52" r="40" fill="url(#aOrb)" stroke="url(#aGold)" stroke-width="6"/>
+    ${featherWing(96, 76, .95, 'url(#aMarble)', gold2)}
+    <rect x="118" y="30" width="${W-170}" height="44" rx="22" fill="url(#aMarble)" stroke="url(#aGold)" stroke-width="5"/>
+    <rect x="130" y="40" width="${(W-194)*V.recent}" height="24" rx="12" fill="#f6b6b6"/>
+    <rect x="130" y="40" width="${(W-194)*V.health}" height="24" rx="12" fill="url(#aRed)"/>
+    <rect x="138" y="43" width="${(W-210)*V.health}" height="6" rx="3" fill="#fff" opacity=".45"/>
+    ${volute(W-48, 66, false)}
+    <path d="M150 94h${W-240}" stroke="url(#aGold)" stroke-width="3"/>
+    <path d="M150 106${Array.from({length:26},()=>`h6v-8h10v8h6`).join('')}" fill="none" stroke="${gold}" stroke-width="2" opacity=".85"/>
+  </svg>`);
+  // Score
+  add(`<div class="abs" style="right:52px;top:30px;text-align:right;filter:drop-shadow(0 3px 4px rgba(0,0,0,.6))">
+    <div style="font:700 22px Cinzel;letter-spacing:8px;color:${gold}">SCORE</div>
+    <div style="font:900 64px/1 Cinzel;color:#fff;-webkit-text-stroke:2px ${gold2};letter-spacing:2px">${V.score}</div>
+    <svg width="300" height="12" style="display:block;margin-left:auto"><defs><linearGradient id="aG2"><stop offset="0" stop-color="${gold}" stop-opacity="0"/><stop offset="1" stop-color="${gold}"/></linearGradient></defs><path d="M0 6h300" stroke="url(#aG2)" stroke-width="3"/><circle cx="294" cy="6" r="5" fill="${gold}"/></svg></div>`);
+  // Counters tablet
+  const row = (ic, label, val) => `<div style="display:flex;align-items:center;gap:12px;height:40px">${ic}<span style="font:400 19px Marcellus;color:#6a5223;flex:1">${label}</span><span style="font:700 30px Cinzel;color:#2c2414">${val}</span></div>`;
+  add(`<div class="abs" style="right:52px;top:150px;width:300px;padding:10px 20px;background:linear-gradient(135deg,#fff,#efe9dc 60%,#ddd5c4);border:4px solid ${gold};border-radius:6px;box-shadow:0 0 0 2px ${gold2} inset,0 4px 10px rgba(0,0,0,.5)">
+    ${row(`<svg width="30" height="30" viewBox="0 0 24 24"><path d="M12 2l3 7 7 .6-5.4 4.6 1.7 7.3L12 17.8 5.7 21.5l1.7-7.3L2 9.6 9 9z" fill="#8f4bd6"/></svg>`, 'Intensity', V.intensity)}
+    ${row(heartGlyph(30,'#e0263a'), 'Hearts', V.hearts)}
+    ${row(`<svg width="30" height="30" viewBox="0 0 24 24"><path d="M7 7h10l3 13H4z" fill="${gold}" stroke="${gold2}"/><path d="M8 7c0-3 8-3 8 0" fill="none" stroke="${gold2}" stroke-width="2"/><path d="M12 11.5c-1.6-2-4 0-2.4 2L12 16l2.4-2.5c1.6-2-.8-4-2.4-2z" fill="#e0263a"/></svg>`, 'Bank', V.bank)}
+  </div>`);
+  // Air: orbs. Land: palette.
+  if (SCENE !== 'land') {
+    add(`<svg class="abs" style="left:170px;top:150px" width="220" height="90" filter="url(#aSh)">${V.orbs.map((f,i)=>`
+      <g transform="translate(${44+i*96} 44)"><circle r="38" fill="#0d1a33" opacity=".55"/>
+      <clipPath id="aoc${i}"><rect x="-34" y="${34-68*f}" width="68" height="${68*f}"/></clipPath>
+      <circle r="34" fill="url(#aOrb)" clip-path="url(#aoc${i})"/>
+      <circle r="38" fill="none" stroke="url(#aGold)" stroke-width="6"/>
+      ${f>=1?'<ellipse cx="-11" cy="-14" rx="10" ry="6" fill="#fff" opacity=".7"/>':''}</g>`).join('')}</svg>`);
+  } else {
+    const n = V.powers.length;
+    add(`<svg class="abs" style="left:150px;top:150px" width="${n*84+40}" height="170" filter="url(#aSh)">${V.powers.map((p,i)=>{
+      const s = i===V.sel, r = s?40:31, x = 44+i*84, y = s?48:52;
+      return `<g transform="translate(${x} ${y})">
+        <circle r="${r}" fill="url(#aMarble)" stroke="url(#aGold)" stroke-width="${s?6:4}"/>
+        ${s?`<circle r="${r+8}" fill="none" stroke="#fff6cf" stroke-width="3" opacity=".9"/>`:''}
+        <g transform="translate(${-r*.62} ${-r*.62})">${icon(p, r*1.24, s?'#7a2fc9':'#5c4a2a')}</g>
+        <g transform="translate(${r*.62} ${r*.62})"><circle r="13" fill="${gold2}"/><text text-anchor="middle" y="6" font-family="Cinzel" font-weight="700" font-size="17" fill="#fff">${V.uses[p]}</text></g></g>`}).join('')}
+      <g transform="translate(${44+V.sel*84} 118)"><path d="M-90 0h180l-14 18 14 18h-180l14-18z" fill="${gold}" stroke="${gold2}" stroke-width="2"/>
+      <text text-anchor="middle" y="26" font-family="Cinzel" font-weight="700" font-size="20" fill="#2c2414">${V.names[V.powers[V.sel]]}</text></g></svg>`);
+  }
+}
+
+/* ---------------- Direction B: ink & light ---------------- */
+function styleB() {
+  const cyan = '#7ff3ff', pink = '#ff6fae';
+  const ink = 'rgba(10,6,24,.82)';
+  // calligraphic flourish, hand-drawn bezier strokes
+  const flourish = (tr) => `<g transform="${tr}" fill="none" stroke="${ink}" stroke-linecap="round">
+     <path d="M0 40C40 40 60 10 100 12s50 30 30 40-30-10-12-22" stroke-width="10"/>
+     <path d="M20 54c30 10 60 4 80-12" stroke-width="5"/><circle cx="118" cy="30" r="5" fill="${ink}"/></g>`;
+  const W = 740;
+  add(`<svg class="abs" style="left:30px;top:26px" width="${W+60}" height="140">
+    <defs><linearGradient id="bFill" x1="0" x2="1"><stop offset="0" stop-color="${pink}"/><stop offset="1" stop-color="#ff2f6a"/></linearGradient>
+    <filter id="bGlow"><feGaussianBlur stdDeviation="4" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter></defs>
+    <path d="M40 30C120 6 ${W-120} 10 ${W} 30c20 6 20 40 0 46C${W-120} 96 120 100 40 78 6 66 6 40 40 30z" fill="${ink}"/>
+    ${flourish(`translate(${W-70} 36)`)}
+    ${featherWing(84, 62, .9, '#fff', 'rgba(10,6,24,.6)')}<circle cx="88" cy="54" r="9" fill="${cyan}" filter="url(#bGlow)"/>
+    <rect x="110" y="44" width="${W-190}" height="18" rx="9" fill="rgba(255,255,255,.12)"/>
+    <rect x="110" y="44" width="${(W-190)*V.recent}" height="18" rx="9" fill="#fff" opacity=".35"/>
+    <rect x="110" y="44" width="${(W-190)*V.health}" height="18" rx="9" fill="url(#bFill)" filter="url(#bGlow)"/>
+  </svg>`);
+  add(`<div class="abs" style="right:40px;top:22px;text-align:right">
+    <svg class="abs" style="right:-20px;top:-6px" width="420" height="130"><path d="M420 10C300 0 120 8 30 36-10 50 10 100 60 104c120 10 260 4 360-6z" fill="${ink}"/>${flourish('translate(10 70) scale(-.8 .8) translate(-140 0)')}</svg>
+    <div style="position:relative;padding:8px 22px 0 0;font:800 20px Rounded;letter-spacing:6px;color:${cyan}">SCORE</div>
+    <div style="position:relative;padding-right:22px;font:800 60px/1.05 Rounded;color:#fff;text-shadow:0 0 14px rgba(127,243,255,.6)">${V.score}</div></div>`);
+  const chip = (ic, val, col) => `<div style="display:flex;align-items:center;gap:8px;padding:6px 16px 6px 10px;background:${ink};border-radius:24px 6px 24px 6px;border-left:3px solid ${col}">${ic}<span style="font:800 26px Rounded;color:#fff">${val}</span></div>`;
+  add(`<div class="abs" style="right:44px;top:160px;display:flex;flex-direction:column;align-items:flex-end;gap:8px">
+    ${chip(`<span style="font:800 15px Rounded;color:#c9a2ff;letter-spacing:2px">INTENSITY</span>`, V.intensity, '#c9a2ff')}
+    <div style="display:flex;gap:8px">${chip(heartGlyph(26,pink), V.hearts, pink)}${chip(`<span style="font:800 15px Rounded;color:#ffd36f;letter-spacing:2px">BANK</span>`, V.bank, '#ffd36f')}</div></div>`);
+  if (SCENE !== 'land') {
+    add(`<svg class="abs" style="left:150px;top:132px" width="240" height="100">${V.orbs.map((f,i)=>`
+      <g transform="translate(${44+i*90} 46)"><circle r="36" fill="${ink}"/>
+      <circle r="27" fill="none" stroke="rgba(255,255,255,.15)" stroke-width="8"/>
+      <circle r="27" fill="none" stroke="${cyan}" stroke-width="8" stroke-dasharray="${170*f} 200" transform="rotate(-90)" stroke-linecap="round" filter="url(#bGlow)"/>
+      ${f>=1?`<circle r="14" fill="${cyan}" filter="url(#bGlow)"/>`:`<circle r="9" fill="rgba(127,243,255,.35)"/>`}</g>`).join('')}</svg>`);
+  } else {
+    const n = V.powers.length;
+    add(`<div class="abs" style="left:146px;top:134px;display:flex;align-items:flex-end;gap:10px;padding:12px 18px;background:${ink};border-radius:40px 10px 40px 10px">
+      ${V.powers.map((p,i)=>{const s=i===V.sel;return `<div style="position:relative;width:${s?74:56}px;height:${s?74:56}px;border-radius:50%;display:grid;place-items:center;background:${s?'rgba(127,243,255,.18)':'rgba(255,255,255,.06)'};box-shadow:${s?`0 0 0 3px ${cyan},0 0 18px ${cyan}`:'0 0 0 2px rgba(255,255,255,.25)'}">${icon(p,s?40:30,s?'#fff':'#cfd6ee')}
+        <span style="position:absolute;right:-4px;bottom:-4px;font:800 16px Rounded;color:#0a0618;background:${s?cyan:'#cfd6ee'};border-radius:10px;padding:0 6px">${V.uses[p]}</span></div>`}).join('')}</div>
+      <div class="abs" style="left:${170+V.sel*66}px;top:238px;font:800 24px Rounded;color:#fff;text-shadow:0 0 10px ${cyan},0 2px 3px #000">${V.names[V.powers[V.sel]]}</div>`);
+  }
+}
+
+/* ---------------- Direction C: celestial glass ---------------- */
+function styleC() {
+  const gold = '#e8c879', glass = 'background:rgba(16,22,44,.45);backdrop-filter:blur(10px) saturate(1.3);border:1px solid rgba(255,255,255,.22);box-shadow:inset 0 1px 0 rgba(255,255,255,.25),0 6px 18px rgba(0,0,0,.35)';
+  const segs = 20, filled = Math.round(V.health*segs), recent = Math.round(V.recent*segs);
+  add(`<div class="abs" style="left:40px;top:34px;display:flex;align-items:center;gap:14px;padding:12px 22px 12px 14px;border-radius:14px;${glass}">
+    <svg width="58" height="58" viewBox="0 0 58 58"><path d="M29 6l20 12v22L29 52 9 40V18z" fill="none" stroke="${gold}" stroke-width="2.5"/>
+      <path d="M29 20c-6-6-14-6-18-2 6 0 10 3 12 7-6-2-11 0-13 4 6-1 11 1 13 4-4 0-7 2-8 5 6-1 11-5 14-10zM29 20c6-6 14-6 18-2-6 0-10 3-12 7 6-2 11 0 13 4-6-1-11 1-13 4 4 0 7 2 8 5-6-1-11-5-14-10z" fill="#fff"/></svg>
+    <div><div style="font:700 15px Rajdhani;letter-spacing:4px;color:${gold};margin-bottom:6px">PIT · VITALITY</div>
+    <div style="display:flex;gap:4px">${Array.from({length:segs},(_,i)=>`<div style="width:24px;height:20px;transform:skewX(-18deg);border-radius:3px;background:${i<filled?'linear-gradient(#ff8fa0,#e8203f)':i<recent?'rgba(255,190,200,.55)':'rgba(255,255,255,.12)'};${i<filled?'box-shadow:0 0 8px rgba(255,60,90,.6)':''}"></div>`).join('')}</div></div></div>`);
+  add(`<div class="abs" style="right:40px;top:34px;padding:10px 24px 12px;border-radius:14px;text-align:right;${glass}">
+    <div style="font:700 15px Rajdhani;letter-spacing:5px;color:${gold}">SCORE</div>
+    <div style="font:800 54px/1 Exo;color:#fff;letter-spacing:1px">${V.score}</div></div>`);
+  const cell = (label, val, col) => `<div style="padding:6px 14px;text-align:right;border-left:2px solid ${col}"><div style="font:700 13px Rajdhani;letter-spacing:3px;color:${col}">${label}</div><div style="font:700 30px/1 Rajdhani;color:#fff">${val}</div></div>`;
+  add(`<div class="abs" style="right:40px;top:150px;display:flex;gap:4px;padding:8px 6px;border-radius:12px;${glass}">
+    ${cell('INTENSITY', V.intensity, '#c7a6ff')}${cell('HEARTS', V.hearts, '#ff8fb1')}${cell('BANK', V.bank, gold)}</div>`);
+  if (SCENE !== 'land') {
+    add(`<div class="abs" style="left:112px;top:146px;display:flex;gap:12px;padding:10px 14px;border-radius:12px;${glass}">${V.orbs.map(f=>`
+      <svg width="62" height="66" viewBox="-31 -33 62 66"><clipPath id="ch${f}"><path d="M0 -30L26 -15V15L0 30L-26 15V-15z"/></clipPath>
+      <path d="M0 -30L26 -15V15L0 30L-26 15V-15z" fill="rgba(255,255,255,.07)"/>
+      <rect x="-30" y="${30-60*f}" width="60" height="${60*f}" fill="url(#cOrb)" clip-path="url(#ch${f})"/>
+      <defs><linearGradient id="cOrb" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#d6f8ff"/><stop offset="1" stop-color="#2aa8e8"/></linearGradient></defs>
+      <path d="M0 -30L26 -15V15L0 30L-26 15V-15z" fill="none" stroke="${gold}" stroke-width="2"/></svg>`).join('')}
+      <div style="align-self:center;margin-left:10px;font:700 15px Rajdhani;letter-spacing:3px;color:#bff4ff">SPECIAL<br><span style="color:#fff;font-size:22px">E</span></div></div>`);
+  } else {
+    add(`<div class="abs" style="left:40px;top:150px;padding:10px 14px 12px;border-radius:12px;${glass}">
+      <div style="display:flex;gap:8px">${V.powers.map((p,i)=>{const s=i===V.sel;return `<div style="position:relative;width:58px;height:58px;border-radius:10px;display:grid;place-items:center;background:${s?'rgba(232,200,121,.25)':'rgba(255,255,255,.06)'};border:2px solid ${s?gold:'rgba(255,255,255,.18)'}">${icon(p,32,s?'#fff':'#c6cde3')}
+        <span style="position:absolute;right:3px;bottom:0;font:700 15px Rajdhani;color:${s?gold:'#c6cde3'}">${V.uses[p]}</span></div>`}).join('')}</div>
+      <div style="display:flex;justify-content:space-between;margin-top:8px;font:700 20px Rajdhani;color:#fff;letter-spacing:1px"><span>${V.names[V.powers[V.sel]]}</span><span style="color:${gold};font-size:15px;letter-spacing:3px">WHEEL ◂ ▸ · E USE</span></div></div>`);
+  }
+}
+
+/* ---------------- Pause panel per direction ---------------- */
+function pause() {
+  hud.insertAdjacentHTML('afterbegin','<div class="dim"></div>');
+  const items = ['Resume','Options','Controls','Retreat'];
+  const info = [['Chapter','1 · The Return of Palutena'],['Intensity',V.intensity],['Hearts',V.hearts],['Score',V.score]];
+  if (STYLE === 'A') add(`<div class="abs" style="left:560px;top:160px;width:800px;height:740px;background:linear-gradient(160deg,#fff,#efe9dc 60%,#d8cfbc);border:6px solid #d9b35b;border-radius:10px;box-shadow:0 0 0 3px #8a6421 inset,0 20px 50px rgba(0,0,0,.6)">
+     <div style="text-align:center;margin-top:34px;font:900 64px Cinzel;color:#2c2414;letter-spacing:10px">PAUSE</div>
+     <svg width="800" height="20"><path d="M140 10h520" stroke="#d9b35b" stroke-width="3"/><circle cx="400" cy="10" r="7" fill="#d9b35b"/></svg>
+     <div style="display:flex;gap:40px;padding:26px 56px">
+       <div style="flex:1;display:flex;flex-direction:column;gap:14px">${items.map((t,i)=>`<div style="padding:14px 24px;font:700 30px Cinzel;color:${i?'#2c2414':'#fff'};background:${i?'rgba(255,255,255,.6)':'linear-gradient(#e9c873,#9a7428)'};border:3px solid #d9b35b;border-radius:40px">${i?'':'❯ '}${t}</div>`).join('')}</div>
+       <div style="flex:1;font:400 22px Marcellus;color:#6a5223">${info.map(([k,v])=>`<div style="display:flex;justify-content:space-between;border-bottom:1px solid #d9b35b;padding:13px 0"><span>${k}</span><b style="font:700 24px Cinzel;color:#2c2414">${v}</b></div>`).join('')}</div></div>
+     <div style="position:absolute;bottom:26px;left:0;right:0;text-align:center;font:400 20px Marcellus;color:#8a6421">Enter select · Esc resume · Wheel move</div></div>`);
+  if (STYLE === 'B') add(`<div class="abs" style="left:520px;top:180px;width:880px;height:700px;background:rgba(10,6,24,.86);border-radius:120px 24px 120px 24px">
+     <div style="margin:50px 0 0 90px;font:800 64px Rounded;color:#fff;text-shadow:0 0 18px #7ff3ff">Paused</div>
+     <div style="display:flex;gap:50px;padding:30px 90px">
+       <div style="flex:1;display:flex;flex-direction:column;gap:16px">${items.map((t,i)=>`<div style="padding:12px 26px;font:800 30px Rounded;color:${i?'#cfd6ee':'#0a0618'};background:${i?'rgba(255,255,255,.06)':'#7ff3ff'};border-radius:30px 8px 30px 8px;${i?'':'box-shadow:0 0 22px #7ff3ff'}">${t}</div>`).join('')}</div>
+       <div style="flex:1;font:500 22px Rounded;color:#9aa3c4">${info.map(([k,v])=>`<div style="padding:12px 0"><div>${k}</div><div style="font:800 28px Rounded;color:#fff">${v}</div></div>`).join('')}</div></div>
+     <div style="position:absolute;bottom:40px;left:90px;font:500 20px Rounded;color:#ff6fae">Enter select · Esc resume</div></div>`);
+  if (STYLE === 'C') add(`<div class="abs" style="left:540px;top:190px;width:840px;height:680px;background:rgba(16,22,44,.5);backdrop-filter:blur(16px) saturate(1.3);border:1px solid rgba(255,255,255,.22);border-radius:22px;box-shadow:inset 0 1px 0 rgba(255,255,255,.25),0 20px 50px rgba(0,0,0,.5)">
+     <div style="margin:44px 0 0 60px;font:700 18px Rajdhani;letter-spacing:6px;color:#e8c879">CHAPTER 1</div>
+     <div style="margin-left:60px;font:800 60px Exo;color:#fff">Paused</div>
+     <div style="display:flex;gap:44px;padding:26px 60px">
+       <div style="flex:1;display:flex;flex-direction:column;gap:12px">${items.map((t,i)=>`<div style="display:flex;justify-content:space-between;padding:14px 22px;font:700 28px Rajdhani;letter-spacing:1px;color:#fff;background:${i?'rgba(255,255,255,.06)':'rgba(232,200,121,.25)'};border:1px solid ${i?'rgba(255,255,255,.15)':'#e8c879'};border-radius:10px"><span>${t}</span><span style="color:#e8c879">${i?'':'⏎'}</span></div>`).join('')}</div>
+       <div style="flex:1">${info.slice(1).map(([k,v])=>`<div style="padding:12px 0;border-bottom:1px solid rgba(255,255,255,.12)"><div style="font:700 14px Rajdhani;letter-spacing:4px;color:#e8c879">${k.toUpperCase()}</div><div style="font:700 34px Rajdhani;color:#fff">${v}</div></div>`).join('')}</div></div>
+     <div style="position:absolute;bottom:34px;left:60px;font:700 18px Rajdhani;letter-spacing:3px;color:#9aa6c8">ENTER SELECT · ESC RESUME · WHEEL MOVE</div></div>`);
+}
+
+if (MODE === 'pause') pause(); else ({A: styleA, B: styleB, C: styleC})[STYLE]();
+</script></body></html>
