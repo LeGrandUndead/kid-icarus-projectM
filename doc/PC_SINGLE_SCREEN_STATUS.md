@@ -162,3 +162,13 @@ plate is two gm_00 white scroll blobs tinted pale, with the small digit row
 and gc_00 heart/bank medallions plus the purple intensity pill; the land
 palette is a gm_00 dark tray, 9-slice white highlight pieces, gc_00 gold
 arrows and the small digit row for uses.
+
+## HUD asset quality (October 16)
+
+The HUD packs above are replaced by a hybrid reconstruction per piece
+(flat-layer tracing for ornaments, plates and digits; soft enlargement for
+shaded, glowing and semi-transparent art; traced outlines with smooth
+colours for power icons). Details, checks and tools:
+doc/PC_HUD_ASSET_RECONSTRUCTION.md. Output `build/texture-work/hud-pc`,
+selected automatically by the PC launcher (`--hud-art previous|original`
+to compare). Not yet checked in game.

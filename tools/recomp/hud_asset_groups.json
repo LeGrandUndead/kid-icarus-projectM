@@ -1,0 +1,21 @@
+{
+  "_doc": "Regions of the HUD atlases shown on comparison sheets (atlas pixel rectangles x0,y0,x1,y1; no image data). Atlases by runtime fingerprint.",
+  "atlases": {
+    "gm_00": "D61A7866121DF76F",
+    "gm_02": "2303D42752AFD91E",
+    "gc_00": "1033DFD830565E9A",
+    "mr": "260C607B8981C6F8"
+  },
+  "groups": {
+    "health bar": [["gm_00", [0, 0, 92, 30]], ["gm_00", [0, 44, 92, 62]]],
+    "score": [["gm_00", [96, 36, 184, 82]]],
+    "digits": [["gm_00", [0, 80, 130, 96]], ["gm_00", [0, 96, 132, 112]], ["gm_00", [0, 112, 130, 131]], ["gm_00", [0, 132, 120, 148]]],
+    "Power Palette ornaments": [["gm_02", [0, 84, 182, 136]], ["gm_02", [0, 0, 108, 48]]],
+    "buttons and glyphs": [["gm_00", [118, 158, 256, 210]], ["gm_02", [108, 36, 180, 80]]],
+    "wings": [["gc_00", [0, 0, 128, 24]], ["gc_00", [128, 0, 220, 24]]],
+    "orbs and medallions": [["gc_00", [0, 72, 120, 116]]],
+    "power icons": [["mr", [0, 0, 128, 64]], ["mr", [128, 192, 256, 256]]],
+    "item icons": [["gc_00", [0, 30, 200, 64]]],
+    "dialogue and UI ornaments": [["gm_02", [180, 28, 230, 66]], ["gm_02", [180, 138, 256, 230]]]
+  }
+}

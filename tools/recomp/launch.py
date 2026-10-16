@@ -41,7 +41,8 @@ def main() -> int:
     ap.add_argument("--experimental", action="store_true", help="separate experimental executable, settings and copied saves")
     ap.add_argument("--single-screen", action="store_true", help="isolated single-screen compositor test build")
     ap.add_argument("--dialogue-preview", action="store_true", help="isolated original-portrait gameplay preview")
-    ap.add_argument("--original-hud-resolution", action="store_true", help="PC interface: do not use the local HD HUD pack (build/texture-work/hud-hd)")
+    ap.add_argument("--original-hud-resolution", action="store_true", help="PC interface: original HUD art (same as --hud-art original)")
+    ap.add_argument("--hud-art", choices=("pc", "previous", "original"), default="pc", help="development comparison: pc = reconstructed pack (build/texture-work/hud-pc), previous = earlier HD pack (hud-hd), original = ROM resolution")
     ap.add_argument("--pc-interface", action="store_true", help="gameplay preview + original specials/powers/counters HUD and automatic pause panel (separate executable, preview profile)")
     ap.add_argument("--no-native-hud", action="store_true", help="PC interface: keep only the portraits, for comparison")
     ap.add_argument("--ui-census", action="store_true", help="PC interface: record catalogued lower-screen draws to a CSV for tracing")
@@ -134,10 +135,13 @@ def main() -> int:
         if args.no_native_hud: env["KIU_NATIVE_HUD"] = "0"
         # HD HUD: the game's own HUD atlases enlarged locally from the ROM
         # (tools/recomp/build_hud_hd_pack.py). Only those atlases are in it.
-        hud_hd = ROOT / "build/texture-work/hud-hd"
-        if hud_hd.is_dir() and not args.original_hud_resolution:
-            env["KIU_HUD_PACK"] = str(hud_hd.resolve())
-            print("HD HUD: original HUD art enlarged from your ROM (--original-hud-resolution to compare).", flush=True)
+        # build_hud_pc_pack.py writes hud-pc; hud-hd is the earlier pack.
+        art = "original" if args.original_hud_resolution else args.hud_art
+        packs = {"pc": ["hud-pc", "hud-hd"], "previous": ["hud-hd"], "original": []}[art]
+        hud_pack = next((ROOT / "build/texture-work" / name for name in packs if (ROOT / "build/texture-work" / name).is_dir()), None)
+        if hud_pack:
+            env["KIU_HUD_PACK"] = str(hud_pack.resolve())
+            print(f"HUD art: {hud_pack.name}, reconstructed from your ROM (--hud-art previous/original to compare).", flush=True)
         if camera_override or args.original_aspect: env["KIU_GAMEPLAY_CAMERA_SCALE"] = str(args.camera_scale)
     elif args.dialogue_preview:
         sources = ROOT / "build/native-ui/dialogue-sources/portrait-hashes.txt"
