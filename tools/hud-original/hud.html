@@ -60,30 +60,26 @@ function wing(x, y, s = 1, rot = 0) {
 
 /* ---------------- health bar ------------------------------------------ */
 function health(x, y) {
-  const top = 44, bot = 88, mid = 66, L = 150, R = 600;
+  const top = 50, bot = 82, mid = 66, L = 150, R = 560;
   // plate: bulbous root on the left, long blade to the right
   // plate: rounded root under the wing, gentle arch, short leaf-blade tip
-  const plate = `M${L - 10} ${top - 4}C${L + 140} ${top - 12} ${R - 120} ${top - 2} ${R} ${top + 4}C${R + 22} ${top + 6} ${R + 40} ${mid - 8} ${R + 58} ${mid}C${R + 40} ${mid + 8} ${R + 22} ${bot - 6} ${R} ${bot - 4}C${R - 120} ${bot + 2} ${L + 140} ${bot + 10} ${L - 10} ${bot + 4}C${L - 44} ${bot + 2} ${L - 58} ${mid + 18} ${L - 58} ${mid}C${L - 58} ${mid - 20} ${L - 44} ${top - 4} ${L - 10} ${top - 4}Z`;
-  const W = R - L - 6, hpW = W * V.hp, bt = mid - 11;
+  const plate = `M${L - 10} ${top - 4}C${L + 140} ${top - 12} ${R - 120} ${top - 2} ${R} ${top + 4}C${R + 22} ${top + 6} ${R + 40} ${mid - 8} ${R + 58} ${mid}C${R + 40} ${mid + 8} ${R + 22} ${bot - 6} ${R} ${bot - 4}C${R - 120} ${bot + 2} ${L + 140} ${bot + 10} ${L - 10} ${bot + 4}C${L - 44} ${bot + 2} ${L - 34} ${mid + 12} ${L - 34} ${mid}C${L - 34} ${mid - 12} ${L - 30} ${top - 4} ${L - 10} ${top - 4}Z`;
+  const W = R - L - 6, hpW = W * V.hp, bt = mid - 9;
   const ink = [
-    // swooshes growing out of the plate's root, ending in curls
-    INK.tendril([[[L + 6, top + 6], [L + 14, top - 26], [L + 54, top - 44], [L + 96, top - 40]]], 20, 30, -1, 1.2, .95),
-    INK.tendril([[[L + 92, top + 4], [L + 112, top - 16], [L + 150, top - 22], [L + 176, top - 18]]], 14, 21, -1, 1.15, .9),
-    INK.tendril([[[L + 150, bot - 4], [L + 166, bot + 18], [L + 200, bot + 24], [L + 226, bot + 20]]], 12, 17, 1, 1.15, .95),
-    INK.leaf([L + 196, top + 3], -1.25, 40, 11), INK.leaf([L + 222, top + 3], -.85, 30, 9),
-    INK.leaf([L + 330, top + 3], -1.15, 26, 8),
-    // sprig at the blade tip
-    INK.tendril([[[R + 30, mid - 8], [R + 48, mid - 30], [R + 76, mid - 38], [R + 100, mid - 34]]], 11, 17, -1, 1.15, .9),
-    INK.leaf([R + 44, mid + 6], .5, 40, 10), INK.leaf([R + 22, mid + 12], 1.1, 26, 7),
+    // small crest at the root, a sprig at the tip
+    INK.tendril([[[L - 10, top + 2], [L - 4, top - 18], [L + 20, top - 28], [L + 44, top - 22]]], 12, 13, -1, 1.15, .95),
+    INK.leaf([L + 52, top + 1], -1.15, 22, 6), INK.leaf([L + 70, top + 1], -.8, 16, 5),
+    INK.tendril([[[R + 30, mid - 6], [R + 42, mid - 20], [R + 60, mid - 24], [R + 74, mid - 20]]], 8, 10, -1, 1.1, .9),
+    INK.leaf([R + 40, mid + 5], .55, 22, 6),
   ].map(d => P(d, INKC)).join('');
   return `<g transform="translate(${x} ${y})">
     <g filter="url(#shadow)">${ink}<path d="${plate}" fill="url(#plate)" stroke="${INKC}" stroke-width="7" stroke-linejoin="round"/></g>
     <path d="${plate}" fill="none" stroke="#ffffff" stroke-opacity=".16" stroke-width="2" transform="translate(0 1.5)"/>
-    <rect x="${L}" y="${bt}" width="${W}" height="22" rx="11" fill="url(#track)"/>
-    <rect x="${L}" y="${bt}" width="${hpW + 22}" height="22" rx="11" fill="#ff9aa6"/>
-    <rect x="${L}" y="${bt}" width="${hpW}" height="22" rx="11" fill="url(#hpFill)"/>
-    <rect x="${L + 10}" y="${bt + 3}" width="${hpW - 20}" height="5" rx="2.5" fill="#fff" opacity=".55"/>
-    ${wing(-60, -40, .95, 0)}
+    <rect x="${L}" y="${bt}" width="${W}" height="18" rx="9" fill="url(#track)"/>
+    <rect x="${L}" y="${bt}" width="${hpW + 22}" height="18" rx="9" fill="#ff9aa6"/>
+    <rect x="${L}" y="${bt}" width="${hpW}" height="18" rx="9" fill="url(#hpFill)"/>
+    <rect x="${L + 8}" y="${bt + 3}" width="${hpW - 16}" height="4" rx="2" fill="#fff" opacity=".55"/>
+    ${wing(-6, -8, .7, 0)}
   </g>`;
 }
 
@@ -92,41 +88,38 @@ const txt = (x, y, s, size, fill, anchor = 'end', sw = 0.2) =>
   `<text x="${x}" y="${y}" font-family="Lilita" font-size="${size}" fill="${fill}" text-anchor="${anchor}" stroke="${INKC}" stroke-width="${size * sw}" stroke-linejoin="round" paint-order="stroke" letter-spacing="${size * .02}">${s}</text>`;
 function score(xr, y) {
   const ink = [
-    INK.tendril([[[xr + 40, y - 30], [xr - 40, y + 10], [xr - 190, y - 22], [xr - 286, y + 24]]], 22, 31.9, -1, 1.2, .9),
-    INK.tendril([[[xr - 140, y + 4], [xr - 170, y + 28], [xr - 214, y + 30], [xr - 232, y + 54]]], 12, 17.4, -1, 1.1),
-    INK.tendril([[[xr + 40, y + 20], [xr + 12, y + 46], [xr + 4, y + 96], [xr + 26, y + 136]]], 16, 22, -1, 1.15, .95),
-    INK.leaf([xr - 84, y + 2], 1.95, 38, 10), INK.leaf([xr - 112, y + 0], 2.35, 28, 8), INK.leaf([xr + 8, y + 70], 3.3, 30, 8),
-    INK.leaf([xr + 10, y + 94], 2.8, 22, 6),
-  ].map(d => P(d, INKC, 'opacity=".94"')).join('');
+    INK.tendril([[[xr + 20, y + 4], [xr - 40, y + 20], [xr - 130, y + 6], [xr - 190, y + 30]]], 13, 13, -1, 1.15, .9),
+    INK.leaf([xr - 60, y + 14], 2.0, 22, 6),
+  ].map(d => P(d, INKC, 'opacity=".92"')).join('');
   return `<g filter="url(#shadow)">${ink}</g>
-    ${txt(xr - 44, y + 54, 'SCORE', 44, '#fff')}
-    ${txt(xr - 44, y + 132, V.score, 84, '#fff', 'end', 0.17)}`;
+    ${txt(xr - 16, y + 40, 'SCORE', 30, '#fff')}
+    ${txt(xr - 16, y + 96, V.score, 58, '#fff', 'end', 0.17)}`;
 }
 
 /* ---------------- counters plate --------------------------------------- */
 function cloudPlate(x, y, w, h) {
   // white scroll plate: big soft scallops on the top-left and bottom-right edges
   let bumps = '';
-  const top = [[.06, 16], [.2, 20], [.36, 15], [.5, 12]], bottom = [[.55, 12], [.7, 16], [.85, 20], [.96, 15]];
+  const top = [[.08, 11], [.24, 13], [.4, 10]], bottom = [[.62, 10], [.78, 13], [.93, 11]];
   top.forEach(([f, r]) => bumps += `<circle cx="${x + w * f}" cy="${y + 10}" r="${r}"/>`);
   bottom.forEach(([f, r]) => bumps += `<circle cx="${x + w * f}" cy="${y + h - 10}" r="${r}"/>`);
-  const body = `<rect x="${x}" y="${y + 4}" width="${w}" height="${h - 8}" rx="26"/>${bumps}`;
+  const body = `<rect x="${x}" y="${y + 4}" width="${w}" height="${h - 8}" rx="18"/>${bumps}`;
   const curlA = INK.tendril([[[x + w * .62, y + 2], [x + w * .74, y - 14], [x + w * .9, y - 12], [x + w - 6, y + 2]]], 9, 13, 1, 1.1, .8);
   const curlB = INK.tendril([[[x + w * .4, y + h - 2], [x + w * .28, y + h + 14], [x + w * .12, y + h + 12], [x + 4, y + h - 2]]], 9, 13, 1, 1.1, .8);
-  return `<g filter="url(#shadow)"><path d="${curlA}" fill="${INKC}"/><path d="${curlB}" fill="${INKC}"/><g fill="${INKC}" stroke="${INKC}" stroke-width="10">${body}</g><g fill="url(#cloud)">${body}</g></g>
+  return `<g filter="url(#shadow)"><g fill="${INKC}" stroke="${INKC}" stroke-width="7">${body}</g><g fill="url(#cloud)">${body}</g></g>
    <rect x="${x + 16}" y="${y + h / 2 - 1}" width="${w - 32}" height="2" fill="${INKC}" opacity=".15"/>`;
 }
 const heart = (x, y, s, fill) => `<path transform="translate(${x} ${y}) scale(${s})" d="M0 -6C-4 -14 -16 -12 -16 -2C-16 8 -4 14 0 19C4 14 16 8 16 -2C16 -12 4 -14 0 -6Z" fill="${fill}" stroke="${INKC}" stroke-width="${3 / s}"/>`;
 const jar = (x, y, s) => `<g transform="translate(${x} ${y}) scale(${s})"><path d="M-12 -14H12V-9C20 -4 22 6 18 13C14 20 -14 20 -18 13C-22 6 -20 -4 -12 -9Z" fill="#fff" stroke="${INKC}" stroke-width="3"/><rect x="-14" y="-19" width="28" height="7" rx="3" fill="#fff" stroke="${INKC}" stroke-width="3"/>${heart(0, 4, .55, '#d5203d')}</g>`;
 function counters(xr, y) {
-  const w = 300, h = 120, x = xr - w;
+  const w = 210, h = 84, x = xr - w;
   return `${cloudPlate(x, y, w, h)}
-    <g filter="url(#shadow)"><path d="M${x - 70} ${y + 18}H${x + 26}L${x + 40} ${y + 37}L${x + 26} ${y + 56}H${x - 70}Q${x - 82} ${y + 56} ${x - 82} ${y + 44}V${y + 30}Q${x - 82} ${y + 18} ${x - 70} ${y + 18}Z" fill="url(#purple)" stroke="${INKC}" stroke-width="4"/></g>
-    ${txt(x - 22, y + 50, V.intensity, 34, '#fff', 'middle', .16)}
-    ${heart(x + 72, y + 36, 1.15, '#ff4d6a')}
-    ${txt(xr - 26, y + 52, V.hearts, 40, '#2a2156', 'end', 0)}
-    ${jar(x + 72, y + 88, 1.05)}
-    ${txt(xr - 26, y + 103, V.bank, 40, '#c41a37', 'end', 0)}`;
+    <g filter="url(#shadow)"><path d="M${x - 48} ${y + 12}H${x + 18}L${x + 28} ${y + 26}L${x + 18} ${y + 40}H${x - 48}Q${x - 56} ${y + 40} ${x - 56} ${y + 32}V${y + 20}Q${x - 56} ${y + 12} ${x - 48} ${y + 12}Z" fill="url(#purple)" stroke="${INKC}" stroke-width="3"/></g>
+    ${txt(x - 14, y + 35, V.intensity, 24, '#fff', 'middle', .16)}
+    ${heart(x + 52, y + 25, .8, '#ff4d6a')}
+    ${txt(xr - 18, y + 37, V.hearts, 28, '#2a2156', 'end', 0)}
+    ${jar(x + 52, y + 61, .75)}
+    ${txt(xr - 18, y + 73, V.bank, 28, '#c41a37', 'end', 0)}`;
 }
 
 /* ---------------- orbs ------------------------------------------------- */
@@ -142,27 +135,22 @@ function orb(cx, cy, r, fill, id) {
 
 /* ---------------- power palette ---------------------------------------- */
 function palette(x, y) {
-  const n = 5, size = 64, gap = 14, w = n * (size + gap) + 70;
-  const tray = `M${x} ${y + 14}Q${x} ${y} ${x + 18} ${y}H${x + w - 40}C${x + w - 10} ${y} ${x + w} ${y + 30} ${x + w} ${y + 50}V${y + 70}Q${x + w} ${y + 92} ${x + w - 22} ${y + 92}H${x + 18}Q${x} ${y + 92} ${x} ${y + 78}Z`;
-  const ink = [
-    INK.tendril([[[x + 10, y + 96], [x + 60, y + 120], [x + 140, y + 104], [x + 190, y + 118]]], 9, 13.0, 1, 1.05),
-    INK.tendril([[[x + w - 30, y + 94], [x + w - 80, y + 126], [x + w - 170, y + 112], [x + w - 210, y + 124]]], 9, 13.0, -1, 1.05),
-    INK.leaf([x + 240, y + 96], 1.4, 26, 7), INK.leaf([x + 262, y + 96], 1.0, 20, 6),
-    INK.tendril([[[x + w - 6, y + 40], [x + w + 24, y + 30], [x + w + 40, y + 8], [x + w + 30, y - 6]]], 7, 10.2, -1, 1.0),
-  ].map(d => P(d, INKC)).join('');
+  const n = 5, size = 44, gap = 10, w = n * (size + gap) + 40;
+  const tray = `M${x} ${y + 10}Q${x} ${y} ${x + 12} ${y}H${x + w - 26}C${x + w - 6} ${y} ${x + w} ${y + 20} ${x + w} ${y + 32}V${y + 50}Q${x + w} ${y + 64} ${x + w - 14} ${y + 64}H${x + 12}Q${x} ${y + 64} ${x} ${y + 54}Z`;
+  const ink = [];
   let icons = '';
   for (let i = 0; i < n; i++) {
-    const s = i === V.sel ? size * 1.16 : size, ix = x + 24 + i * (size + gap) - (i === V.sel ? size * .08 : 0), iy = y + 46 - s / 2;
-    if (i === V.sel) icons += `<rect x="${ix - 7}" y="${iy - 7}" width="${s + 14}" height="${s + 14}" rx="12" fill="url(#gold)" stroke="${INKC}" stroke-width="4" filter="url(#glow)"/>`;
+    const s = i === V.sel ? size * 1.16 : size, ix = x + 18 + i * (size + gap) - (i === V.sel ? size * .08 : 0), iy = y + 32 - s / 2;
+    if (i === V.sel) icons += `<rect x="${ix - 7}" y="${iy - 7}" width="${s + 14}" height="${s + 14}" rx="9" fill="url(#gold)" stroke="${INKC}" stroke-width="3" filter="url(#glow)"/>`;
     icons += `<image href="icons.png" x="${ix}" y="${iy}" width="${s}" height="${s}" preserveAspectRatio="none" clip-path="inset(0)" style="object-fit:none" transform=""/>`;
     icons = icons.replace('href="icons.png"', `href="icon${i}.png"`);
-    icons += txt(ix + s + 4, iy + s + 6, V.uses[i], 30, '#fff', 'end', .22);
+    icons += txt(ix + s + 3, iy + s + 4, V.uses[i], 21, '#fff', 'end', .22);
   }
   return `<g filter="url(#shadow)">${ink}<path d="${tray}" fill="url(#cloud)" stroke="${INKC}" stroke-width="5"/></g>
-    <path d="M${x + 6} ${y + 46}l14 -14v28z" fill="url(#gold)" stroke="${INKC}" stroke-width="3"/>${icons}`;
+    <path d="M${x + 4} ${y + 32}l10 -10v20z" fill="url(#gold)" stroke="${INKC}" stroke-width="3"/>${icons}`;
 }
 
-let out = defs + health(110, 46) + score(1872, 22) + counters(1872, 196);
-if (SCENE === 'land') out += palette(210, 186); else out += orb(268, 222, 38, V.orbs[0], 1) + orb(362, 222, 38, V.orbs[1], 2);
+let out = defs + health(40, 30) + score(1880, 24) + counters(1880, 136);
+if (SCENE === 'land') out += palette(150, 128); else out += orb(196, 150, 26, V.orbs[0], 1) + orb(258, 150, 26, V.orbs[1], 2);
 S.innerHTML = out;
 </script></body></html>
