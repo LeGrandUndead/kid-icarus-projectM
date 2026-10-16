@@ -1,0 +1,168 @@
+<!doctype html>
+<html><head><meta charset="utf-8">
+<style>
+@font-face{font-family:Lilita;src:url(node_modules/@fontsource/lilita-one/files/lilita-one-latin-400-normal.woff2)}
+html,body{margin:0;width:1920px;height:1080px;overflow:hidden;background:#000}
+#bg{position:absolute;inset:0;background-size:cover}
+svg{position:absolute;inset:0}
+</style>
+<script src="ink.js"></script>
+</head><body><div id="bg"></div><svg id="s" width="1920" height="1080" viewBox="0 0 1920 1080"></svg>
+<script>
+const q = new URLSearchParams(location.search);
+const SCENE = q.get('scene') || 'air', BGON = q.get('bg') !== '0';
+if (BGON) document.getElementById('bg').style.backgroundImage = `url(${SCENE === 'land' ? 'land_view_clean.png' : 'air_dialogue_view_clean.png'})`;
+const S = document.getElementById('s');
+const INKC = '#15112a';
+const V = { hp: 0.78, score: '12480', intensity: '2.5', hearts: '24', bank: '6449', orbs: [1, 0.4], sel: 1, uses: [4, 10, 2, 6, 3] };
+
+const defs = `<defs>
+ <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%"><feDropShadow dx="0" dy="3" stdDeviation="3" flood-color="#05030f" flood-opacity=".55"/></filter>
+ <filter id="soft"><feGaussianBlur stdDeviation="2.2"/></filter>
+ <filter id="glow" x="-50%" y="-50%" width="200%" height="200%"><feGaussianBlur stdDeviation="7" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+ <linearGradient id="hpFill" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ff8a93"/><stop offset=".38" stop-color="#ff3348"/><stop offset=".72" stop-color="#d81632"/><stop offset="1" stop-color="#8f0a22"/></linearGradient>
+ <linearGradient id="track" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ffffff"/><stop offset=".5" stop-color="#d4d5e0"/><stop offset="1" stop-color="#8e8fa3"/></linearGradient>
+ <linearGradient id="plate" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#2a2348" stop-opacity=".78"/><stop offset="1" stop-color="#0d0a1c" stop-opacity=".82"/></linearGradient>
+ <linearGradient id="feather" x1="1" y1="0" x2="0" y2=".4"><stop offset="0" stop-color="#ffffff"/><stop offset=".55" stop-color="#f4f9ff"/><stop offset="1" stop-color="#b9dcf6"/></linearGradient>
+ <radialGradient id="orb" cx=".36" cy=".3" r=".78"><stop offset="0" stop-color="#e6fdff"/><stop offset=".22" stop-color="#6fd6ff"/><stop offset=".55" stop-color="#1c8ad6"/><stop offset=".85" stop-color="#0b4a95"/><stop offset="1" stop-color="#062a5a"/></radialGradient>
+ <radialGradient id="orbEmpty" cx=".4" cy=".35" r=".8"><stop offset="0" stop-color="#5a6488" stop-opacity=".55"/><stop offset="1" stop-color="#151a33" stop-opacity=".8"/></radialGradient>
+ <linearGradient id="cloud" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ffffff"/><stop offset="1" stop-color="#e9e6f7"/></linearGradient>
+ <linearGradient id="gold" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#fff2b0"/><stop offset=".5" stop-color="#f4c84a"/><stop offset="1" stop-color="#b9861c"/></linearGradient>
+ <linearGradient id="purple" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#8f64e8"/><stop offset="1" stop-color="#4c2a9e"/></linearGradient>
+</defs>`;
+
+const P = (d, fill, extra = '') => `<path d="${d}" fill="${fill}" ${extra}/>`;
+const T = INK.taper;
+
+/* ---------------- wing emblem (original feather design) --------------- */
+function featherPath(root, deg, len, wid, bend) {
+  const a = deg * Math.PI / 180, ca = Math.cos(a), sa = Math.sin(a), nx = -sa, ny = ca;
+  const at = (t, o) => [root[0] + ca * len * t + nx * (o + bend * len * Math.sin(Math.PI * t) * .18), root[1] + sa * len * t + ny * (o + bend * len * Math.sin(Math.PI * t) * .18)];
+  const r = wid * .5, tip = at(1, 0);
+  const u1 = at(.35, wid * .5), u2 = at(.8, wid * .55), l2 = at(.8, -wid * .45), l1 = at(.35, -wid * .4);
+  const tu = at(.97, r * .95), tl = at(.97, -r * .95);
+  return `M${at(0, wid * .3)}C${u1} ${u2} ${tu}Q${tip[0] + ca * r * 1.25} ${tip[1] + sa * r * 1.25} ${tl}C${l2} ${l1} ${at(0, -wid * .3)}Z`;
+}
+function wing(x, y, s = 1, rot = 0) {
+  // original raised wing: smooth leading edge, four scalloped primaries, covert band
+  const st = `stroke="${INKC}" stroke-width="5.5" stroke-linejoin="round"`;
+  const body = 'M204 102C186 60 124 14 34 6C14 4 10 20 22 28C40 38 54 40 66 40C44 44 34 56 40 64C52 72 70 72 86 68C68 76 64 88 72 94C86 102 102 98 114 90C102 100 104 110 112 114C140 124 172 120 194 116Z';
+  const covert = 'M206 104C196 78 168 54 128 44C116 46 116 56 126 62C134 66 144 68 152 68C140 74 140 84 150 88C164 94 182 94 198 92Z';
+  const lines = [
+    INK.brush([[[66, 40], [110, 52], [150, 70], [178, 92]]], 4, .05, .4, .3),
+    INK.brush([[[86, 68], [120, 78], [150, 92], [176, 104]]], 4, .05, .4, .3),
+    INK.brush([[[114, 90], [140, 98], [162, 106], [182, 112]]], 3.5, .05, .4, .3),
+  ].map(d => P(d, '#8ea9cc')).join('');
+  return `<g transform="translate(${x} ${y}) rotate(${rot} 200 108) scale(${s})" filter="url(#shadow)">
+    <g filter="url(#soft)" opacity=".5"><path d="${body}" fill="${INKC}" transform="translate(-3 6)"/></g>
+    <path d="${body}" fill="url(#feather)" ${st}/>${lines}<path d="${covert}" fill="url(#feather)" ${st}/></g>`;
+}
+
+/* ---------------- health bar ------------------------------------------ */
+function health(x, y) {
+  const top = 44, bot = 88, mid = 66, L = 150, R = 600;
+  // plate: bulbous root on the left, long blade to the right
+  // plate: rounded root under the wing, gentle arch, short leaf-blade tip
+  const plate = `M${L - 10} ${top - 4}C${L + 140} ${top - 12} ${R - 120} ${top - 2} ${R} ${top + 4}C${R + 22} ${top + 6} ${R + 40} ${mid - 8} ${R + 58} ${mid}C${R + 40} ${mid + 8} ${R + 22} ${bot - 6} ${R} ${bot - 4}C${R - 120} ${bot + 2} ${L + 140} ${bot + 10} ${L - 10} ${bot + 4}C${L - 44} ${bot + 2} ${L - 58} ${mid + 18} ${L - 58} ${mid}C${L - 58} ${mid - 20} ${L - 44} ${top - 4} ${L - 10} ${top - 4}Z`;
+  const W = R - L - 6, hpW = W * V.hp, bt = mid - 11;
+  const ink = [
+    // swooshes growing out of the plate's root, ending in curls
+    INK.tendril([[[L + 6, top + 6], [L + 14, top - 26], [L + 54, top - 44], [L + 96, top - 40]]], 20, 30, -1, 1.2, .95),
+    INK.tendril([[[L + 92, top + 4], [L + 112, top - 16], [L + 150, top - 22], [L + 176, top - 18]]], 14, 21, -1, 1.15, .9),
+    INK.tendril([[[L + 150, bot - 4], [L + 166, bot + 18], [L + 200, bot + 24], [L + 226, bot + 20]]], 12, 17, 1, 1.15, .95),
+    INK.leaf([L + 196, top + 3], -1.25, 40, 11), INK.leaf([L + 222, top + 3], -.85, 30, 9),
+    INK.leaf([L + 330, top + 3], -1.15, 26, 8),
+    // sprig at the blade tip
+    INK.tendril([[[R + 30, mid - 8], [R + 48, mid - 30], [R + 76, mid - 38], [R + 100, mid - 34]]], 11, 17, -1, 1.15, .9),
+    INK.leaf([R + 44, mid + 6], .5, 40, 10), INK.leaf([R + 22, mid + 12], 1.1, 26, 7),
+  ].map(d => P(d, INKC)).join('');
+  return `<g transform="translate(${x} ${y})">
+    <g filter="url(#shadow)">${ink}<path d="${plate}" fill="url(#plate)" stroke="${INKC}" stroke-width="7" stroke-linejoin="round"/></g>
+    <path d="${plate}" fill="none" stroke="#ffffff" stroke-opacity=".16" stroke-width="2" transform="translate(0 1.5)"/>
+    <rect x="${L}" y="${bt}" width="${W}" height="22" rx="11" fill="url(#track)"/>
+    <rect x="${L}" y="${bt}" width="${hpW + 22}" height="22" rx="11" fill="#ff9aa6"/>
+    <rect x="${L}" y="${bt}" width="${hpW}" height="22" rx="11" fill="url(#hpFill)"/>
+    <rect x="${L + 10}" y="${bt + 3}" width="${hpW - 20}" height="5" rx="2.5" fill="#fff" opacity=".55"/>
+    ${wing(-60, -40, .95, 0)}
+  </g>`;
+}
+
+/* ---------------- score ------------------------------------------------ */
+const txt = (x, y, s, size, fill, anchor = 'end', sw = 0.2) =>
+  `<text x="${x}" y="${y}" font-family="Lilita" font-size="${size}" fill="${fill}" text-anchor="${anchor}" stroke="${INKC}" stroke-width="${size * sw}" stroke-linejoin="round" paint-order="stroke" letter-spacing="${size * .02}">${s}</text>`;
+function score(xr, y) {
+  const ink = [
+    INK.tendril([[[xr + 40, y - 30], [xr - 40, y + 10], [xr - 190, y - 22], [xr - 286, y + 24]]], 22, 31.9, -1, 1.2, .9),
+    INK.tendril([[[xr - 140, y + 4], [xr - 170, y + 28], [xr - 214, y + 30], [xr - 232, y + 54]]], 12, 17.4, -1, 1.1),
+    INK.tendril([[[xr + 40, y + 20], [xr + 12, y + 46], [xr + 4, y + 96], [xr + 26, y + 136]]], 16, 22, -1, 1.15, .95),
+    INK.leaf([xr - 84, y + 2], 1.95, 38, 10), INK.leaf([xr - 112, y + 0], 2.35, 28, 8), INK.leaf([xr + 8, y + 70], 3.3, 30, 8),
+    INK.leaf([xr + 10, y + 94], 2.8, 22, 6),
+  ].map(d => P(d, INKC, 'opacity=".94"')).join('');
+  return `<g filter="url(#shadow)">${ink}</g>
+    ${txt(xr - 44, y + 54, 'SCORE', 44, '#fff')}
+    ${txt(xr - 44, y + 132, V.score, 84, '#fff', 'end', 0.17)}`;
+}
+
+/* ---------------- counters plate --------------------------------------- */
+function cloudPlate(x, y, w, h) {
+  // white scroll plate: big soft scallops on the top-left and bottom-right edges
+  let bumps = '';
+  const top = [[.06, 16], [.2, 20], [.36, 15], [.5, 12]], bottom = [[.55, 12], [.7, 16], [.85, 20], [.96, 15]];
+  top.forEach(([f, r]) => bumps += `<circle cx="${x + w * f}" cy="${y + 10}" r="${r}"/>`);
+  bottom.forEach(([f, r]) => bumps += `<circle cx="${x + w * f}" cy="${y + h - 10}" r="${r}"/>`);
+  const body = `<rect x="${x}" y="${y + 4}" width="${w}" height="${h - 8}" rx="26"/>${bumps}`;
+  const curlA = INK.tendril([[[x + w * .62, y + 2], [x + w * .74, y - 14], [x + w * .9, y - 12], [x + w - 6, y + 2]]], 9, 13, 1, 1.1, .8);
+  const curlB = INK.tendril([[[x + w * .4, y + h - 2], [x + w * .28, y + h + 14], [x + w * .12, y + h + 12], [x + 4, y + h - 2]]], 9, 13, 1, 1.1, .8);
+  return `<g filter="url(#shadow)"><path d="${curlA}" fill="${INKC}"/><path d="${curlB}" fill="${INKC}"/><g fill="${INKC}" stroke="${INKC}" stroke-width="10">${body}</g><g fill="url(#cloud)">${body}</g></g>
+   <rect x="${x + 16}" y="${y + h / 2 - 1}" width="${w - 32}" height="2" fill="${INKC}" opacity=".15"/>`;
+}
+const heart = (x, y, s, fill) => `<path transform="translate(${x} ${y}) scale(${s})" d="M0 -6C-4 -14 -16 -12 -16 -2C-16 8 -4 14 0 19C4 14 16 8 16 -2C16 -12 4 -14 0 -6Z" fill="${fill}" stroke="${INKC}" stroke-width="${3 / s}"/>`;
+const jar = (x, y, s) => `<g transform="translate(${x} ${y}) scale(${s})"><path d="M-12 -14H12V-9C20 -4 22 6 18 13C14 20 -14 20 -18 13C-22 6 -20 -4 -12 -9Z" fill="#fff" stroke="${INKC}" stroke-width="3"/><rect x="-14" y="-19" width="28" height="7" rx="3" fill="#fff" stroke="${INKC}" stroke-width="3"/>${heart(0, 4, .55, '#d5203d')}</g>`;
+function counters(xr, y) {
+  const w = 300, h = 120, x = xr - w;
+  return `${cloudPlate(x, y, w, h)}
+    <g filter="url(#shadow)"><path d="M${x - 70} ${y + 18}H${x + 26}L${x + 40} ${y + 37}L${x + 26} ${y + 56}H${x - 70}Q${x - 82} ${y + 56} ${x - 82} ${y + 44}V${y + 30}Q${x - 82} ${y + 18} ${x - 70} ${y + 18}Z" fill="url(#purple)" stroke="${INKC}" stroke-width="4"/></g>
+    ${txt(x - 22, y + 50, V.intensity, 34, '#fff', 'middle', .16)}
+    ${heart(x + 72, y + 36, 1.15, '#ff4d6a')}
+    ${txt(xr - 26, y + 52, V.hearts, 40, '#2a2156', 'end', 0)}
+    ${jar(x + 72, y + 88, 1.05)}
+    ${txt(xr - 26, y + 103, V.bank, 40, '#c41a37', 'end', 0)}`;
+}
+
+/* ---------------- orbs ------------------------------------------------- */
+function orb(cx, cy, r, fill, id) {
+  const cut = cy + r - 2 * r * fill;
+  return `<g filter="url(#shadow)"><circle cx="${cx}" cy="${cy}" r="${r + 4}" fill="${INKC}"/></g>
+   <circle cx="${cx}" cy="${cy}" r="${r}" fill="url(#orbEmpty)"/>
+   <clipPath id="c${id}"><rect x="${cx - r}" y="${cut}" width="${2 * r}" height="${2 * r}"/></clipPath>
+   <g clip-path="url(#c${id})"><circle cx="${cx}" cy="${cy}" r="${r}" fill="url(#orb)"/>
+     <ellipse cx="${cx + r * .12}" cy="${cy + r * .38}" rx="${r * .62}" ry="${r * .32}" fill="#7fe6ff" opacity=".35" filter="url(#soft)"/></g>
+   ${fill >= 1 ? `<ellipse cx="${cx - r * .32}" cy="${cy - r * .42}" rx="${r * .32}" ry="${r * .18}" fill="#fff" opacity=".85" transform="rotate(-25 ${cx - r * .32} ${cy - r * .42})"/>` : `<line x1="${cx - r * .9}" y1="${cut}" x2="${cx + r * .9}" y2="${cut}" stroke="#d8f6ff" stroke-width="3" opacity=".8"/>`}`;
+}
+
+/* ---------------- power palette ---------------------------------------- */
+function palette(x, y) {
+  const n = 5, size = 64, gap = 14, w = n * (size + gap) + 70;
+  const tray = `M${x} ${y + 14}Q${x} ${y} ${x + 18} ${y}H${x + w - 40}C${x + w - 10} ${y} ${x + w} ${y + 30} ${x + w} ${y + 50}V${y + 70}Q${x + w} ${y + 92} ${x + w - 22} ${y + 92}H${x + 18}Q${x} ${y + 92} ${x} ${y + 78}Z`;
+  const ink = [
+    INK.tendril([[[x + 10, y + 96], [x + 60, y + 120], [x + 140, y + 104], [x + 190, y + 118]]], 9, 13.0, 1, 1.05),
+    INK.tendril([[[x + w - 30, y + 94], [x + w - 80, y + 126], [x + w - 170, y + 112], [x + w - 210, y + 124]]], 9, 13.0, -1, 1.05),
+    INK.leaf([x + 240, y + 96], 1.4, 26, 7), INK.leaf([x + 262, y + 96], 1.0, 20, 6),
+    INK.tendril([[[x + w - 6, y + 40], [x + w + 24, y + 30], [x + w + 40, y + 8], [x + w + 30, y - 6]]], 7, 10.2, -1, 1.0),
+  ].map(d => P(d, INKC)).join('');
+  let icons = '';
+  for (let i = 0; i < n; i++) {
+    const s = i === V.sel ? size * 1.16 : size, ix = x + 24 + i * (size + gap) - (i === V.sel ? size * .08 : 0), iy = y + 46 - s / 2;
+    if (i === V.sel) icons += `<rect x="${ix - 7}" y="${iy - 7}" width="${s + 14}" height="${s + 14}" rx="12" fill="url(#gold)" stroke="${INKC}" stroke-width="4" filter="url(#glow)"/>`;
+    icons += `<image href="icons.png" x="${ix}" y="${iy}" width="${s}" height="${s}" preserveAspectRatio="none" clip-path="inset(0)" style="object-fit:none" transform=""/>`;
+    icons = icons.replace('href="icons.png"', `href="icon${i}.png"`);
+    icons += txt(ix + s + 4, iy + s + 6, V.uses[i], 30, '#fff', 'end', .22);
+  }
+  return `<g filter="url(#shadow)">${ink}<path d="${tray}" fill="url(#cloud)" stroke="${INKC}" stroke-width="5"/></g>
+    <path d="M${x + 6} ${y + 46}l14 -14v28z" fill="url(#gold)" stroke="${INKC}" stroke-width="3"/>${icons}`;
+}
+
+let out = defs + health(110, 46) + score(1872, 22) + counters(1872, 196);
+if (SCENE === 'land') out += palette(210, 186); else out += orb(268, 222, 38, V.orbs[0], 1) + orb(362, 222, 38, V.orbs[1], 2);
+S.innerHTML = out;
+</script></body></html>
