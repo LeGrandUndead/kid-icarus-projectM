@@ -36,13 +36,25 @@ missing. The rest (about 11,500 instructions) is a few small spots at
 
 All 185 places in the census are in the hints file (83,490 addresses).
 
+Hints alone only cover about half of it. 3dsrecomp (at the revision the
+runtime is pinned to) takes a hint as a new function only when no function it
+found already runs through that address, and most of the decoder's entry
+points sit in the middle of straight-line code that some function falls
+through: 61 of the census places, 0.46% of all instructions (`0x5F2FF8`-
+`0x5F305C`, `0x5F3440`-`0x5F3488`, `0x5F35EC`-`0x5F361C`, `0x5F6260`-
+`0x5F6274`). For those, `tools/recomp/overrides/kiu-entry-points.c` uses
+3dsrecomp's override mechanism: an override makes it generate a function at
+its address, and each override here does nothing but run that generated
+function, so the game's behaviour is unchanged. The file holds only
+addresses, no game code.
+
 ## The rebuild
 
 `tools/recomp/Rebuild-KIU-With-Hints.ps1` (started by `Rebuild-KIU.cmd`):
 
 1. copies the hints to `%APPDATA%\3dsrecomp` (the project's
    `build/user-data/roaming`), where 3dsrecomp reads them;
-2. regenerates the C with the same 3dsrecomp (`17b8b6d`, the revision the
+2. regenerates the C, with the entry-point overrides, with the same 3dsrecomp (`17b8b6d`, the revision the
    runtime's `recomp-abi` is pinned to, so the runtime needs no change);
 3. compiles it with `compile_generated.py` (6 jobs, -O2, about two hours);
 4. swaps the new library in, keeps the old one as
@@ -51,6 +63,9 @@ All 185 places in the census are in the hints file (83,490 addresses).
 
 ## What can't reach exactly 0%
 
+- When new places show up in the census inside known functions, add their
+  addresses to `tools/recomp/overrides/kiu-entry-points.c` before the next
+  rebuild (places outside known functions need nothing, the hints cover them).
 - Code no play session has run yet (other chapters, menus or cutscenes that
   go through the same jump tables differently) is only found once it has
   run once; play adds it to the hints, and the next rebuild covers it.

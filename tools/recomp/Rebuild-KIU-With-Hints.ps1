@@ -4,7 +4,8 @@
 # the game is played. 3dsrecomp takes them in as extra function starts, so
 # the next library covers that code too. This script:
 #   1. hands the hints to 3dsrecomp (it reads them from %APPDATA%\3dsrecomp),
-#   2. regenerates the C into build\kiu-aot-next (generation only: CC points
+#   2. regenerates the C into build\kiu-aot-next, with the entry points in
+#      tools\recomp\overrides (generation only: CC points
 #      at a program that refuses to compile, because 3dsrecomp's own compile
 #      starts one gcc per core, which runs out of memory on this game),
 #   3. compiles it with compile_generated.py into build\kiu-aot-o2-next,
@@ -38,20 +39,22 @@ New-Item -ItemType Directory -Force $hintDir | Out-Null
 Copy-Item -LiteralPath $hints (Join-Path $hintDir "$id.hints") -Force -ErrorAction Stop
 Write-Host "Hints: $((Get-Content -LiteralPath $hints | Where-Object { $_ -and -not $_.StartsWith('#') }).Count) addresses"
 
-# 2. generate C only
-if (-not (Test-Path -LiteralPath (Join-Path $generated 'entries.c'))) {
-    New-Item -ItemType Directory -Force $generated | Out-Null
-    $savedCC = $env:CC
-    # python answers --version but refuses gcc's flags, so 3dsrecomp stops
-    # right after writing the C.
-    $env:CC = (Get-Command python).Source
-    Write-Host 'Generating C with 3dsrecomp (its compile step is expected to fail)...'
-    & $recomp build $rom.FullName $generated
-    $env:CC = $savedCC
-    if (-not (Test-Path -LiteralPath (Join-Path $generated 'entries.c'))) { throw '3dsrecomp wrote no C' }
-} else {
-    Write-Host "Reusing generated C in $generated"
-}
+# 2. generate C only (always fresh: the hints or overrides may have changed)
+$overrides = Join-Path $PSScriptRoot 'overrides'
+if (Test-Path -LiteralPath $generated) { Remove-Item -LiteralPath $generated -Recurse -Force }
+New-Item -ItemType Directory -Force $generated | Out-Null
+$savedCC = $env:CC
+# python answers --version but refuses gcc's flags, so 3dsrecomp stops
+# right after writing the C.
+$env:CC = (Get-Command python).Source
+Write-Host 'Generating C with 3dsrecomp (its compile step is expected to fail)...'
+& $recomp build $rom.FullName $generated --overrides $overrides
+$env:CC = $savedCC
+if (-not (Test-Path -LiteralPath (Join-Path $generated 'entries.c'))) { throw '3dsrecomp wrote no C' }
+# 3dsrecomp keeps the override sources in hand\; compile_generated.py takes
+# the .c files of the folder itself
+Get-ChildItem -LiteralPath (Join-Path $generated 'hand') -Filter '*.c' -ErrorAction SilentlyContinue |
+    ForEach-Object { Copy-Item -LiteralPath $_.FullName (Join-Path $generated ('hand_' + $_.Name)) -Force }
 
 # 3. compile (incremental, resumable)
 & python "$kiuRoot/tools/recomp/compile_generated.py" $generated $next --compiler $env:CC --jobs $Jobs --optimization 2
