@@ -187,7 +187,7 @@ compatibility tools, not the primary interface. The acceptance target is a
 coherent PC menu/gameplay flow with original animated components, sounds,
 expressions and feedback. No new artwork or AI restoration is authorized here.
 
-New source evidence: `tools/recomp/audit_native_ui.py` decoded all 65 menu
+New source evidence: `audit_native_ui.py` (archived October 16; output kept in `build/native-ui/catalog`) decoded all 65 menu
 definitions under the local USA menu archives, covering 53 distinct menu IDs,
 with zero parse failures. Output is local, ignored `build/native-ui/catalog`.
 These are PSLB definitions inside DARC archives, with original named bodies,

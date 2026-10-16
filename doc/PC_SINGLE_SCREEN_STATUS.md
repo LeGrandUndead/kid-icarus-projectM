@@ -1,4 +1,4 @@
-# PC single-screen status — October 15, 2026 (09:30)
+# PC single-screen status — October 16, 2026
 
 Current reality of the single-screen work. Read with
 [PC_SINGLE_SCREEN_AUDIT.md](PC_SINGLE_SCREEN_AUDIT.md) (what the two screens
@@ -6,15 +6,20 @@ contain) and [PC_SINGLE_SCREEN_ARCHITECTURE.md](PC_SINGLE_SCREEN_ARCHITECTURE.md
 (how the layer works). This file is replaced, not appended, when the state
 changes.
 
-## Launchers and what each one is
+## Launcher (October 16 cleanup)
 
-| Launcher | Executable | Profile (saves/settings) | Purpose | State |
-|---|---|---|---|---|
-| `Launch-KIU.cmd` | `zakuro-experimental.exe` | `build/user-data/experimental-pc` | Normal play: 1080p, wide view, PC controls, original art | Working baseline, unchanged |
-| `Launch-KIU-Single-Screen.cmd` | `zakuro-single-screen.exe` (Oct 13) | `single-screen-pc` | Top view only; Tab lower-screen panel, F9 legacy | Superseded foundation, unchanged |
-| `Launch-KIU-Gameplay-Preview.cmd` | `zakuro-gameplay-preview.exe` (Oct 14) | `gameplay-preview` | + lens scale 0.85, original portraits | Unchanged fallback for the preview |
-| `Launch-KIU-PC-Interface.cmd` | `zakuro-pc-interface.exe` (Oct 15) | `gameplay-preview` (shared; saves backed up once to `kiu/user-before-pc-interface`) | Single-screen gameplay: portraits, picture inserts, specials/Power Palette/counters, automatic pause panel | **Play-tested in Chapter 1 (air + land)** |
-| `Launch-KIU-PC-Interface-Census.cmd` | same | same | + writes `build/native-ui/census/<time>/lower-screen-draws.csv` | Diagnostics |
+One launcher and one build remain:
+
+| Launcher | Executable | Profile (saves/settings) | What it is |
+|---|---|---|---|
+| `Launch-KIU.cmd` | `zakuro-pc-interface.exe` | `build/user-data/gameplay-preview` (saves backed up once to `kiu/user-before-pc-interface`) | Single-screen PC interface: 1080p, PC controls, portraits, picture inserts, specials/Power Palette/counters, pause panel, HUD rebuilt from the ROM |
+
+The earlier launchers and executables (normal 1080p/experimental, single-screen
+prototype, gameplay preview, census, RAM research, capture/diagnostics) were
+moved to `archive/2026-10-16-cleanup` on the PC (`MOVED.txt` lists them; move a
+file back to restore it) and removed from git (still in history). Their save
+profiles under `build/user-data` were not touched. `--ui-census` and
+`--ram-snapshots` still work as launcher options.
 
 No other executable, launcher or save was replaced. The game's save format is
 untouched; PC options live in the profile's `roaming/zakuro/kiu-interface.txt`
@@ -115,7 +120,7 @@ touch-aim range widened in game code — the postponed widescreen task.
 ## Tests
 
 44 frontend, 17 kiu_ui, 108 GPU (zakuro-gpu alone; 124+ with the frontend's
-Vulkan feature), 4 launcher/catalog Python tests. Windows executable
+Vulkan feature), Python tests in `tools/recomp/tests` (HUD reconstruction, UI sources, presentation). Windows executable
 cross-built from the same source (stripped, about 14.8 MB).
 
 ## Fallbacks
@@ -124,12 +129,12 @@ Tab (lower-screen panel), F9 (original two screens), `--no-native-hud`
 (portraits/inserts only), Settings > Interface toggles, and the unchanged
 October 14 preview launcher.
 
-## HD HUD from the game's own art (October 15, late)
+## HD HUD from the game's own art (October 15, late; superseded by the October 16 pack below)
 
 User direction: no new art style; the HUD must stay the game's own, "an HD
 and PC-ported version of the HUD we have". No redrawing, no AI.
 
-- `tools/recomp/build_hud_hd_pack.py` enlarges the four HUD atlases 4x from
+- `build_hud_hd_pack.py` (archived October 16) enlarged the four HUD atlases 4x from
   the user's ROM exports (gm_00 frames/digits/plates, gm_02 ornaments/trays,
   gc_00 wings/orbs/medallions, mr power icons): premultiplied bicubic, then
   the soft edges of flat black/white/empty shapes are narrowed back to about
@@ -170,5 +175,5 @@ The HUD packs above are replaced by a hybrid reconstruction per piece
 shaded, glowing and semi-transparent art; traced outlines with smooth
 colours for power icons). Details, checks and tools:
 doc/PC_HUD_ASSET_RECONSTRUCTION.md. Output `build/texture-work/hud-pc`,
-selected automatically by the PC launcher (`--hud-art previous|original`
-to compare). Not yet checked in game.
+selected automatically by the PC launcher (`--hud-art original`
+to compare). Checked in game in Chapter 1 and the Practice Range.

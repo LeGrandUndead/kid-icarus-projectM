@@ -1,64 +1,67 @@
 # Kid Icarus: Uprising PC recompilation
 
-**October 15 — PC interface (play-tested):** `Launch-KIU-PC-Interface.cmd`.
-Gameplay uses one view: the game's own portraits (above the subtitles), the
-lower-screen pictures the dialogue refers to (gags, cutaways, boss cards, top
-center), special orbs / Power Palette (bottom-left) and intensity/heart
-counters (below the score). Start opens the game's pause menu as a panel;
-Resume closes it. Original view by default. Options: Esc twice > Settings >
-Interface. `Launch-KIU-PC-Interface-Census.cmd` records lower-screen draws for
-tracing. [Current status](doc/PC_SINGLE_SCREEN_STATUS.md).
+Native PC version of Kid Icarus: Uprising: the game's ARM code compiled ahead
+of time into a Windows library (`build/kiu-aot-o2`), run by our fork of the
+Zakuro 3DS runtime (`tools/zakuro`) for platform services, graphics and audio.
+Code the library does not cover falls back to the interpreter; the title bar
+shows the interpreted share.
 
-**October 14 — separate gameplay preview:** `Launch-KIU-Gameplay-Preview.cmd`
-adds a modest wider view and original live dialogue portraits to the gameplay
-screen. F2 enables captured gameplay, Tab retains lower-screen access. This is
-an experimental build with separate saves; the normal launcher stays the
-fallback. [Implementation, validation and limits](doc/PC_SINGLE_SCREEN_ARCHITECTURE.md).
+## Play
 
-**October 13 — separate single-screen prototype:** launch `Launch-KIU-Single-Screen.cmd`.
-Tab opens the original bottom screen as an interactive overlay and returns to
-gameplay; F2 controls mouse capture; F9 toggles the legacy two-screen view.
-This uses a separate executable and save/settings profile. The normal launcher
-is unchanged. This is the presentation foundation, not yet the integrated
-portrait/power HUD. [Audit](doc/PC_SINGLE_SCREEN_AUDIT.md) and
-[architecture and validation](doc/PC_SINGLE_SCREEN_ARCHITECTURE.md).
+Double-click **`Launch-KIU.cmd`**. It starts the single-screen PC interface
+build (`zakuro-pc-interface.exe`) at 1080p with PC controls:
 
-**October 12 — original-art baseline restored:** `Launch-KIU.cmd` now opens the
-working 1080p widescreen build with original game textures, existing rendering
-fixes and PC controls. Texture replacements and experimental cubic filtering
-are off. AI and other texture-test launchers are retired under
-`archive/2026-10-12-texture-experiments`; their generated files remain inactive
-for recovery. No runtime binaries or save files were replaced.
-This launcher uses `build/user-data/experimental-pc/kiu`. The separate AI-build
-saves remain preserved under `build/ai-hd-edition/data` and are not merged.
+- one view: the game's portraits above the subtitles, lower-screen pictures
+  top center, special orbs / Power Palette under the health bar, intensity and
+  heart counters under the score;
+- Start opens the game's pause menu as a panel; Tab shows the lower screen,
+  F9 the original two screens, F2 captures the mouse, F11 fullscreen;
+- the HUD uses the game's own art rebuilt sharper from your ROM
+  (`build/texture-work/hud-pc`, local only).
 
-**October 11:** the experimental build fixes inconsistent HUD width and verified high-resolution pause-menu atlas seams. Original bitmap detail remains unchanged. [Validation and fallback](doc/PC_PRESENTATION.md).
+Options (Esc twice > Settings): Interface, Controls, Graphics. Launcher
+extras, for example `Launch-KIU.cmd --hud-art original` or `--input-trace`:
+see `python tools/recomp/launch.py --help`.
 
-**October 10 experimental update:** `Launch-KIU-Experimental.cmd` provides a separate 1080p/wider-view build and relative flight aiming with the guided camera retained. It uses copied saves and independent settings. HUD asset detail, complete widescreen coverage and menu transitions remain under validation. See [experimental setup and limitations](doc/PC_PRESENTATION.md).
+Saves: `build/user-data/gameplay-preview/kiu`. The save format is the game's
+own and is never modified.
 
-Start the game with **Launch-KIU.cmd**. The launcher selects the local O2 native library and validates it against the supplied game executable. It still uses Zakuro for platform services, graphics and audio, with interpreter fallback.
+## Layout
 
-**Current controls and project status: [doc/PC_CONTROLS.md](doc/PC_CONTROLS.md).**
+| Path | What |
+|---|---|
+| `Launch-KIU.cmd` | the launcher |
+| `build/kiu-aot-o2` | the compiled game library (local, from your ROM) |
+| `build/native-ui`, `build/texture-work` | UI catalog and HUD art sources/pack (local) |
+| `build/user-data` | saves and settings (local) |
+| `tools/zakuro` | runtime source; `target/release/zakuro-pc-interface.exe` |
+| `tools/3dsrecomp`, `recompiler` | ARM-to-C recompiler |
+| `tools/recomp` | launcher, library build scripts, HUD pack and UI source tools, tests |
+| `doc` | documentation ([index](doc/README.md)) |
+| `archive` | retired builds, launchers and experiments (recovery only, local) |
 
-Rendering fixes, validation and remaining limitations: [doc/RENDERING_STATUS.md](doc/RENDERING_STATUS.md).
-The latest build preserves high-resolution land rendering after framebuffer readback.
-Dialogue and menus use Azahar's open-source replacement font; [font source and recovery](doc/FONT_SOURCE.md).
+ROMs, generated game code and anything made from game assets stay local and
+are ignored by git.
 
-F2 captures/releases the mouse. WASD moves, Alt walks, Shift requests one directional dash and left click attacks. While captured, E uses the air special or selected land power; 1/3 select land powers. Rebind these in Settings > Controls. F3 has no control-mode function. The land camera now receives relative mouse movement past the touch-screen border; the tested flight mouse behavior is preserved.
+## Rebuild
 
-Useful options:
+- Game library: `tools/recomp/Build-KIU-Optimized.ps1` (uses `environment.ps1`).
+- HUD pack: `python tools/recomp/build_hud_pc_pack.py build/texture-work/hud-sources`
+  ([details](doc/PC_HUD_ASSET_RECONSTRUCTION.md)).
+- UI sources: `python tools/recomp/prepare_native_ui_sources.py` and
+  `tools/recomp/prepare_dialogue_sources.ps1`.
+- Runtime: `cargo build --release -p zakuro --bin zakuro-pc-interface` in
+  `tools/zakuro` (runtime changes are also kept as
+  `tools/recomp/patches/kiu-pc-runtime.patch`).
+- Tests: `python -m unittest discover -s tools/recomp/tests`.
 
-```powershell
-./Launch-KIU.cmd --input-trace --record-input
-./Launch-KIU.cmd --resolution 4
-./Launch-KIU.cmd --legacy-controls
-./Launch-KIU.cmd --original-land-camera
-```
+## Cleanup (October 16)
 
-Current widescreen saves: `build/user-data/experimental-pc/kiu`. Legacy saves and shared font: `build/user-data/kiu`. Old patch packs and launchers: `archive` (recovery only). Active runtime: `tools/zakuro`. Our independent ARM translator: `recompiler`. Build and evaluation tools: `tools/recomp`. ROMs and generated game code stay local and ignored by Git.
+Only the PC interface build is kept. Older launchers, executables, research
+and test tools and generated packs moved to `archive/2026-10-16-cleanup` on
+the PC (`MOVED.txt` there lists them) and are in git history. Earlier
+retirements: `archive/2026-10-12-texture-experiments`,
+`archive/2026-10-09-retired-material`.
 
-For a blurry-scene report, use `Capture-Land.cmd`, reach the affected scene, press F8 once, then quit normally. This retains your saved resolution; `Diagnose-Graphics.cmd` intentionally forces 1x. Capture can introduce stutters, so measure normal gameplay through `Launch-KIU.cmd`.
-
-Essential documentation is indexed in [doc/README.md](doc/README.md). Early audits and superseded experiment reports are in `doc/history`; retired patch packs and loose experiments are in `archive/2026-10-09-retired-material`, with a restoration manifest. Current sources, saves, recordings and test evidence remain available.
-
-For the reversible 1080p presentation profile, run `Launch-KIU-1080p.cmd`. Tab opens the bottom screen with a menu cursor and returns to aiming. This preserves the original camera aspect with side bars; true 16:9 remains unfinished. See [PC presentation](doc/PC_PRESENTATION.md).
+Status and known limits: [doc/PC_SINGLE_SCREEN_STATUS.md](doc/PC_SINGLE_SCREEN_STATUS.md).
+Controls: [doc/PC_CONTROLS.md](doc/PC_CONTROLS.md).

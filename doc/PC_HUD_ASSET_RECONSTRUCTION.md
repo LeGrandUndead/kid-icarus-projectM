@@ -82,10 +82,8 @@ paint / 9 ink.
   not more opaque than the source, whole-atlas difference <= 0.05,
   deterministic (two runs, same hash). Nothing is installed if it fails.
   Needs `pip install potracer opencv-python pillow numpy`; about 8 s.
-- `python tools/recomp/hud_compare.py <sources> <out> Label=<pack> ...` ->
-  comparison sheets per group (health bar, score, digits, Power Palette
-  ornaments, buttons, wings, orbs, power icons, item icons, UI ornaments):
-  1:1 source and 1080p size on checkerboard, dark and light. Local only.
+- The comparison-sheet script used during development (`hud_compare.py`) is
+  archived; the sources are kept in `build/texture-work/hud-sources`.
 - Tests: `python -m unittest tests.test_hud_reconstruct` (synthetic shapes).
 
 ## Runtime
@@ -98,9 +96,8 @@ at start-up, so the runtime cost is a normal texture load. One 4x master;
 the GPU's linear filtering scales it to 720p..4K (at 4K the HUD is about
 4.5x the 3DS size, so 4x masters are slightly magnified there).
 
-Development comparison: `--hud-art pc` (default; falls back to `hud-hd`),
-`--hud-art previous` (earlier plain HD pack), `--hud-art original` (also
-`--original-hud-resolution`).
+Comparison: `Launch-KIU.cmd --hud-art original` (or
+`--original-hud-resolution`) shows the ROM-resolution HUD.
 
 ## Limits
 

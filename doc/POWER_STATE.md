@@ -1,7 +1,7 @@
 # Equipped powers in memory (research, October 15)
 
 Found with `Launch-KIU-RAM-Research.cmd` (F7 snapshots) and
-`tools/recomp/ram_diff.py`, Practice Range > Land Battle, USA executable.
+`ram_diff.py` (archived October 16), Practice Range > Land Battle, USA executable.
 Purpose: Space jump (doc/PC_INTERFACE_DESIGN_DIRECTION.md, variant 2) and a
 proper PC power HUD. Addresses are heap allocations from one session; code
 must find the structure, never hard-code them.

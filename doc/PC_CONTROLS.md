@@ -97,7 +97,6 @@ See [PC presentation](PC_PRESENTATION.md) for the separate 1080p profile, screen
 
 `python tools/recomp/launch.py --pc-interface --ram-snapshots` (add the usual
 launcher options) makes F7 save the game memory to `build/ram-snapshots/<time>`
-(local only, never committed). `tools/recomp/ram_diff.py` compares snapshots,
-for example a power whose uses go 4 -> 3 -> 2:
-`python tools/recomp/ram_diff.py a.bin b.bin c.bin --values 4 3 2`.
+(local only, never committed). The comparison script (`ram_diff.py`) was
+archived in the October 16 cleanup; it is in git history.
 Used to locate the equipped-power state for the Space jump experiment.
