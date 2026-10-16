@@ -49,8 +49,8 @@ PAD = 2         # source pixels of context around each piece
 # method is judged against it: about as close in colour, and a silhouette
 # that still overlaps the source's (sharp edges move by a fraction of a
 # source pixel, which costs small shapes like digits some overlap).
-MAX_ERROR = {'flat': 0.01, 'icon': 0.01}
-MIN_IOU = {'flat': 0.85, 'icon': 0.9}
+MAX_ERROR = {'flat': 0.01, 'paint': 0.01, 'ink': 0.01, 'icon': 0.01}
+MIN_IOU = {'flat': 0.85, 'paint': 0.9, 'ink': 0.9, 'icon': 0.9}
 MAX_INTERIOR = 0.015
 
 
@@ -251,15 +251,16 @@ def method_flat(crop, mask):
     cov = layer_coverage(crop, mask, layers)
     out = np.zeros((crop.shape[0] * FACTOR, crop.shape[1] * FACTOR, 4), np.float32)
     for layer, c in zip(layers, cov):
-        if layer['alpha'] < 0.95 or edge_softness(c) > SOFT_EDGE:
+        softness = edge_softness(c)
+        shape = smooth_shape(c)
+        if layer['alpha'] < 0.95 or softness > SOFT_EDGE:
             # semi-transparent layers (the health bar frame, the score plate's
-            # tendrils) and soft edges (shadows, faint strokes) are soft art:
-            # their edges are enlarged, not traced, so tapering tips, soft
-            # falloff and line weight stay as they are
-            h, w = c.shape
-            shape = np.clip(cv2.resize(c, (w * FACTOR, h * FACTOR), interpolation=cv2.INTER_CUBIC), 0, 1)
-        else:
-            shape = smooth_shape(c)
+            # tendrils) and soft edges (shadows, faint strokes): the outline
+            # is traced (no pixel steps), then given back the soft falloff
+            # the source has, as wide as measured on its edge
+            width = max(0.0, softness - 1.0) * FACTOR * 0.4
+            if width > 0.3:
+                shape = cv2.GaussianBlur(shape, (0, 0), width)
         shape = shape * layer['alpha']
         # straight-alpha "over" of a flat colour
         a = shape + out[..., 3] * (1 - shape)
@@ -267,6 +268,107 @@ def method_flat(crop, mask):
         out[..., :3] = np.divide(rgb, a[..., None], out=np.zeros_like(rgb), where=a[..., None] > 1e-6)
         out[..., 3] = a
     return out
+
+
+def palette(crop, mask, limit=8):
+    """The few flat colours a coloured piece is painted with, or None."""
+    solid = mask & (crop[..., 3] > 0.9)
+    total = solid.sum()
+    if total < 16:
+        return None
+    q = np.round(crop[..., :3][solid] * 15).astype(int)
+    colours, counts = np.unique(q, axis=0, return_counts=True)
+    order = np.argsort(-counts)
+    chosen = []
+    for i in order:
+        if counts[i] < 0.02 * total:
+            break
+        c = colours[i] / 15.0
+        if all(np.abs(c - d).max() > 0.12 for d in chosen):
+            chosen.append(c)
+        if len(chosen) == limit:
+            break
+    if len(chosen) < 2:
+        return None
+    return np.array(chosen, np.float32)
+
+
+def method_paint(crop, mask):
+    """Flat-colour art (power icons, simple coloured glyphs): each colour
+    area is traced on its own and painted with the source's exact colour,
+    so the symbol inside an icon gets clean edges too. Pixels on a border
+    between two colours are split between them by how much of each they
+    hold. Gradients and shading are refused (they are not a few colours)."""
+    a = crop[..., 3] * mask
+    top = a[mask].max() if mask.any() else 0
+    if top <= 0 or edge_softness(np.clip(a / top, 0, 1)) > SOFT_ICON_EDGE:
+        return None
+    colours = palette(crop, mask)
+    if colours is None:
+        return None
+    rgb = crop[..., :3]
+    h, w = mask.shape
+    best = np.full((h, w), np.inf, np.float32)
+    first = np.zeros((h, w), np.int32)
+    second = np.zeros((h, w), np.int32)
+    part = np.zeros((h, w), np.float32)
+    for i in range(len(colours)):
+        for j in range(len(colours)):
+            d = colours[j] - colours[i]
+            if i == j:
+                t = np.zeros((h, w), np.float32)
+            elif i > j:
+                continue
+            else:
+                t = np.clip(((rgb - colours[i]) * d).sum(-1) / float((d * d).sum()), 0, 1)
+            residual = ((rgb - (colours[i] + t[..., None] * d)) ** 2).sum(-1)
+            better = residual < best
+            best[better], first[better], second[better], part[better] = residual[better], i, j, t[better]
+    solid = mask & (crop[..., 3] > 0.5)
+    if (best[solid] > 0.006).mean() > 0.05:
+        return None          # shading or gradients: not a flat-colour piece
+    weights = []
+    for k in range(len(colours)):
+        m = np.where(first == k, 1 - part, 0) + np.where(second == k, part, 0)
+        m = np.where(first == second, (first == k).astype(np.float32), m)
+        m = (m * (crop[..., 3] > 0.02)).astype(np.float32)
+        # extend colour areas under the transparent border, so edges keep colour
+        m = np.maximum(m, cv2.dilate(m, np.ones((3, 3), np.uint8)) * (crop[..., 3] <= 0.02))
+        weights.append(smooth_shape(m) if m.any() else np.zeros((h * FACTOR, w * FACTOR), np.float32))
+    weights = np.stack(weights, -1)
+    total = weights.sum(-1, keepdims=True)
+    fallback = np.clip(lanczos(bleed(crop)), 0, 1)
+    colour = np.where(total > 1e-3, (weights @ colours) / np.maximum(total, 1e-3), fallback)
+    alpha = smooth_shape(np.clip(a / top, 0, 1)) * top
+    return np.concatenate([np.clip(colour, 0, 1), alpha[..., None]], -1)
+
+
+def method_ink(crop, mask):
+    """Cartoon art drawn with a dark neutral outline (wings, item icons,
+    skulls): the dark ink lines are traced as one layer and drawn over the
+    piece's colours, which are enlarged smoothly underneath (gradients and
+    shading stay soft). The silhouette is traced too. Refused when the dark
+    parts are coloured (shading, like the orb) or there is no ink."""
+    a = crop[..., 3] * mask
+    top = a[mask].max() if mask.any() else 0
+    if top <= 0 or edge_softness(np.clip(a / top, 0, 1)) > 1.0:
+        return None
+    lum = crop[..., :3].mean(-1)
+    sat = np.ptp(crop[..., :3], axis=-1)
+    ink = np.clip((0.5 - lum) / 0.3, 0, 1) * (a > 0.02)
+    dark = ink > 0.8
+    if dark.sum() < 0.05 * mask.sum():
+        return None
+    if np.median(sat[dark]) > 0.12 or np.median(lum[dark]) > 0.3:
+        return None
+    colour_ink = np.median(crop[..., :3][dark], axis=0)
+    body = crop.copy()
+    body[..., 3] = np.where(ink > 0.5, 0, crop[..., 3])
+    colour = np.clip(lanczos(bleed(body)), 0, 1)
+    lines = smooth_shape(ink)[..., None]
+    rgb = colour * (1 - lines) + colour_ink * lines
+    alpha = smooth_shape(np.clip(a / top, 0, 1)) * top
+    return np.concatenate([np.clip(rgb, 0, 1), alpha[..., None]], -1)
 
 
 def method_icon(crop, mask):
@@ -289,8 +391,8 @@ def method_soft(crop, mask):
     return np.concatenate([colour, alpha[..., None]], -1)
 
 
-METHODS = {'flat': method_flat, 'icon': method_icon, 'soft': method_soft}
-FALLBACK = {'flat': 'icon', 'icon': 'soft'}
+METHODS = {'flat': method_flat, 'paint': method_paint, 'ink': method_ink, 'icon': method_icon, 'soft': method_soft}
+FALLBACK = {'flat': 'paint', 'paint': 'ink', 'ink': 'icon', 'icon': 'soft'}
 
 
 # ----------------------------------------------------------- validation
@@ -323,9 +425,9 @@ def check(crop, mask, out):
 def choose(features_):
     """First choice of method from the piece's numbers."""
     if features_['saturation'] > 0.12:
-        return 'icon'
+        return 'paint'
     if features_['mid_tones'] > 0.35:
-        return 'soft'
+        return 'ink'
     return 'flat'
 
 

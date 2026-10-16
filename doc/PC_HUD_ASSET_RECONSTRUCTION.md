@@ -40,7 +40,16 @@ piece is measured, gets a first-choice method, and is checked.
   Each layer is redrawn with the source's own colour and opacity, so line
   weight, holes and asymmetry stay the source's (layer areas match within
   about 1%).
-- **icon** - coloured art with a hard alpha edge (power icons). Colours:
+- **paint** - flat-colour art (most power icons): the few exact colours of
+  the piece are found, every pixel is split between the one or two colours
+  it holds, each colour area is traced and painted with its exact colour.
+  The symbols inside the icons get clean edges. Refused when more than 5%
+  of the pixels are not a mix of two palette colours (glows, gradients).
+- **ink** - cartoon art with a dark neutral outline (wings, skulls, item
+  icons, some gm_02 pieces): the dark outline and lines are traced as one
+  layer over the smoothly enlarged colours, the silhouette is traced too.
+  Refused when the dark parts are coloured shading (the orb).
+- **icon** - other coloured art with a hard alpha edge. Colours:
   Lanczos on colour bled under transparent pixels (no dark or white fringe).
   Alpha: traced like a flat layer. Inner detail is not invented.
 - **soft** - shaded, glowing or soft-rimmed art (wings, item icons, orb,
@@ -52,15 +61,18 @@ mean premultiplied difference, silhouette overlap (IoU) and the difference
 away from edges (interior). A sharp method must stay within 1.25x the plain
 enlargement's difference (or 0.01), keep IoU >= 0.85 (flat) / 0.9 (icon) and
 not flatten interior detail; otherwise it falls back flat -> icon -> soft.
-Every decision and number is in the manifest.
+Fallback order: flat -> paint -> ink -> icon -> soft. Semi-transparent
+layers (health frame, score tendrils) are traced, then given back their
+measured soft falloff. Every decision and number is in the manifest.
 
 Rejected along the way (comparison sheets): tracing everything (health frame
 and score tendrils become black blobs, icons lose their transparent cell
 corners), single-layer tracing of the score plate (letters lose their
 outline), tracing soft-rimmed wings (hard dark contour appears).
 
-Current result (USA ROM): gm_00 58 flat / 38 soft; gm_02 59 flat / 28 icon /
-7 soft; gc_00 19 icon / 35 soft; mr 62 icon.
+Current result (USA ROM): gm_00 58 flat / 7 ink / 31 soft; gm_02 58 flat /
+28 ink / 1 icon / 7 soft; gc_00 4 paint / 9 ink / 17 icon / 24 soft; mr 53
+paint / 9 ink.
 
 ## Tools and outputs
 
@@ -96,6 +108,7 @@ Development comparison: `--hud-art pc` (default; falls back to `hud-hd`),
   enlarged smoothly, because that is all the source holds.
 - Traced edges move by a fraction of a source pixel; tiny glyphs lose a
   little silhouette overlap (IoU 0.85-0.95) while looking cleaner.
-- Not yet checked in game (the PC was locked on October 16 morning).
+- Checked in Chapter 1 (October 16): health bar, wing, score, counters and
+  orbs draw correctly with the pack. The orb stays soft (it is shading).
 - An SDF/vector runtime path was not needed: 4x masters are visually
   identical at the sizes the HUD is shown.
