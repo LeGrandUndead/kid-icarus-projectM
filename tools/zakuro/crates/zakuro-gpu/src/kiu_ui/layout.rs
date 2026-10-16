@@ -121,13 +121,27 @@ const HEALTH_INDENT: f32 = 0.045;
 /// (y 180-240); this guest row is placed at BELOW_HEALTH.
 const ACTION_CONTENT_TOP: f32 = 180.0;
 
-/// Maps an island element point into the window.
+/// Pickups (an icon box rising with an "xN" count, October 15 census:
+/// y 135-182) are drawn above the orbs/palette row on the 3DS. Above that
+/// row on PC is the game's own health bar, so the strip above the row is
+/// placed under it instead, keeping its motion.
+pub fn above_action_row(layer_center_y: f32) -> bool { layer_center_y < ACTION_CONTENT_TOP }
+
+/// Maps an island element point into the window. `above_row`: the element
+/// belongs to the strip above the orbs/palette row (see above_action_row).
 pub fn place_island(p: [f32; 2], island: Island, width: f32, height: f32, hud: f32) -> [f32; 2] {
+    place_island_element(p, island, width, height, hud, false)
+}
+
+pub fn place_island_element(p: [f32; 2], island: Island, width: f32, height: f32, hud: f32, above_row: bool) -> [f32; 2] {
     let s = hud_scale(height, hud);
     let m = margin(height);
-    let [l, t, r, b] = island.source;
+    let [l, t, r, _] = island.source;
+    // the strip above the row moves below it: one strip height (60) down,
+    // plus the 60 the strip itself spans
+    let shift = if above_row { 120.0 } else { 0.0 };
     match island.anchor {
-        Anchor::BelowHealthLeft => [width * HEALTH_INDENT + (p[0] - l) * s, height * BELOW_HEALTH + (p[1] - ACTION_CONTENT_TOP) * s],
+        Anchor::BelowHealthLeft => [width * HEALTH_INDENT + (p[0] - l) * s, height * BELOW_HEALTH + (p[1] - ACTION_CONTENT_TOP + shift) * s],
         Anchor::BelowScoreRight => [width - m - (r - p[0]) * s, height * BELOW_SCORE + (p[1] - t) * s],
     }
 }
@@ -193,6 +207,20 @@ mod tests {
                 assert!((aw / ah - 170.0 / 60.0).abs() < 0.001, "the group keeps its aspect");
             }
         }
+    }
+
+    #[test]
+    fn pickups_never_cover_the_health_bar() {
+        for (w, h) in SIZES {
+            for hud in [0.5, 1.0, 2.0] {
+                // the rising pickup box, top of its animation
+                let y = place_island_element([23.0, 135.0], ACTION, w, h, hud, above_action_row((135.0 + 175.0) / 2.0))[1];
+                assert!(y >= h * 0.135 - 0.01, "{w}x{h} {hud}: {y}");
+                // and it sits under the orbs/palette row
+                assert!(y >= action_box(w, h, hud)[3] - 0.01);
+            }
+        }
+        assert!(!above_action_row(212.0), "orbs and palette stay where they are");
     }
 
     #[test]

@@ -103,7 +103,20 @@ struct State {
     jobs: Option<std::sync::mpsc::Sender<Done>>,
     done: Option<std::sync::mpsc::Receiver<Done>>,
     baking: HashSet<Vec<u32>>,
+    /// Portraits and pictures by texture name: first and last frame seen in
+    /// an unbroken run, and the fade it has now (see `PICTURE_LIMIT`).
+    runs: HashMap<usize, (u64, u64, u64)>,
+    fades: HashMap<usize, f32>,
 }
+
+/// On the 3DS some lower-screen art stays up for minutes: a boss's portrait
+/// for the whole fight (user report, October 16). On one screen that would
+/// cover the action, so a portrait or picture that has not changed for this
+/// many frames fades out; a new expression or picture shows again. Dialogue
+/// changes expression often, so portraits get longer than pictures.
+const PICTURE_LIMIT: u64 = 720;   // 12 s
+const PORTRAIT_LIMIT: u64 = 1200; // 20 s
+const PICTURE_FADE: u64 = 30;
 
 enum HdState { Loading, Ready(std::sync::Arc<Hd>), Missing }
 
@@ -181,6 +194,19 @@ pub fn end_frame() -> BottomScene {
         s.stale += 1;
         if s.stale > STALE_FRAMES { s.shown.clear(); }
     }
+    let frame = s.frame;
+    for layer in &s.shown {
+        if matches!(layer.role, Role::Portrait | Role::Insert) {
+            let limit = if layer.role == Role::Portrait { PORTRAIT_LIMIT } else { PICTURE_LIMIT };
+            let run = s.runs.entry(layer.name).or_insert((frame, frame, limit));
+            run.1 = frame;
+        }
+    }
+    s.runs.retain(|_, run| frame - run.1 <= 60);
+    s.fades = s.runs.iter().map(|(&name, &(first, _, limit))| {
+        let over = (frame - first).saturating_sub(limit);
+        (name, 1.0 - (over as f32 / PICTURE_FADE as f32).min(1.0))
+    }).collect();
     let names = &s.names;
     s.scene = scene::classify(s.frame, fresh, s.shown.iter().map(|l| scene::Evidence {
         role: l.role, atlas: &names[l.name], uv: l.uv, island: l.island.is_some(),
@@ -454,11 +480,14 @@ pub fn overlay_in(width: u32, height: u32, view: [f32; 4], visible: bool) -> Ove
             (Role::Insert, _) if interface.inserts => Box::new(move |p| layout::place_insert(p, w, h)),
             (Role::Hud | Role::Unlisted, Some(island)) if interface.hud => {
                 let scale = interface.hud_scale;
-                Box::new(move |p| layout::place_island(p, island, w, h, scale))
+                let above = island == layout::ACTION && layout::above_action_row(layout::center(layout::bounds(&layer.xy))[1]);
+                Box::new(move |p| layout::place_island_element(p, island, w, h, scale, above))
             }
             _ => continue,
         };
-        let a = (layer.alpha * 255.0).round() as u8;
+        let fade = s.fades.get(&layer.name).copied().unwrap_or(1.0);
+        if fade <= 0.0 { continue; }
+        let a = (layer.alpha * fade * 255.0).round() as u8;
         let vertices = (0..4).map(|i| {
             let [x, y] = place(layer.xy[i]);
             OverlayVertex { position: [vx + x, vy + y], uv: overlay_uv(layer.uv[i]), color: [a; 4] }
