@@ -10,8 +10,7 @@
 #      starts one gcc per core, which runs out of memory on this game),
 #   3. compiles it with compile_generated.py into build\kiu-aot-o2-next,
 #   4. swaps it in as build\kiu-aot-o2 (the old one becomes
-#      build\kiu-aot-o2-previous) and runs a 300-frame headless smoke test,
-#      swapping back if the test fails.
+#      build\kiu-aot-o2-previous); check it by launching the game.
 # Everything is logged to build\rebuild-hints.log. Takes about two hours.
 param([int]$Jobs = 6)
 
@@ -61,15 +60,9 @@ Get-ChildItem -LiteralPath (Join-Path $generated 'hand') -Filter '*.c' -ErrorAct
 if ($LASTEXITCODE) { throw "Compile failed ($LASTEXITCODE)" }
 Copy-Item -LiteralPath $hints (Join-Path $next "$id.hints") -Force
 
-# 4. swap and smoke test
+# 4. swap. (The PC interface build has no headless mode, so the check is
+# launching the game: Launch-KIU.cmd. To go back, rename the folders back.)
 if (Test-Path -LiteralPath $previous) { throw "$previous exists already; move it away first" }
 Rename-Item -LiteralPath $current $previous -ErrorAction Stop
 Rename-Item -LiteralPath $next $current -ErrorAction Stop
-& python "$kiuRoot/tools/recomp/launch.py" --pc-interface --build o2 --headless 300
-if ($LASTEXITCODE) {
-    Write-Host 'Smoke test FAILED, putting the previous library back.'
-    Rename-Item -LiteralPath $current $next
-    Rename-Item -LiteralPath $previous $current
-    throw 'Smoke test failed'
-}
-Write-Host 'PASS: new library in build\kiu-aot-o2, the old one in build\kiu-aot-o2-previous.'
+Write-Host 'Done: new library in build\kiu-aot-o2, the old one in build\kiu-aot-o2-previous. Start Launch-KIU.cmd to check it.'

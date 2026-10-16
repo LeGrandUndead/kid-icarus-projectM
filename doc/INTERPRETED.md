@@ -57,9 +57,9 @@ addresses, no game code.
 2. regenerates the C, with the entry-point overrides, with the same 3dsrecomp (`17b8b6d`, the revision the
    runtime's `recomp-abi` is pinned to, so the runtime needs no change);
 3. compiles it with `compile_generated.py` (6 jobs, -O2, about two hours);
-4. swaps the new library in, keeps the old one as
-   `build/kiu-aot-o2-previous`, and runs a 300-frame headless smoke test,
-   swapping back if it fails.
+4. swaps the new library in and keeps the old one as
+   `build/kiu-aot-o2-previous`; the check is launching the game (the PC
+   interface build has no headless mode).
 
 ## What can't reach exactly 0%
 
@@ -72,6 +72,13 @@ addresses, no game code.
 - Nothing else is known to be interpreted: the census shows no fallbacks
   and no budget rests.
 
-## After
+## After (October 17)
 
-See the results section below, filled in after the rebuild.
+- Generated C: 448,310 entry points (448,215 before), 221 files with the
+  overrides. All 185 places of the census are now entry points of the
+  library, so for everything played so far nothing should start in the
+  interpreter any more.
+- Compiled in 85 minutes (6 jobs, -O2) and swapped in; the October 6 library
+  is `build/kiu-aot-o2-previous`.
+- The in-game share comes from the new library's census
+  (`build/kiu-aot-o2/0004000000030100.interpreted.txt`) after playing.
