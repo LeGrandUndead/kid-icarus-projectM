@@ -1,0 +1,118 @@
+<!doctype html>
+<html><head><meta charset="utf-8">
+<style>
+@font-face{font-family:Lilita;src:url(node_modules/@fontsource/lilita-one/files/lilita-one-latin-400-normal.woff2)}
+html,body{margin:0;width:1920px;height:1080px;overflow:hidden;background:#000}
+#bg{position:absolute;inset:0;background-size:cover}
+svg{position:absolute;inset:0}
+</style>
+<script src="ink.js"></script>
+</head><body><div id="bg"></div><svg id="s" width="1920" height="1080" viewBox="0 0 1920 1080"></svg>
+<script>
+const q = new URLSearchParams(location.search);
+const IDEA = +(q.get('idea') || 1), SCENE = q.get('scene') || 'air';
+document.getElementById('bg').style.backgroundImage = `url(${SCENE === 'land' ? 'land_view_clean.png' : 'air_dialogue_view_clean.png'})`;
+const S = document.getElementById('s'), INKC = '#15112a';
+const V = { hp: .72, score: '12480', intensity: '2.5', hearts: '24', bank: '6449' };
+const txt = (x, y, s, size, fill, anchor = 'end', sw = .2, font = 'Lilita', extra = '') =>
+  `<text x="${x}" y="${y}" font-family="${font}" font-size="${size}" fill="${fill}" text-anchor="${anchor}" stroke="${INKC}" stroke-width="${size * sw}" stroke-linejoin="round" paint-order="stroke" ${extra}>${s}</text>`;
+const defs = `<defs>
+ <filter id="sh" x="-30%" y="-30%" width="160%" height="160%"><feDropShadow dx="0" dy="2" stdDeviation="2.5" flood-color="#05030f" flood-opacity=".55"/></filter>
+ <filter id="glow" x="-60%" y="-60%" width="220%" height="220%"><feGaussianBlur stdDeviation="5" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+ <filter id="paper"><feTurbulence type="fractalNoise" baseFrequency=".9" numOctaves="2" seed="3"/><feColorMatrix values="0 0 0 0 1  0 0 0 0 1  0 0 0 0 1  0 0 0 .08 0"/><feComposite in2="SourceGraphic" operator="in"/><feBlend in="SourceGraphic" mode="multiply"/></filter>
+ <linearGradient id="red" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ff8a93"/><stop offset=".4" stop-color="#ff3348"/><stop offset="1" stop-color="#a30e28"/></linearGradient>
+ <linearGradient id="silver" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#fff"/><stop offset=".5" stop-color="#d4d5e0"/><stop offset="1" stop-color="#8e8fa3"/></linearGradient>
+ <linearGradient id="feather" x1="1" y1="0" x2="0" y2=".4"><stop offset="0" stop-color="#fff"/><stop offset=".6" stop-color="#f4f9ff"/><stop offset="1" stop-color="#b9dcf6"/></linearGradient>
+ <linearGradient id="rainbow" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#ffd6e8"/><stop offset=".25" stop-color="#fff2c6"/><stop offset=".5" stop-color="#d8f7d8"/><stop offset=".75" stop-color="#d4ecff"/><stop offset="1" stop-color="#ead8ff"/></linearGradient>
+ <linearGradient id="gold" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#fff2b0"/><stop offset=".5" stop-color="#f0c040"/><stop offset="1" stop-color="#a87814"/></linearGradient>
+ <radialGradient id="orb" cx=".36" cy=".3" r=".78"><stop offset="0" stop-color="#e6fdff"/><stop offset=".25" stop-color="#6fd6ff"/><stop offset=".6" stop-color="#1c8ad6"/><stop offset="1" stop-color="#062a5a"/></radialGradient>
+ <radialGradient id="halo" cx=".5" cy=".5" r=".5"><stop offset=".7" stop-color="#fff6c8" stop-opacity="0"/><stop offset=".85" stop-color="#fff2a8" stop-opacity=".9"/><stop offset="1" stop-color="#ffd860" stop-opacity="0"/></radialGradient>
+</defs>`;
+const orb = (cx, cy, r, f = 1) => `<g filter="url(#sh)"><circle cx="${cx}" cy="${cy}" r="${r + 3}" fill="${INKC}"/></g><circle cx="${cx}" cy="${cy}" r="${r}" fill="#2a3256"/>
+  <clipPath id="o${cx}"><rect x="${cx - r}" y="${cy + r - 2 * r * f}" width="${2 * r}" height="${2 * r}"/></clipPath><circle clip-path="url(#o${cx})" cx="${cx}" cy="${cy}" r="${r}" fill="url(#orb)"/>
+  ${f >= 1 ? `<ellipse cx="${cx - r * .3}" cy="${cy - r * .4}" rx="${r * .3}" ry="${r * .17}" fill="#fff" opacity=".85"/>` : ''}`;
+const heart = (x, y, s, fill) => `<path transform="translate(${x} ${y}) scale(${s})" d="M0 -6C-4 -14 -16 -12 -16 -2C-16 8 -4 14 0 19C4 14 16 8 16 -2C16 -12 4 -14 0 -6Z" fill="${fill}" stroke="${INKC}" stroke-width="${3 / s}"/>`;
+// small original wing (same drawing as the first design), scaled
+const WING = 'M204 102C186 60 124 14 34 6C14 4 10 20 22 28C40 38 54 40 66 40C44 44 34 56 40 64C52 72 70 72 86 68C68 76 64 88 72 94C86 102 102 98 114 90C102 100 104 110 112 114C140 124 172 120 194 116Z';
+const wing = (x, y, s, flip = false) => `<g transform="translate(${x} ${y}) scale(${flip ? -s : s} ${s})" filter="url(#sh)"><path d="${WING}" fill="url(#feather)" stroke="${INKC}" stroke-width="6" stroke-linejoin="round"/></g>`;
+
+const ideas = {
+  // 1. Smash-style plates: slanted dark plates, laurel badge, big outlined numbers
+  1() {
+    const plate = (x, y, w, h) => `<path d="M${x + 14} ${y}H${x + w}L${x + w - 14} ${y + h}H${x}Z" fill="#141028" fill-opacity=".78" stroke="#fff" stroke-opacity=".35" stroke-width="2"/>`;
+    const laurel = (cx, cy) => { let l = ''; for (let i = 0; i < 6; i++) { const a = (200 + i * 26) * Math.PI / 180, b = (-20 - i * 26) * Math.PI / 180;
+      l += `<path d="${INK.leaf([cx + Math.cos(a) * 26, cy + Math.sin(a) * 26], a - 1.9, 16, 5)}" fill="#8fd16a" stroke="${INKC}" stroke-width="2"/><path d="${INK.leaf([cx + Math.cos(b) * 26, cy + Math.sin(b) * 26], b + 1.9, 16, 5)}" fill="#8fd16a" stroke="${INKC}" stroke-width="2"/>`; }
+      return l + `<circle cx="${cx}" cy="${cy}" r="18" fill="#fff" stroke="${INKC}" stroke-width="3"/>${heart(cx, cy - 2, .7, '#ff3a52')}`; };
+    return `<g filter="url(#sh)">${plate(40, 40, 520, 56)}${plate(1450, 40, 430, 96)}${plate(1560, 146, 320, 46)}</g>
+      ${laurel(92, 68)}<rect x="138" y="60" width="380" height="16" rx="8" fill="url(#silver)"/><rect x="138" y="60" width="${380 * V.hp}" height="16" rx="8" fill="url(#red)"/>
+      ${orb(80, 140, 20)}${orb(130, 140, 20, .4)}
+      ${txt(1850, 80, 'SCORE', 26, '#ffd34d', 'end', .15)}${txt(1850, 128, V.score, 56, '#fff')}
+      ${txt(1600, 180, V.intensity, 26, '#c9a6ff', 'start', .15)}${heart(1680, 168, .7, '#ff4d6a')}${txt(1740, 180, V.hearts, 26, '#fff', 'start')}${txt(1850, 180, V.bank, 26, '#ff8fa0')}`;
+  },
+  // 2. The game's own menu language: paper strips with a pastel rainbow wash and ink silhouettes
+  2() {
+    const strip = (x, y, w, h) => { let d = `M${x} ${y + 4}`; for (let i = 0; i <= 12; i++) d += `L${x + w * i / 12} ${y + (i % 2 ? 0 : 5)}`; d += `L${x + w} ${y + h - 4}`; for (let i = 12; i >= 0; i--) d += `L${x + w * i / 12} ${y + h - (i % 2 ? 0 : 5)}`; return d + 'Z'; };
+    return `<g filter="url(#sh)"><path d="${strip(40, 36, 520, 62)}" fill="url(#rainbow)"/><path d="${strip(1460, 34, 420, 150)}" fill="url(#rainbow)"/></g>
+      ${wing(30, 26, .36)}<path d="${INK.tendril([[[110, 92], [140, 70], [170, 80], [184, 68]]], 6, 8, -1, 1.1, .5)}" fill="${INKC}"/>
+      <rect x="130" y="56" width="400" height="18" rx="4" fill="#fff" stroke="${INKC}" stroke-width="3"/><rect x="130" y="56" width="${400 * V.hp}" height="18" rx="4" fill="#f0405a" stroke="${INKC}" stroke-width="3"/>
+      ${orb(80, 136, 20)}${orb(130, 136, 20, .4)}
+      ${txt(1850, 74, 'SCORE', 28, INKC, 'end', 0)}${txt(1850, 128, V.score, 58, INKC, 'end', 0)}
+      <path d="${INK.tendril([[[1480, 120], [1520, 92], [1560, 100], [1580, 84]]], 8, 10, -1, 1.1, .5)}" fill="${INKC}"/>
+      ${txt(1560, 170, V.intensity, 26, '#6a3cc8', 'start', 0)}${heart(1650, 160, .7, '#f0405a')}${txt(1700, 170, V.hearts, 26, INKC, 'start', 0)}${txt(1850, 170, V.bank, 26, '#c41a37', 'end', 0)}`;
+  },
+  // 3. Laurel (Pit's crown): health as a laurel branch that loses leaves, gold tablet score
+  3() {
+    let leaves = ''; const n = 16, lost = Math.round(n * (1 - V.hp));
+    for (let i = 0; i < n; i++) { const x = 130 + i * 26, on = i < n - lost;
+      leaves += `<path d="${INK.leaf([x, 64], -.9, 30, 8)}" fill="${on ? '#7cc95a' : '#3c3a52'}" stroke="${INKC}" stroke-width="2.5" opacity="${on ? 1 : .6}"/><path d="${INK.leaf([x + 10, 68], .9, 30, 8)}" fill="${on ? '#9bdc6f' : '#3c3a52'}" stroke="${INKC}" stroke-width="2.5" opacity="${on ? 1 : .6}"/>`; }
+    return `<g filter="url(#sh)"><path d="${INK.brush([[[110, 68], [250, 64], [420, 70], [560, 66]]], 7, .8, .2, .3)}" fill="#6b4a1c"/>${leaves}</g>
+      ${wing(28, 30, .42)}
+      ${orb(80, 136, 20)}${orb(130, 136, 20, .4)}
+      <g filter="url(#sh)"><rect x="1540" y="34" width="340" height="104" rx="14" fill="url(#gold)" stroke="${INKC}" stroke-width="4"/></g>
+      ${txt(1860, 70, 'SCORE', 26, '#fff', 'end', .18)}${txt(1860, 124, V.score, 56, '#fff')}
+      ${txt(1560, 182, V.intensity, 26, '#c9a6ff', 'start', .18)}${heart(1650, 170, .7, '#ff4d6a')}${txt(1700, 182, V.hearts, 26, '#fff', 'start')}${txt(1860, 182, V.bank, 26, '#ff8fa0', 'end')}`;
+  },
+  // 4. Feathers (Ori / Journey minimal): health as feathers in a row, no plates, quiet numbers
+  4() {
+    let f = ''; const n = 10, on = Math.round(n * V.hp);
+    for (let i = 0; i < n; i++) f += `<g transform="translate(${70 + i * 34} 34) rotate(18 12 30)"><path d="M12 0C26 14 24 44 12 60C0 44 -2 14 12 0Z" fill="${i < on ? 'url(#feather)' : '#ffffff'}" fill-opacity="${i < on ? 1 : .18}" stroke="${INKC}" stroke-width="3"/><path d="M12 6V58" stroke="#8ea9cc" stroke-width="2"/></g>`;
+    return `<g filter="url(#sh)">${f}</g>${orb(84, 136, 18)}${orb(128, 136, 18, .4)}
+      ${txt(1860, 92, V.score, 54, '#fff', 'end', .14)}
+      ${heart(1700, 130, .65, '#ff4d6a')}${txt(1740, 142, V.hearts, 24, '#fff', 'start', .14)}${txt(1860, 142, V.bank, 24, '#ffd0d8', 'end', .14)}${txt(1640, 142, V.intensity, 24, '#d6c2ff', 'end', .14)}`;
+  },
+  // 5. Brush (Okami-style calligraphy): one ink stroke holds the red health, score brushed in ink
+  5() {
+    const stroke = INK.brush([[[60, 70], [200, 52], [400, 74], [580, 60]]], 34, .3, .05, .2);
+    return `<clipPath id="hp"><rect x="0" y="0" width="${80 + 470 * V.hp}" height="200"/></clipPath>
+      <g filter="url(#sh)"><path d="${stroke}" fill="${INKC}" fill-opacity=".9"/></g>
+      <path d="${INK.brush([[[78, 68], [200, 54], [400, 74], [560, 62]]], 14, .4, .1, .3)}" fill="#e8e6f0" opacity=".85"/>
+      <path clip-path="url(#hp)" d="${INK.brush([[[78, 68], [200, 54], [400, 74], [560, 62]]], 14, .4, .1, .3)}" fill="#ff3348"/>
+      ${wing(14, 34, .3)}${orb(110, 136, 18)}${orb(152, 136, 18, .4)}
+      <g filter="url(#sh)"><path d="${INK.brush([[[1500, 110], [1600, 70], [1760, 120], [1900, 80]]], 70, .2, .05, .3)}" fill="${INKC}" fill-opacity=".85"/></g>
+      ${txt(1860, 116, V.score, 56, '#fff', 'end', 0)}
+      ${txt(1620, 180, V.intensity, 24, '#d6c2ff', 'end', .14)}${heart(1680, 168, .65, '#ff4d6a')}${txt(1710, 180, V.hearts, 24, '#fff', 'start', .14)}${txt(1860, 180, V.bank, 24, '#ffd0d8', 'end', .14)}`;
+  },
+  // 6. Halo: health as a ring around Pit's wings, specials as gems on the ring, score plain
+  6() {
+    const cx = 110, cy = 100, r = 56, a0 = -Math.PI * .85, a1 = Math.PI * .35, a = a0 + (a1 - a0) * V.hp;
+    const arc = (from, to) => `M${cx + Math.cos(from) * r} ${cy + Math.sin(from) * r}A${r} ${r} 0 ${to - from > Math.PI ? 1 : 0} 1 ${cx + Math.cos(to) * r} ${cy + Math.sin(to) * r}`;
+    return `<circle cx="${cx}" cy="${cy}" r="${r + 16}" fill="url(#halo)"/>
+      <g filter="url(#sh)"><path d="${arc(a0, a1)}" fill="none" stroke="${INKC}" stroke-width="20" stroke-linecap="round"/></g>
+      <path d="${arc(a0, a1)}" fill="none" stroke="url(#silver)" stroke-width="12" stroke-linecap="round"/>
+      <path d="${arc(a0, a)}" fill="none" stroke="#ff3348" stroke-width="12" stroke-linecap="round"/>
+      ${wing(cx - 92, cy - 52, .42)}${wing(cx + 92, cy - 52, .42, true)}
+      ${orb(cx - 18, cy + 76, 15)}${orb(cx + 18, cy + 76, 15, .4)}
+      ${txt(1860, 70, 'SCORE', 26, '#fff', 'end', .18)}${txt(1860, 124, V.score, 56, '#fff')}
+      ${txt(1620, 176, V.intensity, 24, '#d6c2ff', 'end', .14)}${heart(1680, 164, .65, '#ff4d6a')}${txt(1710, 176, V.hearts, 24, '#fff', 'start', .14)}${txt(1860, 176, V.bank, 24, '#ffd0d8', 'end', .14)}`;
+  },
+  // 7. Clean classic: the game's layout with the fewest pieces: wing, bar, numbers
+  7() {
+    return `<g filter="url(#sh)"><rect x="120" y="54" width="440" height="30" rx="15" fill="${INKC}" fill-opacity=".8"/></g>
+      <rect x="128" y="61" width="424" height="16" rx="8" fill="url(#silver)"/><rect x="128" y="61" width="${424 * V.hp}" height="16" rx="8" fill="url(#red)"/>
+      ${wing(30, 30, .48)}${orb(150, 126, 20)}${orb(198, 126, 20, .4)}
+      ${txt(1860, 70, 'SCORE', 26, '#fff', 'end', .18)}${txt(1860, 124, V.score, 56, '#fff')}
+      ${txt(1620, 176, V.intensity, 24, '#d6c2ff', 'end', .14)}${heart(1680, 164, .65, '#ff4d6a')}${txt(1710, 176, V.hearts, 24, '#fff', 'start', .14)}${txt(1860, 176, V.bank, 24, '#ffd0d8', 'end', .14)}`;
+  },
+};
+S.innerHTML = defs + ideas[IDEA]();
+</script></body></html>
