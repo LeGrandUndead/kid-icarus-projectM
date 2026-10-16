@@ -112,3 +112,16 @@ Development comparison: `--hud-art pc` (default; falls back to `hud-hd`),
   orbs draw correctly with the pack. The orb stays soft (it is shading).
 - An SDF/vector runtime path was not needed: 4x masters are visually
   identical at the sizes the HUD is shown.
+
+## Display-size baking and crisper soft layers (October 16)
+
+- The overlay has no mipmaps, so a 4x HUD atlas drawn at about 2.25x was
+  minified with plain bilinear filtering (shimmer and slight softness).
+  HD atlases are now baked down with area averaging to the density the HUD
+  is shown at (window height and HUD size, quarter steps), off the
+  emulation thread; resizing the window re-bakes.
+- Semi-transparent layers whose soft edge is only the 3DS's anti-aliasing
+  (health frame, score tendrils; edge softness up to 2.0) are traced and
+  kept crisp; only real glows and shadows keep a soft falloff.
+- Text drawn on a picture panel fades with that panel only (the power-name
+  bubble no longer disappears with the Practice Range card).

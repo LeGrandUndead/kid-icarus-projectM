@@ -142,6 +142,7 @@ def edge_softness(coverage):
 
 
 SOFT_EDGE = 1.5
+GLOW_EDGE = 2.0
 SOFT_ICON_EDGE = 0.35  # power icons: 0; wings and items with a soft dark rim: about 0.6
 
 
@@ -253,11 +254,11 @@ def method_flat(crop, mask):
     for layer, c in zip(layers, cov):
         softness = edge_softness(c)
         shape = smooth_shape(c)
-        if layer['alpha'] < 0.95 or softness > SOFT_EDGE:
-            # semi-transparent layers (the health bar frame, the score plate's
-            # tendrils) and soft edges (shadows, faint strokes): the outline
-            # is traced (no pixel steps), then given back the soft falloff
-            # the source has, as wide as measured on its edge
+        if softness > GLOW_EDGE:
+            # real soft art (shadows, glows): the outline is traced (no pixel
+            # steps), then given back the soft falloff the source has, as
+            # wide as measured on its edge. Edges up to GLOW_EDGE are only the
+            # 3DS's anti-aliasing (health frame, score tendrils): kept crisp.
             width = max(0.0, softness - 1.0) * FACTOR * 0.4
             if width > 0.3:
                 shape = cv2.GaussianBlur(shape, (0, 0), width)

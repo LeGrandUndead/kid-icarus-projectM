@@ -69,6 +69,9 @@ struct Layer {
     /// vertex alpha for fades the combiner applies linearly.
     alpha: f32,
     island: Option<layout::Island>,
+    /// whose long-standing fade this layer follows: its own name, or for
+    /// text written on a picture panel, the panel's.
+    fade_key: usize,
 }
 
 const MAX_LAYERS: usize = 256;
@@ -106,6 +109,9 @@ struct State {
     /// Portraits and pictures by texture name: first and last frame seen in
     /// an unbroken run, and the fade it has now (see `PICTURE_LIMIT`).
     runs: HashMap<usize, (u64, u64, u64)>,
+    /// Host pixels per guest pixel the relocated HUD is drawn at now; HD
+    /// textures are baked down to about this density (no mipmaps).
+    display: f32,
     fades: HashMap<usize, f32>,
 }
 
@@ -196,7 +202,7 @@ pub fn end_frame() -> BottomScene {
     }
     let frame = s.frame;
     for layer in &s.shown {
-        if matches!(layer.role, Role::Portrait | Role::Insert) {
+        if matches!(layer.role, Role::Portrait | Role::Insert) && layer.fade_key == layer.name && s.names[layer.name] != "unlisted" {
             let limit = if layer.role == Role::Portrait { PORTRAIT_LIMIT } else { PICTURE_LIMIT };
             let run = s.runs.entry(layer.name).or_insert((frame, frame, limit));
             run.1 = frame;
@@ -280,13 +286,14 @@ pub(crate) fn push(hash: u64, width: u32, height: u32, texels: &[[u8; 4]],
     // Text and other unlisted art goes with the layer it is written on: the
     // most recent picture panel or HUD piece under it (the Practice Range
     // weapon card's text with the card, a power name with its HUD bubble).
+    let mut fade_key = name;
     let role = if role == Role::Unlisted {
         let c = layout::center(layout::bounds(&xy));
         let under = s.pending.iter().rev().find(|l| (l.role == Role::Insert || l.island.is_some()) && {
             let b = layout::bounds(&l.xy);
             c[0] >= b[0] && c[0] <= b[2] && c[1] >= b[1] && c[1] <= b[3]
         });
-        match under { Some(l) if l.role == Role::Insert => Role::Insert, _ => role }
+        match under { Some(l) if l.role == Role::Insert => { fade_key = l.fade_key; Role::Insert } _ => role }
     } else { role };
     // Decide placement first: unplaced HUD/menu/decor draws need no texture.
     let hud_like = matches!(role, Role::Hud | Role::Unlisted);
@@ -307,6 +314,7 @@ pub(crate) fn push(hash: u64, width: u32, height: u32, texels: &[[u8; 4]],
         key.extend(baked_primary.map(f32::to_bits));
         for base in [0xc0, 0xc8, 0xd0, 0xd8, 0xf0, 0xf8] { key.extend_from_slice(&registers[base..base + 5]); }
         key.extend([registers[0xe0], registers[0xfd]]);
+        if hd.is_some() { key.push(((s.display.max(1.0) * 4.0).ceil()) as u32); }
         let (id, is_hd) = match s.cache.get(&key) {
             Some(&entry) => entry,
             None => {
@@ -320,9 +328,15 @@ pub(crate) fn push(hash: u64, width: u32, height: u32, texels: &[[u8; 4]],
         if let (false, Some(hd), Some(jobs)) = (is_hd, hd, &s.jobs) {
             if s.baking.insert(key.clone()) {
                 let jobs = jobs.clone();
+                // bake at the density the HUD is shown at (quarter steps),
+                // never above the HD texture's own
+                let factor = hd.width as f32 / width as f32;
+                let target = ((s.display.max(1.0) * 4.0).ceil() / 4.0).min(factor);
+                let (tw, th) = ((width as f32 * target).round() as u32, (height as f32 * target).round() as u32);
                 std::thread::spawn(move || {
                     let pixels = bake::bake(&env, baked_primary, &hd.texels);
-                    let _ = jobs.send(Done::Baked(key, [hd.width, hd.height], pixels));
+                    let pixels = bake::shrink(&pixels, hd.width, hd.height, tw, th);
+                    let _ = jobs.send(Done::Baked(key, [tw.min(hd.width), th.min(hd.height)], pixels));
                 });
             }
         }
@@ -332,7 +346,7 @@ pub(crate) fn push(hash: u64, width: u32, height: u32, texels: &[[u8; 4]],
         Some((id, if fade { primary[3].clamp(0.0, 1.0) } else { 1.0 }))
     } else { None };
     let (texture, alpha) = texture.unwrap_or((0, 1.0));
-    s.pending.push(Layer { role, name, texture, xy, uv, alpha, island });
+    s.pending.push(Layer { role, name, texture, xy, uv, alpha, island, fade_key });
 }
 
 /// The HD version of a catalogued texture, if the local pack has one and it
@@ -470,6 +484,7 @@ pub fn overlay_in(width: u32, height: u32, view: [f32; 4], visible: bool) -> Ove
     let [vx, vy, w, h] = view;
     if !visible || width == 0 || height == 0 || !(w >= 1.0 && h >= 1.0) { return overlay; }
     let interface = config::get();
+    s.display = layout::hud_scale(h, interface.hud_scale);
     for layer in &s.shown {
         let place: Box<dyn Fn([f32; 2]) -> [f32; 2]> = match (layer.role, layer.island) {
             (Role::Portrait, _) if interface.portraits => {
@@ -485,7 +500,7 @@ pub fn overlay_in(width: u32, height: u32, view: [f32; 4], visible: bool) -> Ove
             }
             _ => continue,
         };
-        let fade = s.fades.get(&layer.name).copied().unwrap_or(1.0);
+        let fade = if matches!(layer.role, Role::Portrait | Role::Insert) { s.fades.get(&layer.fade_key).copied().unwrap_or(1.0) } else { 1.0 };
         if fade <= 0.0 { continue; }
         let a = (layer.alpha * fade * 255.0).round() as u8;
         let vertices = (0..4).map(|i| {

@@ -39,8 +39,61 @@ pub fn bake(env: &TexEnv, primary: [f32; 4], texels: &[[u8; 4]]) -> Vec<u8> {
     pixels
 }
 
+/// Area (box) resampling of premultiplied RGBA to a smaller size, so an HD
+/// texture shown smaller than its texels stays clean (the overlay has no
+/// mipmaps; plain bilinear minification would alias).
+pub fn shrink(pixels: &[u8], w: u32, h: u32, tw: u32, th: u32) -> Vec<u8> {
+    let (tw, th) = (tw.min(w).max(1), th.min(h).max(1));
+    if tw == w && th == h { return pixels.to_vec(); }
+    let (fx, fy) = (w as f32 / tw as f32, h as f32 / th as f32);
+    // separable: rows first, then columns, with fractional pixel coverage
+    let weights = |n: u32, f: f32, src: u32| -> Vec<Vec<(usize, f32)>> {
+        (0..n).map(|i| {
+            let (a, b) = (i as f32 * f, ((i + 1) as f32 * f).min(src as f32));
+            let mut v = Vec::new();
+            let mut x = a.floor();
+            while x < b {
+                let cover = (b.min(x + 1.0) - a.max(x)).max(0.0);
+                if cover > 0.0 { v.push((x as usize, cover / f)); }
+                x += 1.0;
+            }
+            v
+        }).collect()
+    };
+    let (wx, wy) = (weights(tw, fx, w), weights(th, fy, h));
+    let mut rows = vec![0f32; (tw * h * 4) as usize];
+    for y in 0..h as usize {
+        for (ox, taps) in wx.iter().enumerate() {
+            for c in 0..4 {
+                rows[(y * tw as usize + ox) * 4 + c] = taps.iter().map(|&(x, k)| pixels[(y * w as usize + x) * 4 + c] as f32 * k).sum();
+            }
+        }
+    }
+    let mut out = vec![0u8; (tw * th * 4) as usize];
+    for (oy, taps) in wy.iter().enumerate() {
+        for x in 0..tw as usize {
+            for c in 0..4 {
+                let v: f32 = taps.iter().map(|&(y, k)| rows[(y * tw as usize + x) * 4 + c] * k).sum();
+                out[(oy * tw as usize + x) * 4 + c] = v.round().clamp(0.0, 255.0) as u8;
+            }
+        }
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn shrink_averages_by_area() {
+        // 4x1 -> 2x1: pairs averaged; 3x1 -> 2x1: fractional coverage
+        let px = [0u8, 0, 0, 0, 255, 255, 255, 255, 255, 255, 255, 255, 0, 0, 0, 0];
+        assert_eq!(super::shrink(&px, 4, 1, 2, 1), vec![128, 128, 128, 128, 128, 128, 128, 128]);
+        let px3 = [255u8, 0, 0, 255, 0, 0, 0, 0, 255, 0, 0, 255];
+        let r = super::shrink(&px3, 3, 1, 2, 1);
+        assert_eq!(r[0], 170);
+        assert_eq!(r[4], 170);
+    }
+
     use super::*;
     #[test]
     fn transparency_is_premultiplied_without_opaque_background() {
