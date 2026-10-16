@@ -40,9 +40,9 @@ Hints alone only cover about half of it. 3dsrecomp (at the revision the
 runtime is pinned to) takes a hint as a new function only when no function it
 found already runs through that address, and most of the decoder's entry
 points sit in the middle of straight-line code that some function falls
-through: 61 of the census places, 0.46% of all instructions (`0x5F2FF8`-
+through: 62 of the census places, 0.62% of all instructions (`0x5F2FF8`-
 `0x5F305C`, `0x5F3440`-`0x5F3488`, `0x5F35EC`-`0x5F361C`, `0x5F6260`-
-`0x5F6274`). For those, `tools/recomp/overrides/kiu-entry-points.c` uses
+`0x5F6274`, `0x5F6294`). For those, `tools/recomp/overrides/kiu-entry-points.c` uses
 3dsrecomp's override mechanism: an override makes it generate a function at
 its address, and each override here does nothing but run that generated
 function, so the game's behaviour is unchanged. The file holds only
