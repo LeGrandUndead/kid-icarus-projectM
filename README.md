@@ -36,7 +36,7 @@ own and is never modified.
 | `build/user-data` | saves and settings (local) |
 | `tools/zakuro` | runtime source; `target/release/zakuro-pc-interface.exe` |
 | `tools/3dsrecomp`, `recompiler` | ARM-to-C recompiler |
-| `tools/recomp` | launcher, library build scripts, HUD pack and UI source tools, tests |
+| `tools/recomp` | launcher, library build scripts, HUD pack and UI source tools |
 | `doc` | documentation ([index](doc/README.md)) |
 | `archive` | retired builds, launchers and experiments (recovery only, local) |
 
@@ -53,7 +53,8 @@ are ignored by git.
 - Runtime: `cargo build --release -p zakuro --bin zakuro-pc-interface` in
   `tools/zakuro` (runtime changes are also kept as
   `tools/recomp/patches/kiu-pc-runtime.patch`).
-- Tests: `python -m unittest discover -s tools/recomp/tests`.
+- Recompile with the places still interpreted: `tools/recomp/Rebuild-KIU-With-Hints.ps1`
+  ([details](doc/INTERPRETED.md)).
 
 ## Cleanup (October 16)
 

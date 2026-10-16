@@ -6,6 +6,7 @@ kept as the record of how the current build was reached.
 
 - [HUD asset reconstruction](PC_HUD_ASSET_RECONSTRUCTION.md): the HUD rebuilt from the ROM, methods and checks.
 - [Power state](POWER_STATE.md): where the equipped power lives in game memory.
+- [Interpreted code](INTERPRETED.md): what still runs in the interpreter and how the library is rebuilt to cover it.
 
 - [Single-screen status](PC_SINGLE_SCREEN_STATUS.md): what currently works, what is still dual-screen, launchers and fallbacks.
 - [Single-screen audit](PC_SINGLE_SCREEN_AUDIT.md): original UI inventory, evidence and unresolved game-state identification.
@@ -26,4 +27,5 @@ documents remain in this directory unchanged.
 
 Use the root launcher. Do not reapply patch packs from `archive` to the live source.
 The combined current runtime changes are saved in
-`tools/recomp/patches/kiu-pc-runtime.patch`; the frozen controls patch is separate.
+`tools/recomp/patches/kiu-pc-runtime.patch`; older patch packs and the Python tests were
+retired on October 16 and stay in git history.

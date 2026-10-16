@@ -111,8 +111,8 @@ See `build/hud-source-atlases-20261010.png`. Replacing selected assets or
 rebuilding HUD elements remains separate work; no global blur filter is applied.
 
 The reproducible runtime patch is
-`tools/recomp/patches/kiu-pc-experimental.patch`, including the working baseline
-changes. It targets the runtime's recorded upstream HEAD, not an already
+`tools/recomp/patches/kiu-pc-runtime.patch` (the older experimental patch was
+retired in the October 16 cleanup; git history keeps it). It targets the runtime's recorded upstream HEAD, not an already
 patched checkout. The launcher and documentation remain in the project root.
 
 ### Rebuild only the experimental executable

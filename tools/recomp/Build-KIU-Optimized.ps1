@@ -77,7 +77,7 @@ Get-Item -LiteralPath $library | Select-Object FullName,Length,LastWriteTime
 Write-Host ''
 Write-Host 'Quick native smoke test (300 headless frames)...'
 
-& python "$kiuRoot/tools/recomp/launch.py" --build o2 --headless 300
+& python "$kiuRoot/tools/recomp/launch.py" --pc-interface --build o2 --headless 300
 if ($LASTEXITCODE) {
     throw "Headless smoke test failed with exit code $LASTEXITCODE"
 }

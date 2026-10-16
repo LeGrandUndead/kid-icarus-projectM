@@ -84,7 +84,7 @@ paint / 9 ink.
   Needs `pip install potracer opencv-python pillow numpy`; about 8 s.
 - The comparison-sheet script used during development (`hud_compare.py`) is
   archived; the sources are kept in `build/texture-work/hud-sources`.
-- Tests: `python -m unittest tests.test_hud_reconstruct` (synthetic shapes).
+- The Python tests were retired in the October 16 cleanup (git history keeps them).
 
 ## Runtime
 

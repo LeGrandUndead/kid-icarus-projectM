@@ -120,7 +120,7 @@ touch-aim range widened in game code — the postponed widescreen task.
 ## Tests
 
 44 frontend, 17 kiu_ui, 108 GPU (zakuro-gpu alone; 124+ with the frontend's
-Vulkan feature), Python tests in `tools/recomp/tests` (HUD reconstruction, UI sources, presentation). Windows executable
+Vulkan feature) in the Rust crates; the Python tests were retired on October 16. Windows executable
 cross-built from the same source (stripped, about 14.8 MB).
 
 ## Fallbacks
