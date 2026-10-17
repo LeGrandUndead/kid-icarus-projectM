@@ -83,6 +83,27 @@ impl ShaderUnit {
         }
     }
 
+    /// a copy to run with different uniforms, the program and its
+    /// decoding shared, without the programs decoded before.
+    pub fn fork(&self) -> ShaderUnit {
+        ShaderUnit {
+            program: self.program.clone(),
+            descriptors: self.descriptors.clone(),
+            float_uniforms: self.float_uniforms.clone(),
+            int_uniforms: self.int_uniforms,
+            bool_uniforms: self.bool_uniforms,
+            entry_point: self.entry_point,
+            program_write_offset: self.program_write_offset,
+            descriptor_write_offset: self.descriptor_write_offset,
+            float_uniform_index: self.float_uniform_index,
+            float_uniform_component: self.float_uniform_component,
+            float_uniform_wide: self.float_uniform_wide,
+            float_uniform_staging: self.float_uniform_staging,
+            decoded: self.decoded.clone(),
+            decoded_before: HashMap::new(),
+        }
+    }
+
     pub fn upload_program(&mut self, word: u32) {
         if self.program_write_offset < PROGRAM_SIZE {
             if self.program[self.program_write_offset] != word {

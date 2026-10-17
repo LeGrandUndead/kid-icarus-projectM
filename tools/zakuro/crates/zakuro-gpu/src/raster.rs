@@ -574,8 +574,14 @@ fn geometry_stage(
     vertex_outputs: impl Iterator<Item = [Vec4; 16]>,
 ) -> Vec<Vertex> {
     let mode = registers[REG_GS_CONFIG] & 0xFF;
+    if mode == 2 {
+        return fixed_primitives(registers, unit, map, vertex_outputs);
+    }
     if mode != 0 {
-        log::warn!("geometry shader mode {mode} is not implemented");
+        static WARNED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+        if !WARNED.swap(true, std::sync::atomic::Ordering::Relaxed) {
+            log::warn!("geometry shader mode {mode} is not implemented, its draws are skipped");
+        }
         return Vec::new();
     }
     let per_vertex = ((registers[REG_VS_OUTPUT_TOTAL] & 0xF) + 1) as usize;
@@ -622,6 +628,54 @@ fn geometry_stage(
             );
         }
         for triangle in triangles {
+            for outputs in triangle {
+                vertices.push(to_vertex(map, &pack_outputs(outputs, output_mask)));
+            }
+        }
+    }
+    vertices
+}
+
+/// the geometry shader's fixed-size primitive mode, which particle systems
+/// use: each vertex's outputs go into the shader's float uniforms from
+/// GS_CONFIG's start index on, and once a primitive's worth of vertices is
+/// there the shader runs once, reading them from the uniforms instead of its
+/// inputs. bool uniform 15 is set after the first run of a draw, so the
+/// shader can tell the first primitive from the rest.
+fn fixed_primitives(
+    registers: &[u32],
+    unit: &ShaderUnit,
+    map: &OutputMap,
+    vertex_outputs: impl Iterator<Item = [Vec4; 16]>,
+) -> Vec<Vertex> {
+    let config = registers[REG_GS_CONFIG];
+    let per_vertex = ((registers[REG_VS_OUTPUT_TOTAL] & 0xF) + 1) as usize;
+    let vertices_per_primitive = (((config >> 8) & 0xF) + 1) as usize;
+    let start = ((config >> 16) & 0xFF) as usize;
+    let per_primitive = per_vertex * vertices_per_primitive;
+    let output_mask = registers[REG_GS_BLOCK + SHADER_OUTPUT_MASK];
+    if start + per_primitive > shader::FLOAT_UNIFORMS {
+        log::warn!("fixed-size primitives of {per_primitive} registers from uniform {start} do not fit, skipped");
+        return Vec::new();
+    }
+
+    let mut scratch = unit.fork();
+    let mut pending: Vec<Vec4> = Vec::with_capacity(per_primitive);
+    let mut vertices = Vec::new();
+    let mut first = true;
+    for outputs in vertex_outputs {
+        pending.extend_from_slice(&outputs[..per_vertex]);
+        if pending.len() < per_primitive {
+            continue;
+        }
+        scratch.float_uniforms[start..start + per_primitive].copy_from_slice(&pending);
+        pending.clear();
+        if !first {
+            scratch.bool_uniforms |= 1 << 15;
+        }
+        first = false;
+        let emitted = shader::run_geometry_many(&scratch, &[[shader::ZERO; shader::INPUT_REGISTERS]]);
+        for triangle in emitted.iter().flatten() {
             for outputs in triangle {
                 vertices.push(to_vertex(map, &pack_outputs(outputs, output_mask)));
             }
