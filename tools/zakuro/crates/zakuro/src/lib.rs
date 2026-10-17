@@ -109,6 +109,7 @@ pub fn run(linked: Option<Linked>) {
         last_title_update: Instant::now(),
         next_frame: Instant::now(),
         skipped: 0,
+        last_show: Duration::ZERO,
         shown: 0,
         spent: Spent::default(),
         paused: false,
@@ -361,6 +362,8 @@ struct App {
     next_frame: Instant,
     /// frames in a row not shown while catching up.
     skipped: u32,
+    /// what showing the last frame took, skipping one only saves that.
+    last_show: Duration,
     /// frames shown since the title was last updated.
     shown: u32,
     /// how long emulating and showing frames took since the title was last
@@ -420,6 +423,11 @@ const FRAME_TIME: Duration =
 const CATCH_UP_LIMIT: Duration = Duration::from_millis(200);
 /// frames that may go unshown in a row while catching up.
 const MAX_SKIPPED: u32 = 4;
+/// showing a frame has to cost at least this for skipping it to help: a
+/// game that draws every other vertical blank (KIU's 30 fps) runs a heavy
+/// frame then a light one, and skipping the cheap present after the heavy
+/// frame only dropped frames the player would have seen.
+const SKIP_WORTH: Duration = Duration::from_millis(4);
 
 impl ApplicationHandler for App {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
@@ -1080,7 +1088,7 @@ impl App {
         // so it goes unshown, a few at most
         let behind = Instant::now() > self.next_frame;
         let mut showed = None;
-        if playing && behind && self.skipped < MAX_SKIPPED {
+        if playing && behind && self.skipped < MAX_SKIPPED && self.last_show >= SKIP_WORTH {
             self.skipped += 1;
         } else {
             self.skipped = 0;
@@ -1088,6 +1096,7 @@ impl App {
             self.present(event_loop);
             let took = start.elapsed();
             self.spent.showing.add(took);
+            self.last_show = took;
             self.shown += 1;
             showed = Some(took);
         }
