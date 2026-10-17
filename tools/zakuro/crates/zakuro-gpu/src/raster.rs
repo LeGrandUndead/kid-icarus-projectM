@@ -654,34 +654,41 @@ fn fixed_primitives(
     let start = ((config >> 16) & 0xFF) as usize;
     let per_primitive = per_vertex * vertices_per_primitive;
     let output_mask = registers[REG_GS_BLOCK + SHADER_OUTPUT_MASK];
-    if start + per_primitive > shader::FLOAT_UNIFORMS {
+    if per_primitive == 0 || start + per_primitive > shader::FLOAT_UNIFORMS {
         log::warn!("fixed-size primitives of {per_primitive} registers from uniform {start} do not fit, skipped");
         return Vec::new();
     }
 
-    let mut scratch = unit.fork();
-    let mut pending: Vec<Vec4> = Vec::with_capacity(per_primitive);
-    let mut vertices = Vec::new();
-    let mut first = true;
+    // every primitive's vertex outputs, then the primitives over threads,
+    // each thread with its own copy of the uniforms to write them into
+    let mut flat: Vec<Vec4> = Vec::new();
     for outputs in vertex_outputs {
-        pending.extend_from_slice(&outputs[..per_vertex]);
-        if pending.len() < per_primitive {
-            continue;
-        }
-        scratch.float_uniforms[start..start + per_primitive].copy_from_slice(&pending);
-        pending.clear();
-        if !first {
-            scratch.bool_uniforms |= 1 << 15;
-        }
-        first = false;
-        let emitted = shader::run_geometry_many(&scratch, &[[shader::ZERO; shader::INPUT_REGISTERS]]);
-        for triangle in emitted.iter().flatten() {
-            for outputs in triangle {
-                vertices.push(to_vertex(map, &pack_outputs(outputs, output_mask)));
-            }
-        }
+        flat.extend_from_slice(&outputs[..per_vertex]);
     }
-    vertices
+    let primitives: Vec<&[Vec4]> = flat.chunks_exact(per_primitive).collect();
+    let started = std::time::Instant::now();
+    let run = |scratch: &mut ShaderUnit, (index, primitive): (usize, &&[Vec4])| {
+        scratch.float_uniforms[start..start + per_primitive].copy_from_slice(primitive);
+        scratch.bool_uniforms = if index == 0 { unit.bool_uniforms } else { unit.bool_uniforms | 1 << 15 };
+        let mut state = shader::ShaderState::new();
+        let mut emitter = shader::Emitter::default();
+        shader::run_geometry(scratch, &mut state, &mut emitter);
+        emitter
+            .triangles
+            .iter()
+            .flatten()
+            .map(|outputs| to_vertex(map, &pack_outputs(outputs, output_mask)))
+            .collect::<Vec<_>>()
+    };
+    let emitted: Vec<Vec<Vertex>> = if primitives.len() < 64 {
+        let mut scratch = unit.fork();
+        primitives.iter().enumerate().map(|item| run(&mut scratch, item)).collect()
+    } else {
+        primitives.par_iter().enumerate().map_init(|| unit.fork(), |scratch, item| run(scratch, item)).collect()
+    };
+    crate::stats::add(&crate::stats::PARTICLE_PRIMITIVES, primitives.len() as u64);
+    crate::stats::add(&crate::stats::PARTICLE_NANOS, started.elapsed().as_nanos() as u64);
+    emitted.into_iter().flatten().collect()
 }
 
 /// screen-space vertex, with every varying pre-divided by w so the
