@@ -494,9 +494,15 @@ fn process_command_queue(system: &mut System) {
 }
 
 fn execute_command(system: &mut System, command: GxCommand) {
+    let started = std::time::Instant::now();
+    let id = command.id;
+    run_command(system, command);
     if let Some(usage) = &mut system.usage {
-        usage.gx(command.id as u8);
+        usage.gx(id, started.elapsed());
     }
+}
+
+fn run_command(system: &mut System, command: GxCommand) {
     log::trace!(
         "gx command 0x{:02X}: {:08X?}",
         command.id,

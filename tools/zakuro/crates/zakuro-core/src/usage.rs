@@ -31,6 +31,10 @@ pub struct Usage {
     showing: Histogram,
     /// frames the host did not show to catch up.
     pub skipped: u64,
+    /// host time the GPU commands (command lists, transfers, fills) took,
+    /// per guest frame: the renderer's CPU side, inside "emulating".
+    gpu_commands: Histogram,
+    gx_this_frame: Duration,
 }
 
 #[derive(Clone)]
@@ -97,6 +101,8 @@ impl Usage {
             emulating: Histogram::default(),
             showing: Histogram::default(),
             skipped: 0,
+            gpu_commands: Histogram::default(),
+            gx_this_frame: Duration::ZERO,
         }
     }
 
@@ -113,8 +119,16 @@ impl Usage {
         self.svcs[(number & 0xFF) as usize] += 1;
     }
 
-    pub fn gx(&mut self, id: u8) {
+    pub fn gx(&mut self, id: u8, took: Duration) {
         self.gx[(id as usize).min(7)] += 1;
+        self.gx_this_frame += took;
+    }
+
+    /// a guest frame ended: what its GPU commands cost the host goes into
+    /// the histogram.
+    pub fn end_frame(&mut self) {
+        self.frames += 1;
+        self.gpu_commands.add(std::mem::take(&mut self.gx_this_frame));
     }
 
     /// what the host spent on one frame.
@@ -136,6 +150,13 @@ impl Usage {
         out += &self.emulating.line("emulating");
         out += &self.showing.line("showing");
         out += &format!("skipped    {} frames not shown to catch up\n", self.skipped);
+        out += &self.gpu_commands.line("gpu cmds");
+        let particles = zakuro_gpu::stats::get(&zakuro_gpu::stats::PARTICLE_PRIMITIVES);
+        let particle_ms = zakuro_gpu::stats::get(&zakuro_gpu::stats::PARTICLE_NANOS) as f64 / 1e6;
+        out += &format!(
+            "particles  {particles} geometry-shader particle primitives, {particle_ms:.0} ms in all, {:.3} ms a frame\n",
+            particle_ms / frames
+        );
 
         out += "\n# GPU work the title queued, per frame\n";
         for (id, name) in ["dma", "command list", "memory fill", "display transfer", "texture copy", "cache flush"]

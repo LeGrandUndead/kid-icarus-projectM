@@ -577,7 +577,7 @@ impl System {
     fn end_frame(&mut self) {
         self.frames += 1;
         if let Some(usage) = &mut self.usage {
-            usage.frames += 1;
+            usage.end_frame();
             if self.frames.is_multiple_of(hints::SAVE_EVERY) {
                 usage.save();
             }
