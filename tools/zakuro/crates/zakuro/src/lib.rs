@@ -1063,10 +1063,13 @@ impl App {
             self.set_mouse_capture(false);
             self.keyboard.release();
         }
+        let mut emulated = None;
         if playing {
             let start = Instant::now();
             self.emulate();
-            self.spent.emulating.add(start.elapsed());
+            let took = start.elapsed();
+            self.spent.emulating.add(took);
+            emulated = Some(took);
         } else if let Some(audio) = &self.audio {
             // the sound stops with the game, which is not falling behind
             audio.hold();
@@ -1076,14 +1079,22 @@ impl App {
         // behind the schedule, showing the frame would wait on the display,
         // so it goes unshown, a few at most
         let behind = Instant::now() > self.next_frame;
+        let mut showed = None;
         if playing && behind && self.skipped < MAX_SKIPPED {
             self.skipped += 1;
         } else {
             self.skipped = 0;
             let start = Instant::now();
             self.present(event_loop);
-            self.spent.showing.add(start.elapsed());
+            let took = start.elapsed();
+            self.spent.showing.add(took);
             self.shown += 1;
+            showed = Some(took);
+        }
+        if playing {
+            if let Some(usage) = self.game.as_mut().and_then(|game| game.system.usage.as_mut()) {
+                usage.host_frame(emulated, showed);
+            }
         }
 
         if self.last_title_update.elapsed() >= Duration::from_millis(500) {

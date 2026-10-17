@@ -9,6 +9,7 @@ pub mod memory;
 pub mod replay;
 pub mod recompiled;
 pub mod services;
+pub mod usage;
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -141,6 +142,8 @@ pub struct System {
     pub recompiled: Option<recompiled::Library>,
     /// where the title ran in the interpreter despite the library.
     pub hints: Option<hints::Hints>,
+    /// what the title asks of the runtime, next to the library as well.
+    pub usage: Option<usage::Usage>,
     /// instructions the interpreter ran for want of recompiled code, and
     /// the ones recompiled code ran, to see how much the library covers.
     pub interpreted_instructions: u64,
@@ -211,6 +214,7 @@ impl System {
             profile: None,
             recompiled: None,
             hints: None,
+            usage: None,
             interpreted_instructions: 0,
             recompiled_instructions: 0,
         }
@@ -572,6 +576,12 @@ impl System {
     /// everything that happens between frames, vertical blank, input, clock.
     fn end_frame(&mut self) {
         self.frames += 1;
+        if let Some(usage) = &mut self.usage {
+            usage.frames += 1;
+            if self.frames.is_multiple_of(hints::SAVE_EVERY) {
+                usage.save();
+            }
+        }
         if self.frames.is_multiple_of(hints::SAVE_EVERY) {
             if let Some(hints) = &mut self.hints {
                 hints.save();
@@ -998,6 +1008,9 @@ unsafe fn sync_for_cpu_write(gpu: *mut (), linear_base: u32, memory: &mut Memory
 impl Drop for System {
     /// what the interpreter ran lasts past the run.
     fn drop(&mut self) {
+        if let Some(usage) = &self.usage {
+            usage.save();
+        }
         if let Some(hints) = &mut self.hints {
             hints.save();
             if let Some(library) = &self.recompiled {

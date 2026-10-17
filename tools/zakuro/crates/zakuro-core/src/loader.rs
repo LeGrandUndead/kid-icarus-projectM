@@ -94,6 +94,7 @@ pub fn load(path: impl AsRef<std::path::Path>, mut config: Config) -> Result<Sys
                 system.recompiled = Some(library);
                 let text = exheader_text(&title);
                 system.hints = Some(crate::hints::Hints::new(&path, text));
+                system.usage = Some(crate::usage::Usage::new(&path));
             }
             Err(error) => log::warn!("could not load {}, {error}, interpreting everything", path.display()),
         }

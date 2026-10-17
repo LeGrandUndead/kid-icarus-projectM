@@ -346,6 +346,9 @@ pub fn apply_framebuffer_updates(system: &mut System) {
         if is_dirty == 0 {
             continue;
         }
+        if let Some(usage) = &mut system.usage {
+            usage.swaps[screen as usize] += 1;
+        }
 
         let entry = record + FRAMEBUFFER_ENTRY_BASE + index * FRAMEBUFFER_ENTRY_STRIDE;
         let left = system.memory.read32(entry + 0x04);
@@ -491,6 +494,9 @@ fn process_command_queue(system: &mut System) {
 }
 
 fn execute_command(system: &mut System, command: GxCommand) {
+    if let Some(usage) = &mut system.usage {
+        usage.gx(command.id as u8);
+    }
     log::trace!(
         "gx command 0x{:02X}: {:08X?}",
         command.id,

@@ -1,0 +1,213 @@
+//! what a title asks of the runtime while it runs: the services it calls,
+//! the kernel calls it makes, the GPU commands it queues, and how long the
+//! host took per frame. written next to the recompiled library as
+//! <library>.usage.txt with the interpreted-code census, to know what a
+//! title really depends on before replacing any of it.
+
+use std::collections::BTreeMap;
+use std::path::{Path, PathBuf};
+use std::time::Duration;
+
+/// frame times are counted in buckets of this many milliseconds, up to the
+/// last bucket, which takes everything longer.
+const BUCKET_MS: f64 = 1.0;
+const BUCKETS: usize = 101;
+
+pub struct Usage {
+    path: PathBuf,
+    /// requests per service and command id.
+    pub services: BTreeMap<(String, u16), u64>,
+    /// supervisor calls per number.
+    pub svcs: [u64; 256],
+    /// GX commands per id: DMA, command list, fill, display transfer,
+    /// texture copy, cache flush.
+    pub gx: [u64; 8],
+    /// buffer swaps the title queued, per screen.
+    pub swaps: [u64; 2],
+    /// guest frames (vertical blanks) since the start.
+    pub frames: u64,
+    /// host time per frame, emulating and showing, in buckets.
+    emulating: Histogram,
+    showing: Histogram,
+    /// frames the host did not show to catch up.
+    pub skipped: u64,
+}
+
+#[derive(Clone)]
+struct Histogram {
+    buckets: [u64; BUCKETS],
+    total: f64,
+    count: u64,
+    longest: f64,
+}
+
+impl Default for Histogram {
+    fn default() -> Self {
+        Histogram { buckets: [0; BUCKETS], total: 0.0, count: 0, longest: 0.0 }
+    }
+}
+
+impl Histogram {
+    fn add(&mut self, time: Duration) {
+        let ms = time.as_secs_f64() * 1e3;
+        self.buckets[((ms / BUCKET_MS) as usize).min(BUCKETS - 1)] += 1;
+        self.total += ms;
+        self.count += 1;
+        self.longest = self.longest.max(ms);
+    }
+
+    /// the time under which a share of the frames took, to a bucket.
+    fn percentile(&self, share: f64) -> f64 {
+        let wanted = (self.count as f64 * share).ceil() as u64;
+        let mut seen = 0;
+        for (i, &n) in self.buckets.iter().enumerate() {
+            seen += n;
+            if seen >= wanted {
+                return (i + 1) as f64 * BUCKET_MS;
+            }
+        }
+        BUCKETS as f64 * BUCKET_MS
+    }
+
+    fn line(&self, name: &str) -> String {
+        if self.count == 0 {
+            return format!("{name:<10} no frames\n");
+        }
+        format!(
+            "{name:<10} mean {:.2} ms, p50 <{:.0}, p95 <{:.0}, p99 <{:.0}, longest {:.1} ms, over 16.7 ms: {}\n",
+            self.total / self.count as f64,
+            self.percentile(0.50),
+            self.percentile(0.95),
+            self.percentile(0.99),
+            self.longest,
+            self.buckets[17..].iter().sum::<u64>(),
+        )
+    }
+}
+
+impl Usage {
+    pub fn new(library: &Path) -> Usage {
+        Usage {
+            path: library.with_extension("usage.txt"),
+            services: BTreeMap::new(),
+            svcs: [0; 256],
+            gx: [0; 8],
+            swaps: [0; 2],
+            frames: 0,
+            emulating: Histogram::default(),
+            showing: Histogram::default(),
+            skipped: 0,
+        }
+    }
+
+    pub fn service(&mut self, name: &str, command: u16) {
+        match self.services.get_mut(&(name.to_owned(), command)) {
+            Some(count) => *count += 1,
+            None => {
+                self.services.insert((name.to_owned(), command), 1);
+            }
+        }
+    }
+
+    pub fn svc(&mut self, number: u32) {
+        self.svcs[(number & 0xFF) as usize] += 1;
+    }
+
+    pub fn gx(&mut self, id: u8) {
+        self.gx[(id as usize).min(7)] += 1;
+    }
+
+    /// what the host spent on one frame.
+    pub fn host_frame(&mut self, emulating: Option<Duration>, showing: Option<Duration>) {
+        if let Some(time) = emulating {
+            self.emulating.add(time);
+        }
+        match showing {
+            Some(time) => self.showing.add(time),
+            None => self.skipped += 1,
+        }
+    }
+
+    /// writes the report.
+    pub fn save(&self) {
+        let frames = self.frames.max(1) as f64;
+        let mut out = format!("# what the title used, over {} frames ({:.0} s)\n\n", self.frames, self.frames as f64 / 59.83);
+        out += "# host time per frame (a 3DS frame is 16.7 ms)\n";
+        out += &self.emulating.line("emulating");
+        out += &self.showing.line("showing");
+        out += &format!("skipped    {} frames not shown to catch up\n", self.skipped);
+
+        out += "\n# GPU work the title queued, per frame\n";
+        for (id, name) in ["dma", "command list", "memory fill", "display transfer", "texture copy", "cache flush"]
+            .iter()
+            .enumerate()
+        {
+            out += &format!("{name:<17} {:>8.2}  ({})\n", self.gx[id] as f64 / frames, self.gx[id]);
+        }
+        out += &format!("buffer swaps      {:>8.2} top, {:.2} bottom\n", self.swaps[0] as f64 / frames, self.swaps[1] as f64 / frames);
+
+        out += "\n# service requests: service, command, count, per frame\n";
+        let mut services: Vec<_> = self.services.iter().collect();
+        services.sort_by(|a, b| b.1.cmp(a.1));
+        for ((name, command), count) in services {
+            out += &format!("{name:<14} 0x{command:04X} {count:>12} {:>9.3}\n", *count as f64 / frames);
+        }
+
+        out += "\n# supervisor calls: number, name, count, per frame\n";
+        let mut svcs: Vec<(usize, u64)> = self.svcs.iter().copied().enumerate().filter(|&(_, n)| n > 0).collect();
+        svcs.sort_by(|a, b| b.1.cmp(&a.1));
+        for (number, count) in svcs {
+            out += &format!("0x{number:02X} {:<24} {count:>12} {:>9.2}\n", svc_name(number), count as f64 / frames);
+        }
+        if let Err(error) = std::fs::write(&self.path, out) {
+            log::warn!("could not write {}, {error}", self.path.display());
+        }
+    }
+}
+
+fn svc_name(number: usize) -> &'static str {
+    match number {
+        0x01 => "ControlMemory",
+        0x02 => "QueryMemory",
+        0x03 => "ExitProcess",
+        0x08 => "CreateThread",
+        0x09 => "ExitThread",
+        0x0A => "SleepThread",
+        0x0B => "GetThreadPriority",
+        0x0C => "SetThreadPriority",
+        0x11 => "GetCurrentProcessorNumber",
+        0x13 => "CreateMutex",
+        0x14 => "ReleaseMutex",
+        0x15 => "CreateSemaphore",
+        0x16 => "ReleaseSemaphore",
+        0x17 => "CreateEvent",
+        0x18 => "SignalEvent",
+        0x19 => "ClearEvent",
+        0x1A => "CreateTimer",
+        0x1B => "SetTimer",
+        0x1C => "CancelTimer",
+        0x1D => "ClearTimer",
+        0x1E => "CreateMemoryBlock",
+        0x1F => "MapMemoryBlock",
+        0x20 => "UnmapMemoryBlock",
+        0x21 => "CreateAddressArbiter",
+        0x22 => "ArbitrateAddress",
+        0x23 => "CloseHandle",
+        0x24 => "WaitSynchronization1",
+        0x25 => "WaitSynchronizationN",
+        0x27 => "DuplicateHandle",
+        0x28 => "GetSystemTick",
+        0x2A => "GetSystemInfo",
+        0x2B => "GetProcessInfo",
+        0x2D => "ConnectToPort",
+        0x32 => "SendSyncRequest",
+        0x35 => "GetProcessId",
+        0x37 => "GetThreadId",
+        0x38 => "GetResourceLimit",
+        0x39 => "GetResourceLimitLimitValues",
+        0x3A => "GetResourceLimitCurrentValues",
+        0x3C => "Break",
+        0x3D => "OutputDebugString",
+        _ => "",
+    }
+}

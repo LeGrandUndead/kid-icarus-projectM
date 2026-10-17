@@ -85,6 +85,9 @@ pub fn handle_request(system: &mut System, target: Target) {
     let header = buffer.header(&mut system.memory);
     let command = header.command_id();
     let name = target.name().to_owned();
+    if let Some(usage) = &mut system.usage {
+        usage.service(&name, command);
+    }
 
     log::trace!(
         "IPC {name} cmd 0x{command:04X} ({} normal, {} translate)",
