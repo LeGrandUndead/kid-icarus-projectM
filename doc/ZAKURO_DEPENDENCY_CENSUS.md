@@ -12,9 +12,30 @@ minute and on exit): every service request by service and command, every
 kernel call (SVC) by number, every GPU (GX) command, buffer swaps, and host
 frame times. Source: `tools/zakuro/crates/zakuro-core/src/usage.rs`.
 
-Numbers below marked *startup sample* come from a 106-second run of boot,
-the opening movie and the title screen (October 17). Gameplay numbers are
-added from longer sessions as they are recorded.
+Two samples (October 17): a 106-second run of boot, the opening movie and
+the title screen (*startup*), and 304 seconds of gameplay (*gameplay*).
+Per-frame rates are per 3DS vertical blank (59.83 a second).
+
+| Kernel call | startup | gameplay |
+|---|---|---|
+| ArbitrateAddress | 19.7 | 17.4 |
+| SendSyncRequest (service requests) | 21.4 | 13.9 |
+| WaitSynchronizationN | 7.9 | 6.6 |
+| ClearEvent | 6.4 | 5.5 |
+| SleepThread | 50.0 | 4.6 |
+| SignalEvent | 3.4 | 3.5 |
+| GetSystemTick | 3.0 | 3.4 |
+| ReleaseMutex | 1.5 | 1.0 |
+| Create/SetTimer | 0 | 0.2 |
+
+| Service request | startup | gameplay |
+|---|---|---|
+| gsp::Gpu TriggerCmdReqQueue | 12.9 | 12.4 |
+| gsp::Gpu FlushDataCache | 0.56 | 0.67 |
+| y2r:u (one movie frame ≈ 8 requests) | 1.9 | 0.18 |
+| FSFile Read | 0.07 | 0.08 |
+| dsp::DSP (pipe/semaphore) | 0.005 | 0.06 |
+| everything else | boot only | boot only |
 
 ## Summary
 
@@ -25,9 +46,9 @@ around it:
 1. **The PICA200 GPU** — by far the largest and hardest dependency. Every
    frame the game queues about five command lists, a memory fill and a
    display transfer per screen it draws.
-2. **The kernel** — threads, events, mutexes and address arbiters. About 50
-   `SleepThread`, 20 `ArbitrateAddress` and 8 `WaitSynchronizationN` calls
-   a frame: the game is a multi-threaded program and Zakuro's scheduler
+2. **The kernel** — threads, events, mutexes and address arbiters. About 17
+   `ArbitrateAddress`, 7 `WaitSynchronizationN` and 5 `SleepThread` calls
+   a frame in gameplay (50 `SleepThread` in menus): the game is a multi-threaded program and Zakuro's scheduler
    runs those threads.
 3. **The DSP (audio)** — HLE: voices, mixer and the AAC decoder.
 4. **A handful of services** — GSP (GPU control), Y2R (video colour
