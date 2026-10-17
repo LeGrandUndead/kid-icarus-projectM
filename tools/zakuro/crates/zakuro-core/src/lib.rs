@@ -383,6 +383,8 @@ impl System {
                 if let (Some(hints), Some(library)) = (&mut self.hints, &self.recompiled) {
                     if !library.has_code(pc | thumb as u32) {
                         hints.interpreted(pc, thumb);
+                    } else {
+                        hints.interpreted_known();
                     }
                 }
                 let gpu = &mut self.gpu as *mut Gpu as *mut ();
@@ -573,6 +575,9 @@ impl System {
         if self.frames.is_multiple_of(hints::SAVE_EVERY) {
             if let Some(hints) = &mut self.hints {
                 hints.save();
+                if let Some(library) = &self.recompiled {
+                    hints.report(self.interpreted_instructions + self.recompiled_instructions, library.fallbacks(), library.fallback_sites());
+                }
             }
         }
 
@@ -995,6 +1000,9 @@ impl Drop for System {
     fn drop(&mut self) {
         if let Some(hints) = &mut self.hints {
             hints.save();
+            if let Some(library) = &self.recompiled {
+                hints.report(self.interpreted_instructions + self.recompiled_instructions, library.fallbacks(), library.fallback_sites());
+            }
         }
     }
 }

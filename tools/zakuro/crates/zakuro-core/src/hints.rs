@@ -19,6 +19,14 @@ pub struct Hints {
     saved: usize,
     /// the instruction before was interpreted too.
     interpreting: bool,
+    /// interpreted instructions per kind, for the report.
+    pub missing: u64,
+    pub declined: u64,
+    /// missing code: where each interpreted run started, and how many
+    /// instructions it ran.
+    missing_runs: std::collections::HashMap<u32, u64>,
+    run_start: u32,
+    declining: bool,
 }
 
 impl Hints {
@@ -33,12 +41,13 @@ impl Hints {
             .filter_map(|line| u32::from_str_radix(line.trim_start_matches("0x"), 16).ok())
             .collect();
         let saved = seen.len();
-        Hints { path, text, seen, saved, interpreting: false }
+        Hints { path, text, seen, saved, interpreting: false, missing: 0, declined: 0, missing_runs: Default::default(), run_start: 0, declining: false }
     }
 
     /// the library ran some code.
     pub fn library_ran(&mut self) {
         self.interpreting = false;
+        self.declining = false;
     }
 
     /// the library had code but not budget for the whole block, so the
@@ -46,6 +55,13 @@ impl Hints {
     /// over again is known code, not missing code.
     pub fn library_declined(&mut self) {
         self.interpreting = true;
+        self.declining = true;
+    }
+
+    /// the interpreter ran an instruction the library has code for (the
+    /// rest of a block the budget did not cover).
+    pub fn interpreted_known(&mut self) {
+        self.declined += 1;
     }
 
     /// the interpreter ran an instruction at pc that the library has no
@@ -53,10 +69,41 @@ impl Hints {
     /// what it goes on to call the next build finds from there.
     pub fn interpreted(&mut self, pc: u32, thumb: bool) {
         let at = pc & !1;
-        if !self.interpreting && self.text.contains(&at) {
-            self.seen.insert(at | thumb as u32);
+        self.missing += 1;
+        if !self.interpreting || self.declining {
+            self.declining = false;
+            self.run_start = at | thumb as u32;
         }
+        if !self.interpreting {
+            if self.text.contains(&at) {
+                self.seen.insert(at | thumb as u32);
+            }
+        }
+        *self.missing_runs.entry(self.run_start).or_insert(0) += 1;
         self.interpreting = true;
+    }
+
+    /// writes where the interpreter ran, by kind, next to the hints:
+    /// <library>.interpreted.txt.
+    pub fn report(&self, total: u64, fallbacks: u64, mut sites: Vec<(u32, u32, u64)>) {
+        let total = total.max(1) as f64;
+        let share = |n: u64| n as f64 * 100.0 / total;
+        let mut out = format!(
+            "# interpreted instructions by kind (of {total} run)\nmissing code   {} ({:.3}%)\nbudget rests   {} ({:.3}%)\nfallbacks      {fallbacks} ({:.3}%)\n",
+            self.missing, share(self.missing), self.declined, share(self.declined), share(fallbacks)
+        );
+        let mut runs: Vec<_> = self.missing_runs.iter().map(|(&a, &n)| (a, n)).collect();
+        runs.sort_by(|a, b| b.1.cmp(&a.1));
+        out += "\n# missing code: run start (odd = Thumb), instructions\n";
+        for (address, count) in runs.iter().take(200) {
+            out += &format!("{address:08X} {count}\n");
+        }
+        sites.sort_by(|a, b| b.2.cmp(&a.2));
+        out += "\n# fallbacks: address (odd = Thumb), opcode, count\n";
+        for (address, opcode, count) in sites.iter().take(2000) {
+            out += &format!("{address:08X} {opcode:08X} {count}\n");
+        }
+        let _ = std::fs::write(self.path.with_extension("interpreted.txt"), out);
     }
 
     /// writes the file when there is anything new.

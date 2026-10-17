@@ -25,6 +25,8 @@ pub struct Library {
     code: recomp_abi::Library,
     /// instructions the code handed to the interpreter one at a time.
     fallbacks: Cell<u64>,
+    /// per address the code handed to the interpreter: opcode and count.
+    fallback_sites: std::cell::RefCell<std::collections::HashMap<u32, (u32, u64)>>,
     /// the code found for addresses lately, each in a slot its address
     /// picks. a jump through a register looks its target up, which is a
     /// search through every function otherwise.
@@ -136,10 +138,13 @@ unsafe extern "C" fn write32(ctx: *mut Context, address: u32, value: u32) {
 }
 
 /// runs one instruction the code left to the interpreter.
-unsafe extern "C" fn interpret(ctx: *mut Context, address: u32, _opcode: u32) {
+unsafe extern "C" fn interpret(ctx: *mut Context, address: u32, opcode: u32) {
     unsafe {
         let machine = machine(ctx);
         machine.library.fallbacks.set(machine.library.fallbacks.get() + 1);
+        if let Ok(mut sites) = machine.library.fallback_sites.try_borrow_mut() {
+            sites.entry(address | (*ctx).thumb as u32).or_insert((opcode, 0)).1 += 1;
+        }
         let ctx = &mut *ctx;
         load(ctx, machine.cpu);
         machine.cpu.regs[15] = address;
@@ -197,7 +202,7 @@ impl Library {
     }
 
     fn new(code: recomp_abi::Library) -> Library {
-        Library { code, fallbacks: Cell::new(0), found: Library::nothing_found() }
+        Library { code, fallbacks: Cell::new(0), fallback_sites: Default::default(), found: Library::nothing_found() }
     }
 
     /// every slot of found empty, an address no code starts at in each.
@@ -208,6 +213,12 @@ impl Library {
     /// how many instructions the code has handed to the interpreter.
     pub fn fallbacks(&self) -> u64 {
         self.fallbacks.get()
+    }
+
+    /// where the code handed instructions to the interpreter, bit 0 set for
+    /// Thumb: address, opcode, count.
+    pub fn fallback_sites(&self) -> Vec<(u32, u32, u64)> {
+        self.fallback_sites.borrow().iter().map(|(&a, &(o, n))| (a, o, n)).collect()
     }
 
     /// how many functions and modules there is code for.
