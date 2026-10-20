@@ -2049,6 +2049,13 @@ impl Hardware {
             .filter(|&i| i != index && self.surfaces[i].dirty_overlaps(from, to))
             .collect();
         if !others.is_empty() {
+            {
+                let target = &self.surfaces[index];
+                let desc = |s: &Surface| format!("{:08X} {}x{} {:?}{}", s.addr, s.width, s.height, s.kind, if s.tiled { "" } else { " linear" });
+                let dirty: Vec<String> = others.iter().map(|&i| desc(&self.surfaces[i])).collect();
+                let target = desc(target);
+                crate::profile::event(|| format!("surface {target} over dirty {}", dirty.join(", ")));
+            }
             self.write_back(memory, others)?;
             self.begin()?;
         }
@@ -2059,6 +2066,7 @@ impl Hardware {
         memory.read(addr, &mut bytes);
         if bytes != self.surfaces[index].shadow {
             if self.surfaces[index].dirty.is_some() {
+                crate::profile::event(|| format!("memory changed under dirty {:08X} {}x{} {:?}", addr, self.surfaces[index].width, self.surfaces[index].height, self.surfaces[index].kind));
                 // memory changed beside rows the GPU drew and it lacks, which
                 // an upload alone would lose. they come down first, along
                 // with what changed
@@ -2590,6 +2598,7 @@ impl Hardware {
             })
             .collect();
         if !partial.is_empty() {
+            crate::profile::event(|| format!("partial fill {addr:08X}+{len:X} over dirty {}", partial.len()));
             self.write_back(memory, partial)?;
         }
         Ok(())
@@ -3400,6 +3409,9 @@ impl Hardware {
         let overlapping: Vec<usize> =
             (0..self.surfaces.len()).filter(|&i| kept(&self.surfaces[i]) && self.surfaces[i].overlaps(addr, len)).collect();
         let dirty: Vec<usize> = overlapping.iter().copied().filter(|&i| self.surfaces[i].dirty_overlaps(addr, len)).collect();
+        if !dirty.is_empty() {
+            crate::profile::event(|| format!("sync {addr:08X}+{len:X}: {}", dirty.iter().map(|&i| format!("{:08X} {}x{} {:?}", self.surfaces[i].addr, self.surfaces[i].width, self.surfaces[i].height, self.surfaces[i].kind)).collect::<Vec<_>>().join(", ")));
+        }
         self.write_back(memory, dirty)?;
         for i in overlapping {
             self.surfaces[i].checked = false;

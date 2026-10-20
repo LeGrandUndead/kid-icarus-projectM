@@ -67,3 +67,28 @@ pub fn totals() -> Vec<(&'static str, u64, u64)> {
         .map(|i| (NAMES[i], NANOS[i].load(Ordering::Relaxed), COUNTS[i].load(Ordering::Relaxed)))
         .collect()
 }
+
+/// why the renderer had to bring a GPU image back to guest memory, and
+/// which buffers were involved, counted, for the usage report.
+static EVENTS: std::sync::Mutex<Option<std::collections::BTreeMap<String, u64>>> = std::sync::Mutex::new(None);
+
+pub fn event(what: impl FnOnce() -> String) {
+    if let Ok(mut events) = EVENTS.lock() {
+        let events = events.get_or_insert_with(Default::default);
+        if events.len() < 512 {
+            *events.entry(what()).or_insert(0) += 1;
+        } else if let Some(count) = events.get_mut(&what()) {
+            *count += 1;
+        }
+    }
+}
+
+pub fn events() -> Vec<(String, u64)> {
+    let mut list: Vec<(String, u64)> = EVENTS
+        .lock()
+        .ok()
+        .and_then(|events| events.as_ref().map(|e| e.iter().map(|(k, v)| (k.clone(), *v)).collect()))
+        .unwrap_or_default();
+    list.sort_by(|a, b| b.1.cmp(&a.1));
+    list
+}

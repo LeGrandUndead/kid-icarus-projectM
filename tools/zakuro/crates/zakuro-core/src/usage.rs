@@ -177,6 +177,11 @@ impl Usage {
             );
         }
 
+        out += "\n# why GPU images came back to guest memory: event, count\n";
+        for (what, count) in zakuro_gpu::profile::events().iter().take(40) {
+            out += &format!("{count:>8}  {what}\n");
+        }
+
         out += "\n# GPU work the title queued, per frame\n";
         for (id, name) in ["dma", "command list", "memory fill", "display transfer", "texture copy", "cache flush"]
             .iter()
