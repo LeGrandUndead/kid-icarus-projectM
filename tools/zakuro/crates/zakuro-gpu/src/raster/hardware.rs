@@ -371,6 +371,9 @@ struct Surface {
     /// another surface over the same memory may have drawn over since.
     cleared: Option<(u32, u32)>,
     capture: Option<Capture>,
+    /// a display transfer copied the image out since it was last drawn:
+    /// the frame it holds has been delivered, see discardable.
+    presented: bool,
     /// when drawing scaled, an image at the console's resolution the
     /// surface goes through on its way to and from guest memory, and a
     /// copy of the scaled image for showing it.
@@ -414,6 +417,7 @@ impl Surface {
             Some((from, to)) => (from.min(rows.0), to.max(rows.1)),
             None => rows,
         });
+        self.presented = false;
         self.replaced();
     }
 
@@ -2029,6 +2033,7 @@ impl Hardware {
                     write_guarded: None,
                     cleared: None,
                     capture: None,
+                    presented: false,
                     native,
                     screen: None,
                     upright: None,
@@ -2048,6 +2053,7 @@ impl Hardware {
         let others: Vec<usize> = (0..self.surfaces.len())
             .filter(|&i| i != index && self.surfaces[i].dirty_overlaps(from, to))
             .collect();
+        let others = self.discard_dead(others);
         if !others.is_empty() {
             {
                 let target = &self.surfaces[index];
@@ -2575,6 +2581,35 @@ impl Hardware {
         Ok(())
     }
 
+    /// of surfaces whose drawing another surface is about to overwrite in
+    /// memory, drops those whose content is spent instead of bringing it
+    /// back: depth buffers, and color buffers a display transfer already
+    /// copied out (the game draws both screens in turn into the same VRAM,
+    /// which otherwise costs a GPU round trip, a wait and a re-upload each
+    /// time). guest memory keeps what it held there before. the others
+    /// come back as before. ZAKURO_KEEP_ALIASED=1 keeps everything.
+    fn discard_dead(&mut self, surfaces: Vec<usize>) -> Vec<usize> {
+        static KEEP: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+        if *KEEP.get_or_init(|| std::env::var_os("ZAKURO_KEEP_ALIASED").is_some()) {
+            return surfaces;
+        }
+        let (dead, live): (Vec<usize>, Vec<usize>) = surfaces
+            .into_iter()
+            .partition(|&i| matches!(self.surfaces[i].kind, Kind::Depth(_)) || self.surfaces[i].presented);
+        for i in dead {
+            let surface = &mut self.surfaces[i];
+            crate::profile::event(|| format!("discarded {:08X} {}x{} {:?}", surface.addr, surface.width, surface.height, surface.kind));
+            surface.dirty = None;
+            surface.guarded = None;
+            surface.write_guarded = None;
+            surface.cleared = None;
+            surface.checked = false;
+            surface.shadow.clear();
+            surface.replaced();
+        }
+        live
+    }
+
     /// makes sure guest memory holds what the GPU drew over a range, before
     /// something reads it.
     pub(crate) fn prepare_read<M: GpuMemory>(&mut self, memory: &mut M, addr: u32, len: u32) -> Result<(), String> {
@@ -2597,6 +2632,7 @@ impl Hardware {
                 s.dirty_overlaps(addr, len) && (s.addr < addr || s.addr as u64 + s.size() as u64 > end) && !cleared(s)
             })
             .collect();
+        let partial = self.discard_dead(partial);
         if !partial.is_empty() {
             crate::profile::event(|| format!("partial fill {addr:08X}+{len:X} over dirty {}", partial.len()));
             self.write_back(memory, partial)?;
@@ -3497,6 +3533,8 @@ impl Hardware {
         // turned upright for showing at any scale, at the console's own too
         // that beats the CPU waiting for the GPU and decoding the buffer
         self.capture_screen(target)?;
+        self.surfaces[source].presented = true;
+        self.surfaces[target].presented = false;
         self.submit()?;
         Ok(true)
     }
