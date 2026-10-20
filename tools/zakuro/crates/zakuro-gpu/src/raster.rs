@@ -2514,6 +2514,7 @@ fn rasterize<M: GpuMemory>(registers: &[u32], memory: &mut M, resources: &mut Re
     // a texture can be a buffer the GPU drew into, guest memory has to have
     // it before it is read
     // one the GPU still holds it copies there
+    let textures_profile = crate::profile::scope(crate::profile::Phase::DrawTextures);
     let mut drawn: [Option<DrawnTexture>; 3] = [None; 3];
     #[cfg(feature = "vulkan")]
     if let Some(hardware) = resources.hardware.as_mut() {
@@ -2531,6 +2532,7 @@ fn rasterize<M: GpuMemory>(registers: &[u32], memory: &mut M, resources: &mut Re
     }
     let textures: [Option<BoundTexture>; 3] =
         std::array::from_fn(|unit| bind_texture(registers, memory, &mut resources.textures, unit, drawn[unit]));
+    drop(textures_profile);
     let tex_env = crate::tev::TexEnv::read(registers);
     let state = DrawState {
         target: ColorTarget {
@@ -2603,7 +2605,10 @@ fn rasterize<M: GpuMemory>(registers: &[u32], memory: &mut M, resources: &mut Re
                 viewport,
                 cull: cull_mode,
             };
-            let drawn = hardware.draw(memory, &state.hardware(registers, hardware::Geometry::Shaded(&shading)));
+            let drawn = {
+                let _profile = crate::profile::scope(crate::profile::Phase::DrawHardware);
+                hardware.draw(memory, &state.hardware(registers, hardware::Geometry::Shaded(&shading)))
+            };
             let triangles = (indices.len() / 3) as u32;
             resources.triangles = indices;
             match drawn {
@@ -2612,6 +2617,7 @@ fn rasterize<M: GpuMemory>(registers: &[u32], memory: &mut M, resources: &mut Re
             }
         }
     }
+    let _cpu_profile = crate::profile::scope(crate::profile::Phase::DrawCpu);
     let processed;
     let (shaded, order) = match vertices {
         Vertices::Shaded(shaded) => (shaded, None),

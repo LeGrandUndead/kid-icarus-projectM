@@ -18,6 +18,7 @@ pub mod registers;
 pub mod renderer;
 pub mod shader;
 pub mod stats;
+pub mod profile;
 pub mod tev;
 pub mod texture;
 
@@ -294,6 +295,7 @@ impl Gpu {
         value: u32,
         width: u32,
     ) {
+        let _profile = crate::profile::scope(crate::profile::Phase::MemoryFill);
         if end <= start {
             return;
         }
@@ -346,6 +348,7 @@ impl Gpu {
         output_dimensions: u32,
         flags: u32,
     ) {
+        let _profile = crate::profile::scope(crate::profile::Phase::DisplayTransfer);
         let input_width = input_dimensions & 0xFFFF;
         let input_height = input_dimensions >> 16;
         let (input_base, output_base) = (memory.translate(input_paddr), memory.translate(output_paddr));
@@ -518,6 +521,7 @@ impl Gpu {
         input_gap: u32,
         output_gap: u32,
     ) {
+        let _profile = crate::profile::scope(crate::profile::Phase::TextureCopy);
         let input_width = (input_gap & 0xFFFF) * 16;
         let input_skip = (input_gap >> 16) * 16;
         // every line and the gaps between them
@@ -659,6 +663,7 @@ impl Gpu {
     /// makes guest memory right over a range something other than a draw
     /// is about to read or write, the host GPU keeps what it draws until then.
     pub fn sync_memory<M: GpuMemory>(&mut self, memory: &mut M, addr: u32, len: u32) {
+        let _profile = crate::profile::scope(crate::profile::Phase::Sync);
         #[cfg(feature = "vulkan")]
         if let Some(hardware) = self.resources.hardware.as_mut() {
             if let Err(error) = hardware.sync(memory, addr, len) {
@@ -690,6 +695,7 @@ impl Gpu {
         paddr: u32,
         size: u32,
     ) {
+        let _profile = crate::profile::scope(crate::profile::Phase::CommandList);
         // into the last list's buffer, a list a few times a frame, large
         // when draws upload their uniforms, would have a new block each time
         let mut words = std::mem::take(&mut self.resources.words);
@@ -826,7 +832,11 @@ impl Gpu {
                     indexed,
                     registers: &self.internal,
                 });
-                self.prepare_shaders();
+                {
+                    let _profile = crate::profile::scope(crate::profile::Phase::ShaderPrepare);
+                    self.prepare_shaders();
+                }
+                let _profile = crate::profile::scope(crate::profile::Phase::Draw);
                 let vertices =
                     raster::draw(
                     &self.internal,

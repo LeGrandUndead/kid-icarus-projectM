@@ -166,6 +166,17 @@ impl Usage {
             particle_ms / frames
         );
 
+        out += "\n# renderer host time by phase (inclusive), ms per frame, ms per call, calls per frame\n";
+        for (name, nanos, count) in zakuro_gpu::profile::totals() {
+            let ms = nanos as f64 / 1e6;
+            out += &format!(
+                "{name:<30} {:>7.3} {:>8.4} {:>9.2}\n",
+                ms / frames,
+                ms / count.max(1) as f64,
+                count as f64 / frames
+            );
+        }
+
         out += "\n# GPU work the title queued, per frame\n";
         for (id, name) in ["dma", "command list", "memory fill", "display transfer", "texture copy", "cache flush"]
             .iter()

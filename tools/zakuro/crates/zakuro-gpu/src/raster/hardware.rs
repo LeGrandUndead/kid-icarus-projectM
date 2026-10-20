@@ -2215,6 +2215,7 @@ impl Hardware {
     /// the texture's image, including every decoded mip level, uploaded the
     /// first time it is drawn with.
     fn texture(&mut self, bound: &BoundTexture, hud: bool) -> Result<(vk::ImageView, u8), String> {
+        let _profile = crate::profile::scope(crate::profile::Phase::HardwareTexture);
         // A HUD draw may use the HD HUD pack; every other use of the same
         // atlas keeps the original texels (separate cache entry, low bit).
         let hud = hud && crate::replacements::hud_pack_enabled();
@@ -2401,6 +2402,7 @@ impl Hardware {
     /// translated does not have its interpreted pipeline asked for, it
     /// would not be used for long.
     fn pipeline_for(&mut self, key: PipelineKey, translating: bool) -> Result<vk::Pipeline, String> {
+        let _profile = crate::profile::scope(crate::profile::Phase::HardwarePipeline);
         let vertex = match key.vertex {
             VertexStage::Placed => VertexStage::Placed,
             _ => VertexStage::Interpreted,
@@ -4192,6 +4194,7 @@ impl Hardware {
     /// recording goes on in another command buffer, once the GPU is done
     /// with the batch that used it last.
     fn submit(&mut self) -> Result<(), String> {
+        let _profile = crate::profile::scope(crate::profile::Phase::Submit);
         if !self.recording {
             return Ok(());
         }
@@ -4270,6 +4273,7 @@ impl Hardware {
     /// retires the oldest batch in flight, timing the wait for it when the
     /// GPU's times are being measured.
     fn block(&mut self, why: Wait) -> Result<(), String> {
+        let _profile = crate::profile::scope(crate::profile::Phase::WaitGpu);
         let start = self.timing.is_some().then(std::time::Instant::now);
         self.retire_oldest()?;
         if let (Some(start), Some(timing)) = (start, self.timing.as_mut()) {
@@ -4324,6 +4328,7 @@ impl Hardware {
     /// when those still hold them, else running the batch and reading them
     /// back.
     fn write_back<M: GpuMemory>(&mut self, memory: &mut M, dirty: Vec<usize>) -> Result<(), String> {
+        let _profile = crate::profile::scope(crate::profile::Phase::WriteBack);
         self.mark(Work::Download, false);
         let (captured, others): (Vec<usize>, Vec<usize>) =
             dirty.into_iter().partition(|&i| self.surfaces[i].captured().is_some());
