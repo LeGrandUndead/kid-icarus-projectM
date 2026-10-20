@@ -4,6 +4,7 @@
 pub mod cro;
 mod frame_probe;
 mod kiu_frame_interval;
+pub mod kiu_frame_rate;
 pub mod hints;
 pub mod kernel;
 pub mod loader;

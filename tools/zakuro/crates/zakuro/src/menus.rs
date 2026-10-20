@@ -365,6 +365,12 @@ impl Menus {
                 if ui.button("Reset gameplay view to 100%").clicked() {
                     zakuro_gpu::kiu_ui::camera::set_scale(1.0);
                 }
+                let mut sixty = zakuro_core::kiu_frame_rate::enabled();
+                if ui.checkbox(&mut sixty, "60 FPS (experimental)")
+                    .on_hover_text("The game draws a new picture every frame instead of every other one, at normal game speed. Some timers may still run at the original rate; switch it off if something looks too fast. Applies immediately.")
+                    .changed() {
+                    zakuro_core::kiu_frame_rate::set_enabled(sixty);
+                }
                 ui.separator();
                 ui.heading("Interface");
                 let mut interface=zakuro_gpu::kiu_ui::config::get();

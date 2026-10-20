@@ -79,6 +79,11 @@ def main() -> int:
     ap.add_argument("--legacy-texture-sampling", action="store_true",
                     help="A/B test: restore the old base-level sampler behavior")
     ap.add_argument("--profile", action="store_true", help="enable guest-PC sampling profiler")
+    rate = ap.add_mutually_exclusive_group()
+    rate.add_argument("--sixty-fps", action="store_true", help="60 FPS mode for this run (Settings > Graphics keeps the saved choice)")
+    rate.add_argument("--thirty-fps", action="store_true", help="original 30 FPS for this run")
+    ap.add_argument("--replay", type=Path, help="test: play back a recorded input file on copied saves, never the real ones")
+    ap.add_argument("--replay-save", type=Path, help="with --replay: folder holding the recording's starting 'user' saves (and optionally 'sysdata')")
     args = ap.parse_args()
     if args.pc_interface: args.dialogue_preview = True
     if (args.no_native_hud or args.ui_census) and not args.pc_interface:
@@ -148,6 +153,9 @@ def main() -> int:
         env["KIU_NATIVE_DIALOGUE"] = str(sources)
         if camera_override or args.original_aspect: env["KIU_GAMEPLAY_CAMERA_SCALE"] = str(args.camera_scale)
     if args.single_screen: env["KIU_SINGLE_SCREEN"] = "1"
+    env.pop("KIU_60FPS", None)
+    if args.sixty_fps: env["KIU_60FPS"] = "1"
+    if args.thirty_fps: env["KIU_60FPS"] = "0"
     env.pop("KIU_PROJECTION_TRACE", None)
     env.pop("KIU_EXPERIMENTAL_HUD", None)
     env.pop("KIU_RENDER_CAPTURE_WAIT", None)
@@ -278,6 +286,21 @@ def main() -> int:
                 (saves / "user-backup-copying").rename(backup)
                 print(f"Preview saves backed up once: {backup}", flush=True)
     saves.mkdir(parents=True, exist_ok=True)
+    env.pop("ZAKURO_REPLAY", None)
+    if args.replay:
+        # a replay never touches real progress: it runs on its own copy
+        import shutil
+        from datetime import datetime
+        if not args.replay.is_file(): ap.error(f"Replay missing: {args.replay}")
+        if not args.replay_save or not (args.replay_save / "user").is_dir():
+            ap.error("--replay needs --replay-save with the recording's starting 'user' folder")
+        run = ROOT / "build/live-test" / datetime.now().strftime("%Y%m%d-%H%M%S")
+        shutil.copytree(args.replay_save / "user", run / "kiu/user")
+        sysdata = args.replay_save / "sysdata"
+        shutil.copytree(sysdata if sysdata.is_dir() else saves / "sysdata", run / "kiu/sysdata")
+        saves = run / "kiu"
+        env["ZAKURO_REPLAY"] = str(args.replay.resolve())
+        print(f"Replay test on copied saves: {saves}", flush=True)
     if args.input_trace or args.record_input:
         (trace_dir / "session.json").write_text(json.dumps({
             "build": build_name, "mouse_model": "bounded",

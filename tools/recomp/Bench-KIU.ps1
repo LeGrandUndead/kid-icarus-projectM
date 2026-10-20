@@ -7,10 +7,13 @@
 #   Bench-KIU.ps1                      the original 30 fps cadence
 #   Bench-KIU.ps1 -Fps60               the 60 fps scheduler from vblank 6000
 #   Bench-KIU.ps1 -Frames 16500        longer, reaches land gameplay
+#   Bench-KIU.ps1 -KeepAliased         the renderer's old write-back path, for comparison
+#
+# Screens are saved in the run folder at vblanks 6000, 7500 and the last one.
 #
 # Needs the recording from the 60 fps research (build\60fps-research\baseline)
 # and the archived initial save. Saves and the playable build are not touched.
-param([int]$Frames = 9000, [switch]$Fps60, [string]$Name = '', [switch]$NoBuild)
+param([int]$Frames = 9000, [switch]$Fps60, [string]$Name = '', [switch]$NoBuild, [switch]$KeepAliased)
 
 $ErrorActionPreference = 'Stop'
 . "$PSScriptRoot/environment.ps1"
@@ -51,7 +54,11 @@ $env:ZAKURO_REPLAY = Join-Path $baseline 'input.replay'
 $env:ZAKURO_RASTERIZER = 'hardware'
 $env:ZAKURO_RESOLUTION = '5'
 $env:ZAKURO_PRESENT = 'direct'
-$env:ZAKURO_DUMP_AT = "6000,$Frames"
+$env:ZAKURO_DUMP_AT = "6000,7500,$Frames"
+# the screen dumps go to the temporary folder: make that the run folder
+$env:TMP = $run
+$env:TEMP = $run
+if ($KeepAliased) { $env:ZAKURO_KEEP_ALIASED = '1' } else { Remove-Item Env:ZAKURO_KEEP_ALIASED -ErrorAction SilentlyContinue }
 $env:RUST_LOG = 'warn'
 if ($Fps60) {
     $env:KIU_TEST_FRAME_INTERVAL = '1'

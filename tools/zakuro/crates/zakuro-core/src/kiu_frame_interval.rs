@@ -30,6 +30,15 @@ pub fn observe(system: &mut System, number: u32) {
         return;
     }
 
+    // the playable 60 fps mode (kiu_frame_rate), unless a research run
+    // asked for its own interval
+    if std::env::var_os("KIU_TEST_FRAME_INTERVAL").is_none() {
+        if pre_callback || post_callback {
+            crate::kiu_frame_rate::at_scheduler(system, pre_callback);
+        }
+        return;
+    }
+
     static OPTIONS: OnceLock<Option<(u32, u64)>> = OnceLock::new();
     let Some(&(interval, from)) = OPTIONS.get_or_init(|| {
         let n = std::env::var("KIU_TEST_FRAME_INTERVAL")
