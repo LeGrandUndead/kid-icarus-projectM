@@ -126,15 +126,28 @@ unsafe fn before_input_read(ctx: *mut Context, address: u32) {
 }
 
 unsafe extern "C" fn write8(ctx: *mut Context, address: u32, value: u8) {
+    unsafe { watch(ctx, address, value as u32, 1) };
     unsafe { machine(ctx).memory.write8(address, value) }
 }
 
 unsafe extern "C" fn write16(ctx: *mut Context, address: u32, value: u16) {
+    unsafe { watch(ctx, address, value as u32, 2) };
     unsafe { machine(ctx).memory.write16(address, value) }
 }
 
 unsafe extern "C" fn write32(ctx: *mut Context, address: u32, value: u32) {
+    unsafe { watch(ctx, address, value, 4) };
     unsafe { machine(ctx).memory.write32(address, value) }
+}
+
+/// research: notes a write over a range Memory::watch_cpu_writes watches.
+#[inline(always)]
+unsafe fn watch(ctx: *mut Context, address: u32, value: u32, size: u8) {
+    let memory = unsafe { &mut *machine(ctx).memory };
+    if memory.watched(address, size as u32) && memory.watch_hits.len() < 4_000_000 {
+        let context = unsafe { &*ctx };
+        memory.watch_hits.push(crate::memory::WatchHit { address, value, size, pc: context.r[15], lr: context.r[14] });
+    }
 }
 
 /// runs one instruction the code left to the interpreter.

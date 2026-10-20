@@ -124,6 +124,28 @@ pub fn main() {
         }).collect()
     }).unwrap_or_default();
     let mouse_gain: f32 = std::env::var("KIU_MOUSE_SENSITIVITY").ok().and_then(|s| s.parse().ok()).unwrap_or(0.55);
+    // research (60 fps): the game's memory at given vblanks, in the RAM
+    // snapshot format (KIURAM1), to the current folder,
+    // KIU_RAM_SNAPSHOT_AT=6000,6150.
+    let snapshot_at: BTreeSet<u64> = std::env::var("KIU_RAM_SNAPSHOT_AT")
+        .map(|spec| spec.split(',').filter_map(|f| f.trim().parse().ok()).collect())
+        .unwrap_or_default();
+    // research: the writes recompiled code makes over ranges, from a vblank
+    // on, to watch-writes.csv, KIU_WATCH_WRITES=08123450:8,0812F000
+    // KIU_WATCH_FROM=6000.
+    let watches: Vec<(u32, u32)> = std::env::var("KIU_WATCH_WRITES")
+        .map(|spec| spec.split(',').filter_map(|w| {
+            let (addr, len) = w.trim().split_once(':').unwrap_or((w.trim(), "4"));
+            Some((u32::from_str_radix(addr.trim_start_matches("0x"), 16).ok()?, len.parse().ok()?))
+        }).collect())
+        .unwrap_or_default();
+    let watch_from: u64 = std::env::var("KIU_WATCH_FROM").ok().and_then(|f| f.parse().ok()).unwrap_or(0);
+    let mut watch_out = (!watches.is_empty()).then(|| {
+        let mut out = std::io::BufWriter::new(std::fs::File::create("watch-writes.csv").expect("watch-writes.csv"));
+        use std::io::Write;
+        let _ = writeln!(out, "frame,address,value,size,pc,lr");
+        out
+    });
     for frame in 0..frames {
         if profile_from == Some(frame) {
             system.enable_profiler();
@@ -185,6 +207,24 @@ pub fn main() {
         // A headless probe has no presenter to drain optional portrait uploads.
         let _ = zakuro_gpu::kiu_ui::overlay(1920,1080,false);
         executed = frame + 1;
+        if let Some(out) = &mut watch_out {
+            use std::io::Write;
+            if executed == watch_from.max(1) {
+                for &(addr, len) in &watches {
+                    system.memory.watch_cpu_writes(addr, len);
+                }
+                println!("watching writes to {} range(s) from vblank {executed}", watches.len());
+            }
+            for hit in system.memory.watch_hits.drain(..) {
+                let _ = writeln!(out, "{executed},{:08X},{:08X},{},{:08X},{:08X}", hit.address, hit.value, hit.size, hit.pc, hit.lr);
+            }
+        }
+        if snapshot_at.contains(&executed) {
+            match write_snapshot(&mut system.memory, executed) {
+                Ok(pages) => println!("RAM snapshot at {executed}: {pages} pages"),
+                Err(error) => eprintln!("RAM snapshot at {executed} failed: {error}"),
+            }
+        }
         // when a new unmapped page is touched, which frame it was
         if system.memory.fault_summary().len() != faults {
             println!("frame {executed}: touched an unmapped page");
@@ -523,4 +563,36 @@ fn write_wav(path: &str, samples: &[[i16; 2]]) -> std::io::Result<()> {
         bytes.extend_from_slice(&right.to_le_bytes());
     }
     std::fs::write(path, bytes)
+}
+
+/// the game's mapped memory, as the PC interface's F7 snapshot writes it:
+/// b"KIURAM1\0", the vblank (u64 LE), then each non-zero page as its
+/// address (u32 LE) and 4096 bytes. VRAM and the GPU/DSP windows are left out.
+fn write_snapshot(memory: &mut zakuro_core::memory::Memory, frame: u64) -> std::io::Result<usize> {
+    use std::io::Write;
+    const PAGE: u32 = 0x1000;
+    const SKIP: [(u32, u32); 2] = [(0x1F00_0000, 0x1F60_0000), (0x1FF0_0000, 0x2000_0000)];
+    let mut out = std::io::BufWriter::new(std::fs::File::create(format!("ram-{frame:08}.bin"))?);
+    out.write_all(b"KIURAM1\0")?;
+    out.write_all(&frame.to_le_bytes())?;
+    let mut page = vec![0u8; PAGE as usize];
+    let mut written = 0;
+    let mut address: u32 = 0;
+    loop {
+        let skipped = SKIP.iter().any(|&(lo, hi)| (lo..hi).contains(&address));
+        if !skipped && memory.is_readable(address, PAGE) {
+            memory.read_bytes(address, &mut page);
+            if page.iter().any(|&b| b != 0) {
+                out.write_all(&address.to_le_bytes())?;
+                out.write_all(&page)?;
+                written += 1;
+            }
+        }
+        match address.checked_add(PAGE) {
+            Some(next) => address = next,
+            None => break,
+        }
+    }
+    out.flush()?;
+    Ok(written)
 }

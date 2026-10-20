@@ -86,6 +86,13 @@ pub struct Memory {
     cpu_write_table: Vec<*mut u8>,
     /// the bytes of those, as guards.
     write_guards: BTreeMap<VAddr, VAddr>,
+    /// research: ranges whose writes by recompiled code are recorded,
+    /// see watch_cpu_writes. kept null in cpu_write_table like guards.
+    write_watches: BTreeMap<VAddr, VAddr>,
+    /// what was recorded there: address, value, size, and the code's pc
+    /// and lr as the context held them (the function or the call it was
+    /// last in, not the exact instruction).
+    pub watch_hits: Vec<WatchHit>,
     /// how the GPU's drawing comes down for such a read or write, while the
     /// CPU runs.
     gpu_sync: Option<GpuSync>,
@@ -136,6 +143,8 @@ impl Memory {
             guards: BTreeMap::new(),
             cpu_write_table: vec![std::ptr::null_mut(); PAGE_TABLE_ENTRIES],
             write_guards: BTreeMap::new(),
+            write_watches: BTreeMap::new(),
+            watch_hits: Vec::new(),
             gpu_sync: None,
             mappings: BTreeMap::new(),
             faults: BTreeMap::new(),
@@ -173,7 +182,7 @@ impl Memory {
             }
             if permission.contains(Permission::WRITE) {
                 self.write_table[index] = ptr;
-                if !guarded_page(&self.write_guards, index) {
+                if !guarded_page(&self.write_guards, index) && !guarded_page(&self.write_watches, index) {
                     self.cpu_write_table[index] = ptr;
                 }
             }
@@ -448,6 +457,20 @@ impl Memory {
         add_guard(&mut self.write_guards, &mut self.cpu_write_table, vaddr, len);
     }
 
+    /// research: records the writes recompiled code makes over a range
+    /// in watch_hits, with where the code was. the pages it is on are
+    /// written the slow way from now on.
+    pub fn watch_cpu_writes(&mut self, vaddr: VAddr, len: u32) {
+        add_guard(&mut self.write_watches, &mut self.cpu_write_table, vaddr, len);
+    }
+
+    /// whether a write of len bytes at addr falls in a watched range.
+    #[inline]
+    pub fn watched(&self, addr: VAddr, len: u32) -> bool {
+        !self.write_watches.is_empty()
+            && self.write_watches.range(..addr.wrapping_add(len)).next_back().is_some_and(|(_, &to)| to > addr)
+    }
+
     /// how the CPU's reads of what the GPU drew come down from now on.
     ///
     /// # Safety
@@ -527,7 +550,7 @@ impl Memory {
             // SAFETY: as in unguard
             unsafe { (sync.sync_write)(sync.gpu, sync.linear_base, self, from, to - from) };
             for index in (from >> PAGE_BITS) as usize..=((to - 1) >> PAGE_BITS) as usize {
-                if !guarded_page(&self.write_guards, index) {
+                if !guarded_page(&self.write_guards, index) && !guarded_page(&self.write_watches, index) {
                     self.cpu_write_table[index] = self.write_table[index];
                 }
             }
@@ -800,4 +823,14 @@ mod tests {
         assert_eq!(memory.read32(0x1F00_2000), 0xABAB_AB00);
         memory.clear_gpu_sync();
     }
+}
+
+/// a write recorded by Memory::watch_cpu_writes.
+#[derive(Clone, Copy, Debug)]
+pub struct WatchHit {
+    pub address: VAddr,
+    pub value: u32,
+    pub size: u8,
+    pub pc: u32,
+    pub lr: u32,
 }
