@@ -2,6 +2,8 @@
 //! the loop that drives them.
 
 pub mod cro;
+mod frame_probe;
+mod kiu_frame_interval;
 pub mod hints;
 pub mod kernel;
 pub mod loader;

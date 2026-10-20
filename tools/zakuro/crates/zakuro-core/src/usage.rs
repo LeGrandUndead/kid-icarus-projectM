@@ -15,6 +15,7 @@ const BUCKETS: usize = 101;
 
 pub struct Usage {
     path: PathBuf,
+    probe: Option<crate::frame_probe::FrameProbe>,
     /// requests per service and command id.
     pub services: BTreeMap<(String, u16), u64>,
     /// supervisor calls per number.
@@ -93,6 +94,7 @@ impl Usage {
     pub fn new(library: &Path) -> Usage {
         Usage {
             path: library.with_extension("usage.txt"),
+            probe: crate::frame_probe::FrameProbe::from_environment(),
             services: BTreeMap::new(),
             svcs: [0; 256],
             gx: [0; 8],
@@ -115,6 +117,10 @@ impl Usage {
         }
     }
 
+    pub fn wait_site(&mut self, number: u32, pc: u32, lr: u32, regs: [u32; 5]) {
+        if let Some(probe) = &mut self.probe { probe.wait_site(number, pc, lr, regs); }
+    }
+
     pub fn svc(&mut self, number: u32) {
         self.svcs[(number & 0xFF) as usize] += 1;
     }
@@ -128,7 +134,9 @@ impl Usage {
     /// the histogram.
     pub fn end_frame(&mut self) {
         self.frames += 1;
-        self.gpu_commands.add(std::mem::take(&mut self.gx_this_frame));
+        let gpu = std::mem::take(&mut self.gx_this_frame);
+        self.gpu_commands.add(gpu);
+        if let Some(probe) = &mut self.probe { probe.frame(self.frames, self.swaps, gpu); }
     }
 
     /// what the host spent on one frame.
@@ -179,6 +187,9 @@ impl Usage {
         svcs.sort_by(|a, b| b.1.cmp(&a.1));
         for (number, count) in svcs {
             out += &format!("0x{number:02X} {:<24} {count:>12} {:>9.2}\n", svc_name(number), count as f64 / frames);
+        }
+        if let Some(probe) = &self.probe {
+            if let Err(error) = probe.save() { log::warn!("frame probe: {error}"); }
         }
         if let Err(error) = std::fs::write(&self.path, out) {
             log::warn!("could not write {}, {error}", self.path.display());

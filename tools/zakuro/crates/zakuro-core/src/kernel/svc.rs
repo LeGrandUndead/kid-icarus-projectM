@@ -32,8 +32,11 @@ fn invalid_handle(system: &mut System, handle: u32, what: &str) -> u32 {
 
 /// runs one supervisor call.
 pub fn dispatch(system: &mut System, number: u32) {
+    crate::kiu_frame_interval::observe(system, number);
     if let Some(usage) = &mut system.usage {
         usage.svc(number);
+        usage.wait_site(number, system.cpu.current_pc(), system.cpu.regs[14],
+            [system.cpu.regs[0], system.cpu.regs[1], system.cpu.regs[2], system.cpu.regs[3], system.cpu.regs[4]]);
     }
     if log::log_enabled!(log::Level::Trace) {
         let thread = system
