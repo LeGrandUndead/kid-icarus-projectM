@@ -80,6 +80,67 @@ pub fn sample_texel(data: &[u8], format: TextureFormat, width: u32, x: u32, y: u
     }
 }
 
+/// a whole texture level, row-major RGBA8 appended to out, the same texels
+/// sample_texel gives one at a time. ETC1 blocks are decoded once for their
+/// sixteen texels rather than once per texel, which is what scene loads
+/// spend their time on (most of KIU's textures are ETC1 or ETC1A4).
+pub fn decode_level(data: &[u8], format: TextureFormat, width: u32, height: u32, out: &mut Vec<[u8; 4]>) {
+    let etc = matches!(format, TextureFormat::Etc1 | TextureFormat::Etc1A4);
+    if !etc || !width.is_multiple_of(8) || !height.is_multiple_of(8) {
+        for y in 0..height {
+            for x in 0..width {
+                out.push(sample_texel(data, format, width, x, y));
+            }
+        }
+        return;
+    }
+    let start = out.len();
+    out.resize(start + (width * height) as usize, [0; 4]);
+    let texels = &mut out[start..];
+    let block_size = if format == TextureFormat::Etc1A4 { 16 } else { 8 };
+    let tiles_across = width / 8;
+    for tile in 0..tiles_across * (height / 8) {
+        let (tile_x, tile_y) = (tile % tiles_across * 8, tile / tiles_across * 8);
+        for sub_block in 0..4 {
+            let offset = ((tile * 4 + sub_block) * block_size) as usize;
+            // what sample_etc1 gives a block past the end of the data
+            let Some(block) = data.get(offset..offset + block_size as usize) else { continue };
+            let (alpha, color) = if block_size == 16 { (Some(&block[0..8]), &block[8..16]) } else { (None, &block[0..8]) };
+            let decoded = decode_etc1_texels(color, alpha);
+            let (x0, y0) = (tile_x + sub_block % 2 * 4, tile_y + sub_block / 2 * 4);
+            for (i, texel) in decoded.iter().enumerate() {
+                let (x, y) = (x0 + i as u32 % 4, y0 + i as u32 / 4);
+                texels[(y * width + x) as usize] = *texel;
+            }
+        }
+    }
+}
+
+/// the sixteen texels of an ETC1 block, row-major, with an ETC1A4 alpha
+/// plane or opaque.
+fn decode_etc1_texels(color: &[u8], alpha: Option<&[u8]>) -> [[u8; 4]; 16] {
+    let block = Etc1Block::new(color);
+    // each half's four colors once, Etc1Block::texel's arithmetic, then
+    // only the lookups per texel
+    let palette: [[[u8; 3]; 4]; 2] = std::array::from_fn(|half| {
+        std::array::from_fn(|m| {
+            let delta = ETC1_MODIFIERS[block.tables[half]][m];
+            block.bases[half].map(|c| (c as i32 + delta).clamp(0, 255) as u8)
+        })
+    });
+    let alpha = alpha.map(|alpha| u64::from_le_bytes(alpha.try_into().unwrap()));
+    std::array::from_fn(|i| {
+        let (x, y) = (i as u32 % 4, i as u32 / 4);
+        let half = if block.flip { y >= 2 } else { x >= 2 } as usize;
+        let pixel_index = x * 4 + y;
+        let m = (((block.low >> (pixel_index + 16)) & 1) << 1 | (block.low >> pixel_index) & 1) as usize;
+        let [r, g, b] = palette[half][m];
+        // the alpha plane is column-major too, 4 bits a texel
+        let a = alpha.map_or(0xFF, |word| expand4(((word >> (pixel_index * 4)) & 0xF) as u8));
+        [r, g, b, a]
+    })
+}
+
 fn sample_uncompressed(
     data: &[u8],
     format: TextureFormat,
@@ -215,75 +276,89 @@ fn sample_etc1(data: &[u8], format: TextureFormat, width: u32, x: u32, y: u32) -
     [rgb[0], rgb[1], rgb[2], alpha]
 }
 
+/// an ETC1 block's two base colors and tables, worked out once for its
+/// sixteen texels.
+struct Etc1Block {
+    flip: bool,
+    low: u32,
+    bases: [[u8; 3]; 2],
+    tables: [usize; 2],
+}
+
+impl Etc1Block {
+    fn new(block: &[u8]) -> Etc1Block {
+        // little-endian, because why the hell would it match the spec
+        let word = u64::from_le_bytes(block.try_into().unwrap());
+        let low = (word & 0xFFFF_FFFF) as u32;
+        let high = (word >> 32) as u32;
+
+        let flip = high & 1 != 0;
+        let diff = high & 2 != 0;
+
+        let (base0, base1) = if diff {
+            let r0 = ((high >> 27) & 0x1F) as i32;
+            let g0 = ((high >> 19) & 0x1F) as i32;
+            let b0 = ((high >> 11) & 0x1F) as i32;
+            let dr = sign_extend_3((high >> 24) & 0x7);
+            let dg = sign_extend_3((high >> 16) & 0x7);
+            let db = sign_extend_3((high >> 8) & 0x7);
+            (
+                [expand5((r0) as u8), expand5((g0) as u8), expand5((b0) as u8)],
+                [
+                    expand5((r0 + dr).clamp(0, 31) as u8),
+                    expand5((g0 + dg).clamp(0, 31) as u8),
+                    expand5((b0 + db).clamp(0, 31) as u8),
+                ],
+            )
+        } else {
+            (
+                [
+                    expand4(((high >> 28) & 0xF) as u8),
+                    expand4(((high >> 20) & 0xF) as u8),
+                    expand4(((high >> 12) & 0xF) as u8),
+                ],
+                [
+                    expand4(((high >> 24) & 0xF) as u8),
+                    expand4(((high >> 16) & 0xF) as u8),
+                    expand4(((high >> 8) & 0xF) as u8),
+                ],
+            )
+        };
+        let tables = [((high >> 5) & 0x7) as usize, ((high >> 2) & 0x7) as usize];
+        Etc1Block { flip, low, bases: [base0, base1], tables }
+    }
+
+    fn texel(&self, x: u32, y: u32) -> [u8; 3] {
+        // which sub-block this pixel belongs to depends on the flip bit, an
+        // unflipped block splits into left/right halves, a flipped one into
+        // top/bottom.
+        let first_half = if self.flip { y < 2 } else { x < 2 };
+        let half = if first_half { 0 } else { 1 };
+        let (base, table) = (self.bases[half], self.tables[half]);
+
+        // the two 16-bit pixel-index planes are stored transposed
+        // (column-major) relative to (x, y).
+        let pixel_index = x * 4 + y;
+        let msb = (self.low >> (pixel_index + 16)) & 1;
+        let lsb = (self.low >> pixel_index) & 1;
+        // the table's four entries already alternate sign (e.g. [2, 8, -2,
+        // -8]), so the (msb, lsb) pair selecting one of them via
+        // modifier_index already encodes the sign, nothing further needs to
+        // branch on msb.
+        let modifier_index = ((msb << 1) | lsb) as usize;
+        let delta = ETC1_MODIFIERS[table][modifier_index];
+
+        [
+            (base[0] as i32 + delta).clamp(0, 255) as u8,
+            (base[1] as i32 + delta).clamp(0, 255) as u8,
+            (base[2] as i32 + delta).clamp(0, 255) as u8,
+        ]
+    }
+}
+
 /// decodes one pixel of a plain 8-byte ETC1 block.
 fn decode_etc1_block(block: &[u8], x: u32, y: u32) -> [u8; 3] {
-    // little-endian, because why the hell would it match the spec
-    let word = u64::from_le_bytes(block.try_into().unwrap());
-    let low = (word & 0xFFFF_FFFF) as u32;
-    let high = (word >> 32) as u32;
-
-    let flip = high & 1 != 0;
-    let diff = high & 2 != 0;
-
-    let (base0, base1) = if diff {
-        let r0 = ((high >> 27) & 0x1F) as i32;
-        let g0 = ((high >> 19) & 0x1F) as i32;
-        let b0 = ((high >> 11) & 0x1F) as i32;
-        let dr = sign_extend_3((high >> 24) & 0x7);
-        let dg = sign_extend_3((high >> 16) & 0x7);
-        let db = sign_extend_3((high >> 8) & 0x7);
-        (
-            [expand5((r0) as u8), expand5((g0) as u8), expand5((b0) as u8)],
-            [
-                expand5((r0 + dr).clamp(0, 31) as u8),
-                expand5((g0 + dg).clamp(0, 31) as u8),
-                expand5((b0 + db).clamp(0, 31) as u8),
-            ],
-        )
-    } else {
-        (
-            [
-                expand4(((high >> 28) & 0xF) as u8),
-                expand4(((high >> 20) & 0xF) as u8),
-                expand4(((high >> 12) & 0xF) as u8),
-            ],
-            [
-                expand4(((high >> 24) & 0xF) as u8),
-                expand4(((high >> 16) & 0xF) as u8),
-                expand4(((high >> 8) & 0xF) as u8),
-            ],
-        )
-    };
-
-    let table0 = ((high >> 5) & 0x7) as usize;
-    let table1 = ((high >> 2) & 0x7) as usize;
-
-    // which sub-block this pixel belongs to depends on the flip bit, an
-    // unflipped block splits into left/right halves, a flipped one into
-    // top/bottom.
-    let first_half = if flip { y < 2 } else { x < 2 };
-    let (base, table) = if first_half {
-        (base0, table0)
-    } else {
-        (base1, table1)
-    };
-
-    // the two 16-bit pixel-index planes are stored transposed (column-major)
-    // relative to (x, y).
-    let pixel_index = x * 4 + y;
-    let msb = (low >> (pixel_index + 16)) & 1;
-    let lsb = (low >> pixel_index) & 1;
-    // the table's four entries already alternate sign (e.g. [2, 8, -2, -8]),
-    // so the (msb, lsb) pair selecting one of them via modifier_index
-    // already encodes the sign, nothing further needs to branch on msb.
-    let modifier_index = ((msb << 1) | lsb) as usize;
-    let delta = ETC1_MODIFIERS[table][modifier_index];
-
-    [
-        (base[0] as i32 + delta).clamp(0, 255) as u8,
-        (base[1] as i32 + delta).clamp(0, 255) as u8,
-        (base[2] as i32 + delta).clamp(0, 255) as u8,
-    ]
+    Etc1Block::new(block).texel(x, y)
 }
 
 /// decodes one pixel's alpha from ETC1A4's 8-byte, 4-bit-per-texel alpha plane.
@@ -322,6 +397,31 @@ const fn expand6(v: u8) -> u8 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// decode_level gives exactly the texels sample_texel does, every
+    /// format, random bytes, short data included.
+    #[test]
+    fn whole_levels_match_texel_by_texel() {
+        let mut seed = 7u32;
+        let mut random = || {
+            seed = seed.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+            (seed >> 24) as u8
+        };
+        for raw in 0..14 {
+            let format = TextureFormat::from_raw(raw);
+            for (width, height) in [(8, 8), (64, 32), (16, 128), (256, 256), (4, 4), (12, 8)] {
+                let size = (width * height * format.bits_per_pixel() / 8) as usize;
+                for len in [size, size / 2] {
+                    let data: Vec<u8> = (0..len).map(|_| random()).collect();
+                    let mut whole = Vec::new();
+                    decode_level(&data, format, width, height, &mut whole);
+                    let texel: Vec<[u8; 4]> =
+                        (0..height).flat_map(|y| (0..width).map(move |x| (x, y))).map(|(x, y)| sample_texel(&data, format, width, x, y)).collect();
+                    assert_eq!(whole, texel, "{format:?} {width}x{height}, {len} bytes");
+                }
+            }
+        }
+    }
 
     #[test]
     fn rgba8_round_trips() {

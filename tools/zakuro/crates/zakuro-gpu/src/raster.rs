@@ -1161,11 +1161,7 @@ impl TextureCache {
             let (level_width, level_height) = mip_dimensions(width, height, level);
             let level_size = texture_level_size(format, level_width, level_height);
             let level_data = data.get(byte_offset..byte_offset + level_size).unwrap_or(&[]);
-            for y in 0..level_height {
-                for x in 0..level_width {
-                    all.push(crate::texture::sample_texel(level_data, format, level_width, x, y));
-                }
-            }
+            crate::texture::decode_level(level_data, format, level_width, level_height, &mut all);
             byte_offset += level_size;
         }
         let texels: Arc<[[u8; 4]]> = all.into();
