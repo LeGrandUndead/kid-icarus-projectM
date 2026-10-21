@@ -2423,26 +2423,6 @@ impl Hardware {
         Ok(pipeline)
     }
 
-    /// the pipeline for a key when the cache on disk has it, made without
-    /// compiling anything.
-    fn cached(&mut self, key: PipelineKey) -> Option<vk::Pipeline> {
-        let modules = [self.vertex_module(key.vertex), fragment_module(self.fragment_modules(), &key)];
-        let started = std::time::Instant::now();
-        let flags = vk::PipelineCreateFlags::FAIL_ON_PIPELINE_COMPILE_REQUIRED;
-        let pipeline = compile_pipeline(&self.device, self.pipeline_cache, self.layout, modules, &key, flags, self.dynamic);
-        crate::stats::add(&crate::stats::PIPELINES_MADE, 1);
-        crate::stats::add(&crate::stats::PIPELINE_NANOS, started.elapsed().as_nanos() as u64);
-        let pipeline = pipeline.ok()?;
-        log::debug!(
-            target: "zakuro_gpu::pipelines",
-            "took pipeline {} from the cache in {:.1} ms",
-            self.pipelines.len() + 1,
-            started.elapsed().as_secs_f64() * 1000.0
-        );
-        self.pipelines.insert(key, pipeline);
-        Some(pipeline)
-    }
-
     /// the pipeline a draw goes through. until the one made for its key is
     /// ready the compiler makes it, and the draw goes through one that
     /// draws the same, the interpreter's with the same fragment stages when
@@ -2464,10 +2444,12 @@ impl Hardware {
             return Ok(pipeline);
         }
         if !translating && self.compiler.asked.insert(key) {
-            if let Some(pipeline) = self.cached(key) {
-                return Ok(pipeline);
-            }
-            // made right here when waiting for it
+            // made by the compiler thread, which takes it from the disk
+            // cache when it is there. it used to be taken from the cache
+            // right here, but a cache lookup on the drawing thread cost
+            // 3-5 ms a pipeline on the RTX 3060, a whole new scene's worth
+            // of them a 30-75 ms stutter (October 21 slow-frame log). made
+            // right here when waiting for it
             self.hand(Job::Compile(key, self.vertex_module(key.vertex)));
             if let Some(&pipeline) = self.pipelines.get(&key) {
                 return Ok(pipeline);
@@ -4839,12 +4821,9 @@ pub(crate) fn render_device(
         .depth_clamp(true)
         .logic_op(logic_ops)
         .pipeline_statistics_query(statistics);
-    // the cache control, to make a pipeline only when the cache on disk
-    // has it, every Vulkan 1.3 device does
     let mut features13 = vk::PhysicalDeviceVulkan13Features::default()
         .dynamic_rendering(true)
-        .synchronization2(true)
-        .pipeline_creation_cache_control(true);
+        .synchronization2(true);
     let mut info = vk::DeviceCreateInfo::default()
         .queue_create_infos(&queues)
         .enabled_extension_names(&extensions)
