@@ -2382,6 +2382,42 @@ pub fn draw<M: GpuMemory>(
     vertex_count
 }
 
+/// render capture (F8): one draw's vertex inputs, shaded vertices and
+/// triangles, with its registers, as text, to study it away from the game.
+fn dump_vertices(root: &std::path::Path, registers: &[u32], vertices: &Vertices, shaded: &[Vertex],
+                 triangles: &[(usize, usize, usize)], at: &dyn Fn(usize) -> usize) {
+    use std::fmt::Write as _;
+    use std::sync::atomic::{AtomicU32, Ordering};
+    static SEQUENCE: AtomicU32 = AtomicU32::new(0);
+    let sequence = SEQUENCE.fetch_add(1, Ordering::Relaxed);
+    if sequence >= 2000 { return; }
+    let _ = std::fs::create_dir_all(root);
+    let texture = registers[REG_TEXTURE0_ADDRESS] << 3;
+    let mut text = format!("# draw {sequence}, texture0 0x{texture:08X}, {} shaded vertices, {} triangles\n", shaded.len(), triangles.len());
+    text.push_str("# registers\n");
+    for (i, chunk) in registers.chunks(8).enumerate() {
+        let _ = writeln!(text, "{:03X}: {}", i * 8, chunk.iter().map(|r| format!("{r:08X}")).collect::<Vec<_>>().join(" "));
+    }
+    if let Vertices::Unshaded { inputs, .. } = vertices {
+        text.push_str("# inputs (attribute registers v0-v15 of each vertex)\n");
+        for (i, input) in inputs.iter().enumerate() {
+            let used: Vec<String> = input.iter().take(8).map(|v| format!("({:.5} {:.5} {:.5} {:.5})", v[0], v[1], v[2], v[3])).collect();
+            let _ = writeln!(text, "{i}: {}", used.join(" "));
+        }
+    }
+    text.push_str("# shaded: clip xyzw | color rgba | uv0 | uv1 | uv2\n");
+    for (i, v) in shaded.iter().enumerate() {
+        let _ = writeln!(text, "{i}: {:.5} {:.5} {:.5} {:.5} | {:.4} {:.4} {:.4} {:.4} | {:.5} {:.5} | {:.5} {:.5} | {:.5} {:.5}",
+            v.clip[0], v.clip[1], v.clip[2], v.clip[3], v.color[0], v.color[1], v.color[2], v.color[3],
+            v.texcoords[0][0], v.texcoords[0][1], v.texcoords[1][0], v.texcoords[1][1], v.texcoords[2][0], v.texcoords[2][1]);
+    }
+    text.push_str("# triangles (shaded vertex indices)\n");
+    for &(a, b, c) in triangles {
+        let _ = writeln!(text, "{} {} {}", at(a), at(b), at(c));
+    }
+    let _ = std::fs::write(root.join(format!("vertices-{sequence:04}-{texture:08X}.txt")), text);
+}
+
 /// draws vertices a title sent one attribute at a time through the fixed
 /// attribute registers ("immediate mode") instead of from arrays in memory.
 pub fn draw_immediate<M: GpuMemory>(
@@ -2643,6 +2679,9 @@ fn rasterize<M: GpuMemory>(registers: &[u32], memory: &mut M, resources: &mut Re
     // which of the vertices made each vertex of the draw is
     let at = |i: usize| order.map_or(i, |order| order[i]);
     let triangle_indices = assemble(topology, order.map_or(shaded.len(), <[usize]>::len));
+    if let Some(root) = crate::diagnostics::draw_capture_path() {
+        dump_vertices(root, registers, &vertices, shaded, &triangle_indices, &at);
+    }
 
     let triangle_count = triangle_indices.len();
     let mut clipped_away = 0u32;

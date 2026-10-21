@@ -41,7 +41,9 @@ pub fn toggle_no_depth() -> bool { !LIVE_NO_DEPTH.fetch_xor(true, Ordering::Rela
 /// F6 in a render capture: vertex shaders run on the CPU (the reference)
 /// instead of the GPU, to tell a shader translation fault from the rest.
 pub fn toggle_cpu_shading() -> bool { !LIVE_CPU_SHADING.fetch_xor(true, Ordering::Relaxed) }
-pub(crate) fn cpu_shading() -> bool { LIVE_CPU_SHADING.load(Ordering::Relaxed) }
+/// the CPU shades during a draw-by-draw capture too, so each draw's
+/// vertices can be written out.
+pub(crate) fn cpu_shading() -> bool { LIVE_CPU_SHADING.load(Ordering::Relaxed) || draw_capture_path().is_some() }
 
 struct Capture {
     root: PathBuf,
