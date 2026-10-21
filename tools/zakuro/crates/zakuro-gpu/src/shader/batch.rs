@@ -70,6 +70,8 @@ pub(super) type Triangle = [[Vec4; OUTPUT_REGISTERS]; 3];
 pub(super) struct Emitters {
     slot: [usize; LANES],
     completes: [bool; LANES],
+    /// the setemit winding bit of each lane.
+    winding: [bool; LANES],
     slots: [Triangle; LANES],
     pub(super) triangles: [Vec<Triangle>; LANES],
 }
@@ -79,6 +81,7 @@ impl Emitters {
         Emitters {
             slot: [0; LANES],
             completes: [false; LANES],
+            winding: [false; LANES],
             slots: [[[[0.0; 4]; OUTPUT_REGISTERS]; 3]; LANES],
             triangles: std::array::from_fn(|_| Vec::new()),
         }
@@ -172,7 +175,7 @@ fn emit(batch: &Batch, program: &Program, active: u8, emitters: &mut Emitters) {
     }
     for lane in (0..LANES).filter(|lane| active & (1 << lane) != 0) {
         if emitters.completes[lane] {
-            let triangle = emitters.slots[lane];
+            let triangle = super::wound(emitters.slots[lane], emitters.winding[lane]);
             emitters.triangles[lane].push(triangle);
         }
     }
@@ -226,10 +229,12 @@ fn execute(
             // what a vertex shader runs has nothing to emit to
             OpCode::SetEmit => {
                 if let Some(emitters) = emitters.as_deref_mut() {
-                    let (slot, completes) = (op.instruction.emit_vertex().min(2), op.instruction.emit_primitive());
+                    let (slot, completes, winding) =
+                        (op.instruction.emit_vertex().min(2), op.instruction.emit_primitive(), op.instruction.emit_winding());
                     for lane in (0..LANES).filter(|lane| active & (1 << lane) != 0) {
                         emitters.slot[lane] = slot;
                         emitters.completes[lane] = completes;
+                        emitters.winding[lane] = winding;
                     }
                 }
                 pc += 1;

@@ -204,6 +204,12 @@ impl Instruction {
         (self.0 >> 23) & 1 != 0
     }
 
+    /// setemit, whether the triangle the next emit completes is wound the
+    /// other way: a shader emitting a strip sets it on every other one.
+    pub fn emit_winding(self) -> bool {
+        (self.0 >> 22) & 1 != 0
+    }
+
     // -- flow control ------------------------------------------------------
 
     /// (destination, instruction count).

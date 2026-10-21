@@ -300,8 +300,20 @@ pub struct Emitter {
     slots: [[Vec4; OUTPUT_REGISTERS]; 3],
     slot: usize,
     completes_primitive: bool,
+    /// the setemit winding bit, the triangle's first two vertices swap.
+    winding: bool,
     /// finished triangles, as each vertex's output registers.
     pub triangles: Vec<[[Vec4; OUTPUT_REGISTERS]; 3]>,
+}
+
+/// the triangle a geometry shader emits, its first two vertices swapped
+/// when setemit asked for the other winding, as the PICA200's primitive
+/// assembly does (a strip emitted as a list keeps one facing).
+pub(super) fn wound<T>(mut slots: [T; 3], winding: bool) -> [T; 3] {
+    if winding {
+        slots.swap(0, 1);
+    }
+    slots
 }
 
 /// one source of an instruction, with its descriptor applied ahead of time.
@@ -539,13 +551,14 @@ fn execute(unit: &ShaderUnit, program: &Program, state: &mut ShaderState, mut em
                 if let Some(emitter) = emitter.as_deref_mut() {
                     emitter.slot = instruction.emit_vertex().min(2);
                     emitter.completes_primitive = instruction.emit_primitive();
+                    emitter.winding = instruction.emit_winding();
                 }
             }
             OpCode::Emit => {
                 if let Some(emitter) = emitter.as_deref_mut() {
                     emitter.slots[emitter.slot] = state.output;
                     if emitter.completes_primitive {
-                        emitter.triangles.push(emitter.slots);
+                        emitter.triangles.push(wound(emitter.slots, emitter.winding));
                     }
                 }
             }
