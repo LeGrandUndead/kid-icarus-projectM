@@ -44,6 +44,8 @@ pub struct Menus {
     pub menu_open: bool,
     /// the game runs as fast as it can (F3), sound off.
     pub fast_forward: bool,
+    /// live renderer switches of a render capture session, shown while on.
+    pub diagnostic: String,
     pub settings_open: bool,
     /// the binding waiting for a key, by its place in Keys::all_mut.
     pub rebinding: Option<usize>,
@@ -286,6 +288,13 @@ impl Menus {
             egui::Area::new(egui::Id::new("fast-forward")).anchor(egui::Align2::RIGHT_TOP, Vec2::new(-12.0, 12.0)).interactable(false).show(&ctx, |ui| {
                 egui::Frame::popup(ui.style()).show(ui, |ui| {
                     ui.label(RichText::new(">> Fast-forward (F3 to stop)").strong());
+                });
+            });
+        }
+        if !self.diagnostic.is_empty() {
+            egui::Area::new(egui::Id::new("diagnostic")).anchor(egui::Align2::RIGHT_TOP, Vec2::new(-12.0, 48.0)).interactable(false).show(&ctx, |ui| {
+                egui::Frame::popup(ui.style()).show(ui, |ui| {
+                    ui.label(RichText::new(&self.diagnostic).strong());
                 });
             });
         }

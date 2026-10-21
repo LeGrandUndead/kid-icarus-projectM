@@ -1570,7 +1570,7 @@ impl Hardware {
 
     /// whether it runs vertex shaders.
     pub(crate) fn shades(&self) -> bool {
-        self.shades
+        self.shades && !crate::diagnostics::cpu_shading()
     }
 
     /// how many times the console's resolution it draws at.

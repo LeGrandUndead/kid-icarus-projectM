@@ -718,6 +718,19 @@ impl App {
                     zakuro_gpu::start_render_capture();
                     return;
                 }
+                KeyCode::F5 | KeyCode::F6 if std::env::var_os("KIU_RENDER_CAPTURE").is_some() => {
+                    use std::sync::atomic::{AtomicBool, Ordering};
+                    static NO_DEPTH: AtomicBool = AtomicBool::new(false);
+                    static CPU: AtomicBool = AtomicBool::new(false);
+                    if code == KeyCode::F5 { NO_DEPTH.store(zakuro_gpu::toggle_no_depth(), Ordering::Relaxed); }
+                    else { CPU.store(zakuro_gpu::toggle_cpu_shading(), Ordering::Relaxed); }
+                    let mut parts = Vec::new();
+                    if NO_DEPTH.load(Ordering::Relaxed) { parts.push("F5 depth test OFF"); }
+                    if CPU.load(Ordering::Relaxed) { parts.push("F6 CPU vertex shading ON"); }
+                    self.menus.diagnostic = parts.join("  |  ");
+                    log::info!("render switches: {}", if parts.is_empty() { "normal" } else { &self.menus.diagnostic });
+                    return;
+                }
                 KeyCode::F9 if self.presentation.enabled => {
                     self.close_screen_access(false);
                     self.presentation.boundary = true;

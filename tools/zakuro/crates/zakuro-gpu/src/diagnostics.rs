@@ -30,7 +30,18 @@ pub(crate) fn draw_capture_path() -> Option<&'static PathBuf> {
 pub(crate) fn ignore_depth_test() -> bool {
     static IGNORE: OnceLock<bool> = OnceLock::new();
     *IGNORE.get_or_init(|| std::env::var_os("KIU_DIAGNOSTIC_IGNORE_DEPTH").is_some())
+        || LIVE_NO_DEPTH.load(Ordering::Relaxed)
 }
+
+/// live A/B switches for a render capture session (F5, F6).
+static LIVE_NO_DEPTH: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+static LIVE_CPU_SHADING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+/// F5 in a render capture: depth testing off, to see what hides what.
+pub fn toggle_no_depth() -> bool { !LIVE_NO_DEPTH.fetch_xor(true, Ordering::Relaxed) }
+/// F6 in a render capture: vertex shaders run on the CPU (the reference)
+/// instead of the GPU, to tell a shader translation fault from the rest.
+pub fn toggle_cpu_shading() -> bool { !LIVE_CPU_SHADING.fetch_xor(true, Ordering::Relaxed) }
+pub(crate) fn cpu_shading() -> bool { LIVE_CPU_SHADING.load(Ordering::Relaxed) }
 
 struct Capture {
     root: PathBuf,
