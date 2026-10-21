@@ -147,6 +147,12 @@ What remains: whole texture decodes when a scene loads (21-25 textures,
 12-15 ms in one frame), and in the land section "title and kernel" frames
 of 15-35 ms with 4-7 ms of write-back.
 
+Then ETC1 decoded a block at a time (tx1): the scene-load frames 2107 and
+12423 (12-15 ms of texture decoding) drop out of the slow list; 19
+textures now decode in 3.6 ms. That run's other slow frames were all
+"title and kernel" (the PC was busy at the time: 189 slow frames, most at
+startup), which the renderer changes do not touch.
+
 Note: frames run under fast-forward (F3) are not real time; the "emulating"
 histogram of a session that used it is inflated.
 
