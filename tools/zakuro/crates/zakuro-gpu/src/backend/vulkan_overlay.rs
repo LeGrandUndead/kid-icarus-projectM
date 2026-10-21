@@ -10,7 +10,8 @@ use super::{Overlay, OverlayTexture, OverlayVertex, PresentError};
 const VERTEX_SPIRV: &[u8] = include_bytes!("../../shaders/overlay.vert.spv");
 const FRAGMENT_SPIRV: &[u8] = include_bytes!("../../shaders/overlay.frag.spv");
 
-/// textures the overlay may have at once.
+/// textures one descriptor pool holds; another pool is added when the
+/// overlay needs more (a level's end screen showed over 256 at once).
 const MAX_TEXTURES: u32 = 256;
 
 /// what the shaders take besides the triangles.
@@ -26,6 +27,8 @@ struct Texture {
     memory: vk::DeviceMemory,
     view: vk::ImageView,
     descriptor: vk::DescriptorSet,
+    /// the pool the descriptor came from.
+    pool: vk::DescriptorPool,
     /// never drawn into yet, so its contents need not be kept.
     fresh: bool,
 }
@@ -46,7 +49,8 @@ enum Garbage {
 
 pub(super) struct OverlayPainter {
     descriptor_layout: vk::DescriptorSetLayout,
-    descriptor_pool: vk::DescriptorPool,
+    /// the last one is tried first, a new one is made when all are full.
+    descriptor_pools: Vec<vk::DescriptorPool>,
     pipeline_layout: vk::PipelineLayout,
     pipeline: vk::Pipeline,
     /// nearest, then linear.
@@ -82,19 +86,7 @@ impl OverlayPainter {
         }
         .map_err(vk_fail("creating the overlay descriptor layout"))?;
 
-        let sizes = [vk::DescriptorPoolSize::default()
-            .ty(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
-            .descriptor_count(MAX_TEXTURES)];
-        let descriptor_pool = unsafe {
-            device.create_descriptor_pool(
-                &vk::DescriptorPoolCreateInfo::default()
-                    .flags(vk::DescriptorPoolCreateFlags::FREE_DESCRIPTOR_SET)
-                    .pool_sizes(&sizes)
-                    .max_sets(MAX_TEXTURES),
-                None,
-            )
-        }
-        .map_err(vk_fail("creating the overlay descriptor pool"))?;
+        let descriptor_pool = make_pool(device)?;
 
         let sampler = |filter: vk::Filter| unsafe {
             device.create_sampler(
@@ -115,7 +107,7 @@ impl OverlayPainter {
         let (pipeline_layout, pipeline) = create_pipeline(device, render_pass, descriptor_layout)?;
         Ok(OverlayPainter {
             descriptor_layout,
-            descriptor_pool,
+            descriptor_pools: vec![descriptor_pool],
             pipeline_layout,
             pipeline,
             samplers,
@@ -146,7 +138,7 @@ impl OverlayPainter {
     /// caller having waited for it.
     pub(super) fn begin_frame(&mut self, device: &ash::Device, frame: usize) {
         for garbage in self.garbage[frame].drain(..) {
-            destroy(device, self.descriptor_pool, garbage);
+            destroy(device, garbage);
         }
     }
 
@@ -167,7 +159,15 @@ impl OverlayPainter {
                 continue;
             }
             if texture.offset.is_none() {
-                let made = self.make_texture(device, memory, texture.size, texture.linear)?;
+                // an overlay picture that cannot be made is left out, the
+                // game keeps running
+                let made = match self.make_texture(device, memory, texture.size, texture.linear) {
+                    Ok(made) => made,
+                    Err(error) => {
+                        log::warn!("overlay texture {} left out: {error}", texture.id);
+                        continue;
+                    }
+                };
                 if let Some(old) = self.textures.insert(texture.id, made) {
                     self.garbage[frame].push(Garbage::Texture(old));
                 }
@@ -314,7 +314,7 @@ impl OverlayPainter {
     }
 
     fn make_texture(
-        &self,
+        &mut self,
         device: &ash::Device,
         memory: &vk::PhysicalDeviceMemoryProperties,
         [width, height]: [u32; 2],
@@ -363,12 +363,15 @@ impl OverlayPainter {
                     None,
                 )
                 .map_err(vk_fail("creating an overlay texture view"))?;
-            let layouts = [self.descriptor_layout];
-            let descriptor = device
-                .allocate_descriptor_sets(
-                    &vk::DescriptorSetAllocateInfo::default().descriptor_pool(self.descriptor_pool).set_layouts(&layouts),
-                )
-                .map_err(vk_fail("allocating an overlay descriptor"))?[0];
+            let (descriptor, pool) = match self.allocate_descriptor(device) {
+                Ok(found) => found,
+                Err(error) => {
+                    device.destroy_image_view(view, None);
+                    device.destroy_image(image, None);
+                    device.free_memory(memory, None);
+                    return Err(error);
+                }
+            };
             let info = [vk::DescriptorImageInfo::default()
                 .sampler(self.samplers[linear as usize])
                 .image_view(view)
@@ -380,20 +383,50 @@ impl OverlayPainter {
                     .image_info(&info)],
                 &[],
             );
-            Ok(Texture { image, memory, view, descriptor, fresh: true })
+            Ok(Texture { image, memory, view, descriptor, pool, fresh: true })
         }
     }
 
+    /// a descriptor set from the newest pool with room, adding a pool when
+    /// every one is full.
+    fn allocate_descriptor(&mut self, device: &ash::Device) -> Result<(vk::DescriptorSet, vk::DescriptorPool), PresentError> {
+        let layouts = [self.descriptor_layout];
+        for &pool in self.descriptor_pools.iter().rev() {
+            // SAFETY: allocation from a live pool of ours
+            match unsafe {
+                device.allocate_descriptor_sets(
+                    &vk::DescriptorSetAllocateInfo::default().descriptor_pool(pool).set_layouts(&layouts),
+                )
+            } {
+                Ok(sets) => return Ok((sets[0], pool)),
+                Err(vk::Result::ERROR_OUT_OF_POOL_MEMORY | vk::Result::ERROR_FRAGMENTED_POOL) => continue,
+                Err(error) => return Err(vk_fail("allocating an overlay descriptor")(error)),
+            }
+        }
+        let pool = make_pool(device)?;
+        self.descriptor_pools.push(pool);
+        log::info!(
+            "overlay: {} textures at once, descriptor pool {} added",
+            self.textures.len(),
+            self.descriptor_pools.len()
+        );
+        // SAFETY: allocation from the pool just made
+        let sets = unsafe {
+            device.allocate_descriptor_sets(&vk::DescriptorSetAllocateInfo::default().descriptor_pool(pool).set_layouts(&layouts))
+        }
+        .map_err(vk_fail("allocating an overlay descriptor"))?;
+        Ok((sets[0], pool))
+    }
+
     pub(super) fn destroy(&mut self, device: &ash::Device) {
-        let pool = self.descriptor_pool;
         for garbage in self.garbage.iter_mut().flat_map(|g| g.drain(..)) {
-            destroy(device, pool, garbage);
+            destroy(device, garbage);
         }
         for buffer in self.geometry.iter_mut().filter_map(Option::take) {
-            destroy(device, pool, Garbage::Buffer(buffer));
+            destroy(device, Garbage::Buffer(buffer));
         }
         for (_, texture) in self.textures.drain() {
-            destroy(device, pool, Garbage::Texture(texture));
+            destroy(device, Garbage::Texture(texture));
         }
         // SAFETY: the device is idle, the caller waited for it
         unsafe {
@@ -402,13 +435,32 @@ impl OverlayPainter {
             for sampler in self.samplers {
                 device.destroy_sampler(sampler, None);
             }
-            device.destroy_descriptor_pool(self.descriptor_pool, None);
+            for &pool in &self.descriptor_pools {
+                device.destroy_descriptor_pool(pool, None);
+            }
             device.destroy_descriptor_set_layout(self.descriptor_layout, None);
         }
     }
 }
 
-fn destroy(device: &ash::Device, pool: vk::DescriptorPool, garbage: Garbage) {
+fn make_pool(device: &ash::Device) -> Result<vk::DescriptorPool, PresentError> {
+    let sizes = [vk::DescriptorPoolSize::default()
+        .ty(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
+        .descriptor_count(MAX_TEXTURES)];
+    // SAFETY: plain object creation on a live device
+    unsafe {
+        device.create_descriptor_pool(
+            &vk::DescriptorPoolCreateInfo::default()
+                .flags(vk::DescriptorPoolCreateFlags::FREE_DESCRIPTOR_SET)
+                .pool_sizes(&sizes)
+                .max_sets(MAX_TEXTURES),
+            None,
+        )
+    }
+    .map_err(vk_fail("creating the overlay descriptor pool"))
+}
+
+fn destroy(device: &ash::Device, garbage: Garbage) {
     // SAFETY: the GPU finished every frame that used it
     unsafe {
         match garbage {
@@ -417,7 +469,7 @@ fn destroy(device: &ash::Device, pool: vk::DescriptorPool, garbage: Garbage) {
                 device.destroy_image(texture.image, None);
                 device.free_memory(texture.memory, None);
                 // the pool lets sets go one by one, and a failure only leaks one
-                let _ = device.free_descriptor_sets(pool, &[texture.descriptor]);
+                let _ = device.free_descriptor_sets(texture.pool, &[texture.descriptor]);
             }
             Garbage::Buffer(buffer) => {
                 device.unmap_memory(buffer.memory);
