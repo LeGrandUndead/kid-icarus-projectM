@@ -7,6 +7,7 @@
 #   Bench-KIU.ps1                      the original 30 fps cadence
 #   Bench-KIU.ps1 -Fps60               the 60 fps scheduler from vblank 6000
 #   Bench-KIU.ps1 -Frames 16500        longer, reaches land gameplay
+#   Bench-KIU.ps1 -Rasterizer software the CPU reference renderer, to compare pictures
 #   Bench-KIU.ps1 -KeepAliased         the renderer's old write-back path, for comparison
 #
 # Screens are saved in the run folder at vblanks 6000, 7500 and the last one
@@ -14,7 +15,7 @@
 #
 # Needs the recording from the 60 fps research (build\60fps-research\baseline)
 # and the archived initial save. Saves and the playable build are not touched.
-param([int]$Frames = 9000, [switch]$Fps60, [string]$Name = '', [switch]$NoBuild, [switch]$KeepAliased, [int]$Resolution = 5, [string]$DumpAt = '')
+param([int]$Frames = 9000, [switch]$Fps60, [string]$Name = '', [switch]$NoBuild, [switch]$KeepAliased, [int]$Resolution = 5, [string]$DumpAt = '', [ValidateSet('hardware','software')][string]$Rasterizer = 'hardware')
 
 $ErrorActionPreference = 'Stop'
 . "$PSScriptRoot/environment.ps1"
@@ -52,7 +53,7 @@ if (Test-Path -LiteralPath $cache) {
 }
 $env:ZAKURO_RECOMPILED = Join-Path $run '0004000000030100.dll'
 $env:ZAKURO_REPLAY = Join-Path $baseline 'input.replay'
-$env:ZAKURO_RASTERIZER = 'hardware'
+$env:ZAKURO_RASTERIZER = $Rasterizer
 $env:ZAKURO_RESOLUTION = "$Resolution"
 $env:ZAKURO_PRESENT = 'direct'
 if (-not $DumpAt) { $DumpAt = "6000,7500,$Frames" }
