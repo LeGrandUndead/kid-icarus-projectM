@@ -132,6 +132,21 @@ phases, the title's code and kernel, particle primitives, whole texture
 decodes and pipelines made on the drawing thread. Boss fights stutter; the
 next step is a boss played with this build and those lines read.
 
+Chapter 1 replay (16,500 vblanks, 60 fps from 6000, 5x, fresh pipeline
+cache), slow frames over 25 ms:
+
+| | before (cl2) | pipelines off the drawing thread (pl1) |
+|---|---|---|
+| frames over 25 ms | 18 | 18 |
+| of which pipeline creation | 16 (15-70 ms each) | 0 |
+| worst, excluding the loading screen | 81.8 ms | 36.2 ms |
+| frames over 16.7 ms | 56 | 52 |
+| wall time | 155.8 s | 96.0 s |
+
+What remains: whole texture decodes when a scene loads (21-25 textures,
+12-15 ms in one frame), and in the land section "title and kernel" frames
+of 15-35 ms with 4-7 ms of write-back.
+
 Note: frames run under fast-forward (F3) are not real time; the "emulating"
 histogram of a session that used it is inflated.
 
