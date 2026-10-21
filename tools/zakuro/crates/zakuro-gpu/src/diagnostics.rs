@@ -33,14 +33,19 @@ pub(crate) fn draw_capture_path() -> Option<&'static PathBuf> {
 /// hit) can be read from any session log.
 pub(crate) fn hud_batch(viewport: (f32, f32, f32, f32), bounds: [f32; 4], projection: [[f32; 4]; 2], anchor: f32) {
     if viewport.3 != 400.0 { return; } // the lower screen is kiu_ui's
+    // menus and the title use the same program: start once gameplay has
+    // drawn a health bar or score the PC layout knows
+    static PLAYING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+    if anchor != 0.0 { PLAYING.store(true, Ordering::Relaxed); }
+    if !PLAYING.load(Ordering::Relaxed) { return; }
     static SEEN: OnceLock<Mutex<HashSet<[i32; 13]>>> = OnceLock::new();
     let key: [i32; 13] = std::array::from_fn(|i| match i {
-        0..4 => bounds[i].round() as i32,
-        4..12 => (projection[(i - 4) / 4][(i - 4) % 4] * 1e5).round() as i32,
+        0..4 => (bounds[i] / 4.0).round() as i32,
+        4..12 => (projection[(i - 4) / 4][(i - 4) % 4] * 1e4).round() as i32,
         _ => (anchor * 1e4).round() as i32,
     });
     let Ok(mut seen) = SEEN.get_or_init(Default::default).lock() else { return };
-    if seen.len() >= 400 || !seen.insert(key) { return; }
+    if seen.len() >= 1500 || !seen.insert(key) { return; }
     log::info!(target: "zakuro::hud_batch", "frame {} bounds {:?} projection {:?} anchor {}",
         FRAME.load(Ordering::Relaxed), bounds, projection, anchor);
 }
