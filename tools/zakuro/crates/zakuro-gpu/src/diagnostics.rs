@@ -31,7 +31,7 @@ pub(crate) fn draw_capture_path() -> Option<&'static PathBuf> {
 /// with its bounds, projection rows and the PC anchor it got, so a HUD piece
 /// the PC layout misses (October 21: the health bar shrinking when Pit is
 /// hit) can be read from any session log.
-pub(crate) fn hud_batch(viewport: (f32, f32, f32, f32), bounds: [f32; 4], projection: [[f32; 4]; 2], anchor: f32) {
+pub(crate) fn hud_batch(viewport: (f32, f32, f32, f32), bounds: [f32; 4], uv: [f32; 4], projection: [[f32; 4]; 2], anchor: f32) {
     if viewport.3 != 400.0 { return; } // the lower screen is kiu_ui's
     // menus and the title use the same program: start once gameplay has
     // drawn a health bar or score the PC layout knows
@@ -46,8 +46,8 @@ pub(crate) fn hud_batch(viewport: (f32, f32, f32, f32), bounds: [f32; 4], projec
     });
     let Ok(mut seen) = SEEN.get_or_init(Default::default).lock() else { return };
     if seen.len() >= 1500 || !seen.insert(key) { return; }
-    log::info!(target: "zakuro::hud_batch", "frame {} bounds {:?} projection {:?} anchor {}",
-        FRAME.load(Ordering::Relaxed), bounds, projection, anchor);
+    log::info!(target: "zakuro::hud_batch", "frame {} bounds {:?} uv {:?} projection {:?} anchor {}",
+        FRAME.load(Ordering::Relaxed), bounds, uv, projection, anchor);
 }
 
 /// Offline isolation only; never enabled by the normal launcher.

@@ -52,10 +52,12 @@ pub fn center(r: Rect) -> [f32; 2] { [(r[0] + r[2]) * 0.5, (r[1] + r[3]) * 0.5] 
 
 fn inside(p: [f32; 2], r: Rect) -> bool { p[0] >= r[0] && p[0] < r[2] && p[1] >= r[1] && p[1] < r[3] }
 
-/// Which island an element belongs to, by its original screen position.
-/// Background panels and full-screen frames are never island elements.
-pub fn island_for(xy: &[[f32; 2]; 4]) -> Option<Island> {
-    let b = bounds(xy);
+/// Which island a piece of interface belongs to, by the bounds of the
+/// whole draw it is part of on the original screen (a panel's three parts
+/// go together: October 21, the left cap of a screen-wide pickup panel
+/// joined the action group alone, a white bar beside the item). Background
+/// panels and full-screen frames are never island elements.
+pub fn island_for(b: Rect) -> Option<Island> {
     if !(b[2] - b[0] <= MAX_ELEMENT[0] && b[3] - b[1] <= MAX_ELEMENT[1]) { return None; }
     let c = center(b);
     ISLANDS.into_iter().find(|island| inside(c, island.source))
@@ -164,16 +166,24 @@ mod tests {
 
     #[test]
     fn orbs_and_palette_join_the_action_island() {
-        assert_eq!(island_for(&quad(5.0, 195.0, 47.0, 237.0)), Some(ACTION));
-        assert_eq!(island_for(&quad(45.0, 205.0, 80.0, 238.0)), Some(ACTION));
-        assert_eq!(island_for(&quad(250.0, 4.0, 318.0, 20.0)), Some(COUNTERS));
+        assert_eq!(island_for(bounds(&quad(5.0, 195.0, 47.0, 237.0))), Some(ACTION));
+        assert_eq!(island_for(bounds(&quad(45.0, 205.0, 80.0, 238.0))), Some(ACTION));
+        assert_eq!(island_for(bounds(&quad(250.0, 4.0, 318.0, 20.0))), Some(COUNTERS));
+    }
+
+    #[test]
+    fn a_panel_wider_than_an_element_stays_out_with_all_its_parts() {
+        // left cap, stretched middle and right cap of the pickup panel
+        let panel = [23.0, 135.0, 301.0, 203.0];
+        assert_eq!(island_for(panel), None);
+        assert_eq!(island_for(bounds(&quad(23.0, 135.0, 40.0, 175.0))), Some(ACTION), "the left cap alone would join");
     }
 
     #[test]
     fn backgrounds_titles_and_frames_are_not_island_elements() {
-        assert_eq!(island_for(&quad(0.0, 0.0, 320.0, 240.0)), None);
-        assert_eq!(island_for(&quad(0.0, 0.0, 200.0, 40.0)), None, "chapter title is centered outside the counters");
-        assert_eq!(island_for(&quad(150.0, 60.0, 320.0, 240.0)), None, "portrait-sized art");
+        assert_eq!(island_for(bounds(&quad(0.0, 0.0, 320.0, 240.0))), None);
+        assert_eq!(island_for(bounds(&quad(0.0, 0.0, 200.0, 40.0))), None, "chapter title is centered outside the counters");
+        assert_eq!(island_for(bounds(&quad(150.0, 60.0, 320.0, 240.0))), None, "portrait-sized art");
     }
 
     #[test]

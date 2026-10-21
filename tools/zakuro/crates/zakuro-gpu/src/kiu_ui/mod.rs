@@ -65,10 +65,15 @@ struct Layer {
     name: usize,
     texture: u64,
     xy: [[f32; 2]; 4],
+    /// the game's texture coordinates, and where they fall in the host
+    /// texture (bake::crop)
     uv: [[f32; 2]; 4],
+    sample: [[f32; 2]; 4],
     /// the vertex color the host applies (see bake::Tint), straight RGBA.
     tint: [f32; 4],
     island: Option<layout::Island>,
+    /// which lower-screen draw of its frame it came from (census)
+    draw: u32,
     /// whose long-standing fade this layer follows: its own name, or for
     /// text written on a picture panel, the panel's.
     fade_key: usize,
@@ -292,7 +297,7 @@ pub(crate) fn role(hash: Option<u64>) -> Option<Role> {
 /// Keeps one original draw. `xy` is in guest bottom-screen pixels.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn push(hash: u64, width: u32, height: u32, texels: &[[u8; 4]],
-    registers: &[u32], primary: [f32; 4], xy: [[f32; 2]; 4], uv: [[f32; 2]; 4]) {
+    registers: &[u32], primary: [f32; 4], xy: [[f32; 2]; 4], uv: [[f32; 2]; 4], group: layout::Rect) {
     let Some(state) = state() else { return };
     let Ok(mut guard) = state.lock() else { return };
     let s = &mut *guard;
@@ -319,7 +324,7 @@ pub(crate) fn push(hash: u64, width: u32, height: u32, texels: &[[u8; 4]],
     } else { role };
     // Decide placement first: unplaced HUD/menu/decor draws need no texture.
     let hud_like = matches!(role, Role::Hud | Role::Unlisted);
-    let island = if hud_like && !layout::is_touch_marker(&xy, s.touch) { layout::island_for(&xy) } else { None };
+    let island = if hud_like && !layout::is_touch_marker(&xy, s.touch) { layout::island_for(group) } else { None };
     // Text and other unlisted art elsewhere (menus, panels) is not kept, nor
     // procedural effects whose UVs leave the texture (the stylus ripple rings,
     // UV 0..2 x -1..1 in the October 15 census) — they are not HUD elements.
@@ -330,9 +335,14 @@ pub(crate) fn push(hash: u64, width: u32, height: u32, texels: &[[u8; 4]],
         let texels = &texels[..(width * height) as usize];
         let hd = hd_for(s, hash, texels, width, height);
         let env = crate::tev::TexEnv::read(registers);
-        // the texture and its combiner (the slot), then the colors a draw
-        // animates: the stage constants and buffer color, the vertex color
-        let mut slot_key = vec![hash as u32, (hash >> 32) as u32, width, height];
+        let (rect, sample) = bake::crop(width, height, &uv);
+        let full = texels;
+        let texels = &bake::crop_texels(full, width, rect, 1);
+        let [cw, ch] = [rect[2] - rect[0], rect[3] - rect[1]];
+        // the texture's rectangle and its combiner (the slot), then the
+        // colors a draw animates: the stage constants and buffer color, the
+        // vertex color
+        let mut slot_key = vec![hash as u32, (hash >> 32) as u32, width, height, rect[0], rect[1], rect[2], rect[3]];
         let mut key = Vec::with_capacity(slot_key.len() + 32);
         for base in [0xc0, 0xc8, 0xd0, 0xd8, 0xf0, 0xf8] {
             slot_key.extend([registers[base], registers[base + 1], registers[base + 2], registers[base + 4]]);
@@ -374,7 +384,7 @@ pub(crate) fn push(hash: u64, width: u32, height: u32, texels: &[[u8; 4]],
                         crate::stats::add(&crate::stats::UI_BAKE_NANOS, start.elapsed().as_nanos() as u64);
                         let id = s.next;
                         s.next += 1;
-                        s.uploads.push(OverlayTexture { id, offset: None, size: [width, height], pixels, linear: true });
+                        s.uploads.push(OverlayTexture { id, offset: None, size: [cw, ch], pixels, linear: true });
                         s.cache.insert(key.clone(), (id, false));
                         s.slots.insert(slot_key, Slot { id, samples, baked: frame });
                         (id, host_tint, false)
@@ -382,28 +392,33 @@ pub(crate) fn push(hash: u64, width: u32, height: u32, texels: &[[u8; 4]],
                 }
             }
         };
+        // an HD version is a whole multiple of the original, row for row
+        let hd = hd.filter(|hd| hd.width >= width && hd.width % width == 0 && hd.height == height * (hd.width / width));
         if let (true, Some(hd), Some(jobs)) = (want_hd, hd, &s.jobs) {
             if s.baking.insert(key.clone()) {
                 let jobs = jobs.clone();
                 // bake at the density the HUD is shown at (quarter steps),
                 // never above the HD texture's own
-                let factor = hd.width as f32 / width as f32;
-                let target = ((s.display.max(1.0) * 4.0).ceil() / 4.0).min(factor);
-                let (tw, th) = ((width as f32 * target).round() as u32, (height as f32 * target).round() as u32);
+                let factor = hd.width / width;
+                let target = ((s.display.max(1.0) * 4.0).ceil() / 4.0).min(factor as f32);
+                let (tw, th) = ((cw as f32 * target).round() as u32, (ch as f32 * target).round() as u32);
                 std::thread::spawn(move || {
-                    let pixels = bake::bake(&env, baked_primary, &hd.texels);
-                    let pixels = bake::shrink(&pixels, hd.width, hd.height, tw, th);
-                    let _ = jobs.send(Done::Baked(key, [tw.min(hd.width), th.min(hd.height)], pixels));
+                    let texels = bake::crop_texels(&hd.texels, width, rect, factor);
+                    let pixels = bake::bake(&env, baked_primary, &texels);
+                    let (hw, hh) = (cw * factor, ch * factor);
+                    let pixels = bake::shrink(&pixels, hw, hh, tw, th);
+                    let _ = jobs.send(Done::Baked(key, [tw.clamp(1, hw), th.clamp(1, hh)], pixels));
                 });
             }
         }
         if let Some(root) = crate::diagnostics::draw_capture_path() {
-            capture_for_diagnostics(root, s.pending.len(), hash, &env, primary, texels, width, height, xy, uv);
+            capture_for_diagnostics(root, s.pending.len(), hash, &env, primary, full, width, height, xy, uv);
         }
-        Some((id, host_tint))
+        Some((id, host_tint, sample))
     } else { None };
-    let (texture, tint) = texture.unwrap_or((0, [1.0; 4]));
-    s.pending.push(Layer { role, name, texture, xy, uv, tint, island, fade_key });
+    let (texture, tint, sample) = texture.unwrap_or((0, [1.0; 4], uv.map(overlay_uv)));
+    let draw = s.bottom_draws;
+    s.pending.push(Layer { role, name, texture, xy, uv, sample, tint, island, draw, fade_key });
 }
 
 /// The HD version of a catalogued texture, if the local pack has one and it
@@ -567,7 +582,7 @@ pub fn overlay_in(width: u32, height: u32, view: [f32; 4], visible: bool) -> Ove
         let color = [layer.tint[0] * alpha, layer.tint[1] * alpha, layer.tint[2] * alpha, alpha].map(|c| (c * 255.0).round() as u8);
         let vertices = (0..4).map(|i| {
             let [x, y] = place(layer.xy[i]);
-            OverlayVertex { position: [vx + x, vy + y], uv: overlay_uv(layer.uv[i]), color }
+            OverlayVertex { position: [vx + x, vy + y], uv: layer.sample[i], color }
         }).collect();
         overlay.meshes.push(OverlayMesh { texture: layer.texture, clip: [0, 0, width, height], vertices, indices: vec![0, 1, 2, 1, 3, 2] });
     }
@@ -589,7 +604,7 @@ mod census {
         pub fn from_environment() -> Option<Census> {
             let path = std::path::PathBuf::from(std::env::var_os("KIU_UI_CENSUS")?);
             let mut file = std::fs::File::create(&path).ok()?;
-            let _ = writeln!(file, "frame,fresh,role,atlas,x0,y0,x1,y1,u0,v0,u1,v1,alpha,island");
+            let _ = writeln!(file, "frame,fresh,role,atlas,x0,y0,x1,y1,u0,v0,u1,v1,alpha,island,draw");
             let mut rejected = std::fs::File::create(path.with_file_name("lower-screen-rejected.csv")).ok();
             if let Some(f) = &mut rejected { let _ = writeln!(f, "first_frame,reason,detail"); }
             Some(Census { file, last: Vec::new(), rejected, seen: Default::default() })
@@ -605,11 +620,11 @@ mod census {
                 let b = super::layout::bounds(&l.xy);
                 let mut u = [f32::INFINITY, f32::INFINITY, f32::NEG_INFINITY, f32::NEG_INFINITY];
                 for p in l.uv { u[0] = u[0].min(p[0]); u[1] = u[1].min(p[1]); u[2] = u[2].max(p[0]); u[3] = u[3].max(p[1]); }
-                format!("{:?},{},{:.0},{:.0},{:.0},{:.0},{:.4},{:.4},{:.4},{:.4},{:.2},{}", l.role, names[l.name],
-                    b[0], b[1], b[2], b[3], u[0], u[1], u[2], u[3], l.tint[3], l.island.map_or("-", |i| i.name))
+                format!("{:?},{},{:.0},{:.0},{:.0},{:.0},{:.4},{:.4},{:.4},{:.4},{:.2},{},{}", l.role, names[l.name],
+                    b[0], b[1], b[2], b[3], u[0], u[1], u[2], u[3], l.tint[3], l.island.map_or("-", |i| i.name), l.draw)
             }).collect();
             // geometry only; ignore pure alpha animation for the change test
-            let key: Vec<String> = rows.iter().map(|r| r.rsplitn(3, ',').nth(2).unwrap_or(r).to_owned()).collect();
+            let key: Vec<String> = rows.iter().map(|r| r.rsplitn(4, ',').nth(3).unwrap_or(r).to_owned()).collect();
             if key == self.last { return; }
             self.last = key;
             for row in rows { let _ = writeln!(self.file, "{frame},{},{row}", fresh as u8); }

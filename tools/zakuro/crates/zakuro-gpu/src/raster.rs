@@ -2187,14 +2187,17 @@ fn fixed_hud_candidate(adjusted:Option<&ShaderUnit>, original:&ShaderUnit) -> bo
 
 // Only known complete HP/score batches opt out of camera zoom. Reticles and
 // world markers keep the same projection scale as the world they point at.
-fn pin_fixed_hud(adjusted:&mut ShaderUnit, original:&ShaderUnit, points:impl Iterator<Item=[f32;4]>) {
+fn pin_fixed_hud(adjusted:&mut ShaderUnit, original:&ShaderUnit, points:impl Iterator<Item=([f32;4],[f32;4])>) {
     let mut bounds=[f32::INFINITY,f32::INFINITY,f32::NEG_INFINITY,f32::NEG_INFINITY];
-    for point in points {
-        if !point[..2].iter().all(|v|v.is_finite()) {return;}
+    let mut uv=bounds;
+    for (point,texcoord) in points {
+        if !point[..2].iter().chain(&texcoord[..2]).all(|v|v.is_finite()) {return;}
         bounds[0]=bounds[0].min(point[0]);bounds[1]=bounds[1].min(point[1]);
         bounds[2]=bounds[2].max(point[0]);bounds[3]=bounds[3].max(point[1]);
+        uv[0]=uv[0].min(texcoord[0]);uv[1]=uv[1].min(texcoord[1]);
+        uv[2]=uv[2].max(texcoord[0]);uv[3]=uv[3].max(texcoord[1]);
     }
-    if kiu_hud_anchor_bounds(bounds)!=0.0 {
+    if kiu_hud_edge(bounds,uv)!=0.0 {
         adjusted.float_uniforms[0]=original.float_uniforms[0];
         adjusted.float_uniforms[1]=original.float_uniforms[1].map(|v|v*15.0/16.0);
     }
@@ -2235,7 +2238,37 @@ pub(crate) fn kiu_quad_indices(indices: &[u32]) -> bool {
         })
 }
 
-pub(crate) fn kiu_hud_anchor_bounds(bounds: [f32; 4]) -> f32 {
+/// The top-screen health bar and score pieces, by the atlas rectangle each
+/// draws (October 21 render capture), its width in screen pixels (0: it
+/// varies, the health fill) and the window edge it belongs to. Their
+/// positions move: they shake when Pit is hit and slide in at the start of a
+/// stage, and the reveal also trims the drawn rectangle.
+const KIU_HUD_PIECES: [([f32; 4], f32, f32); 6] = [
+    ([0.0, 0.83984, 0.36719, 1.0], 129.0, 0.0625),         // health bar frame
+    ([0.94531, 0.40234, 0.98438, 0.42188], 90.0, 0.0625),  // health bar back
+    ([0.00781, 0.73047, 0.00781, 0.75], 0.0, 0.0625),      // health fill
+    ([0.00391, 0.87891, 0.125, 1.0], 31.0, 0.0625),        // wing
+    ([0.0, 0.48438, 0.71094, 0.83594], 88.0, -0.0625),     // score plate
+    ([0.0, 0.40625, 0.07031, 0.50781], 18.0, -0.0625),     // score corner
+];
+
+/// The horizontal shift (clip units) that moves a top-screen HUD batch from
+/// the original frame's edge to the wide window's: the health bar left, the
+/// score right; 0 for everything else (markers, captions, effects). A batch
+/// that gets one is also kept out of the gameplay view's zoom.
+pub(crate) fn kiu_hud_edge(bounds: [f32; 4], uv: [f32; 4]) -> f32 {
+    if !bounds.iter().chain(&uv).all(|v| v.is_finite()) { return 0.0; }
+    let width = bounds[2] - bounds[0];
+    let piece = KIU_HUD_PIECES.iter().find(|(rect, w, _)| {
+        let inside = (0..2).all(|i| uv[i] >= rect[i] - 0.002 && uv[i + 2] <= rect[i + 2] + 0.002);
+        let full_width = (uv[0] - rect[0]).abs() < 0.002 && (uv[2] - rect[2]).abs() < 0.002;
+        inside && full_width && if *w == 0.0 { width <= 92.0 } else { (width - w).abs() < 0.5 }
+    });
+    if let Some((_, _, edge)) = piece { return *edge; }
+    kiu_hud_anchor_bounds(bounds)
+}
+
+fn kiu_hud_anchor_bounds(bounds: [f32; 4]) -> f32 {
     let matches = |expected: [f32; 4]| bounds.iter().zip(expected).all(|(v, e)| (*v-e).abs() < 0.01);
     if matches([0.0, 5.0, 172.0, 39.0])
         || matches([14.0, 0.0, 143.0, 41.0])
@@ -2341,7 +2374,7 @@ pub fn draw<M: GpuMemory>(
         let indices:Box<dyn Iterator<Item=u32>>=if indexed {Box::new(scratch.indices.iter().copied())}
             else {Box::new(first_vertex..first_vertex+vertex_count)};
         pin_fixed_hud(wide.as_mut().unwrap(),vertex_shader,
-            indices.map(|index|plan.fetch(memory,attribute_base,index)[0]));
+            indices.map(|index| {let v=plan.fetch(memory,attribute_base,index);(v[0],v[2])}));
     }
     let vertex_shader = wide.as_ref().unwrap_or(vertex_shader);
     // the GPU decodes the arrays itself when it shades the draw, from the
@@ -2439,7 +2472,7 @@ pub fn draw_immediate<M: GpuMemory>(
         .map(|attributes| map_inputs(registers, REG_VS_BLOCK, &attributes[..count]))
         .collect();
     if inputs.len()<=768 && fixed_hud_candidate(wide.as_ref(),vertex_shader) {
-        pin_fixed_hud(wide.as_mut().unwrap(),vertex_shader,inputs.iter().map(|v|v[0]));
+        pin_fixed_hud(wide.as_mut().unwrap(),vertex_shader,inputs.iter().map(|v|(v[0],v[2])));
     }
     let vertex_shader = wide.as_ref().unwrap_or(vertex_shader);
     let vertices = Vertices::Unshaded { vertex_shader, geometry_shader, inputs: &inputs, order: None };
@@ -2865,6 +2898,21 @@ mod tests {
         assert_eq!(kiu_hud_anchor_bounds([0.,0.,400.,240.]), 0.0);
         assert_eq!(kiu_hud_anchor_bounds([f32::NAN,0.,400.,48.]), 0.0);
     }
+    #[test]
+    fn hud_pieces_are_known_wherever_the_hit_shake_puts_them() {
+        // October 21 trace: the frame, back and wing shaken by a hit, the
+        // frame trimmed while it slides in, the fill at part health
+        let frame=[0.0,0.83984,0.36719,1.0];
+        assert_eq!(kiu_hud_edge([11.35,3.58,140.35,44.58],frame), 0.0625);
+        assert_eq!(kiu_hud_edge([14.0,0.0,143.0,8.10],[0.0,0.96,0.36719,1.0]), 0.0625);
+        assert_eq!(kiu_hud_edge([29.35,21.58,119.35,26.58],[0.94531,0.40234,0.98438,0.42188]), 0.0625);
+        assert_eq!(kiu_hud_edge([29.35,21.58,114.92,26.58],[0.00781,0.73047,0.00781,0.75]), 0.0625);
+        assert_eq!(kiu_hud_edge([-2.64,11.58,28.35,42.58],[0.00391,0.87891,0.125,1.0]), 0.0625);
+        assert_eq!(kiu_hud_edge([315.0,2.0,403.0,50.0],[0.0,0.48438,0.71094,0.83594]), -0.0625);
+        // the same art at another size, or other art, is not the HUD
+        assert_eq!(kiu_hud_edge([100.0,100.0,150.0,141.0],frame), 0.0);
+        assert_eq!(kiu_hud_edge([190.0,110.0,210.0,130.0],[0.2,0.2,0.3,0.3]), 0.0);
+    }
 
     #[test]
     fn widescreen_only_accepts_known_projection_matrices() {
@@ -2907,13 +2955,13 @@ mod tests {
                 adjusted.float_uniforms[1]=adjusted.float_uniforms[1].map(|v|v*15./16.);
                 scale_kiu_view(&mut adjusted.float_uniforms,1,scale);
                 pin_fixed_hud(&mut adjusted,&original,
-                    [[bounds[0],bounds[1],0.,1.],[bounds[2],bounds[3],0.,1.]].into_iter());
+                    [([bounds[0],bounds[1],0.,1.],[0.;4]),([bounds[2],bounds[3],0.,1.],[0.;4])].into_iter());
                 assert_eq!(adjusted.float_uniforms[0],original.float_uniforms[0]);
                 assert_eq!(adjusted.float_uniforms[1],original.float_uniforms[1].map(|v|v*15./16.));
             }
             let mut marker=original.clone();scale_kiu_view(&mut marker.float_uniforms,1,scale);
             let before=marker.float_uniforms.clone();
-            pin_fixed_hud(&mut marker,&original,[[190.,110.,0.,1.],[210.,130.,0.,1.]].into_iter());
+            pin_fixed_hud(&mut marker,&original,[([190.,110.,0.,1.],[0.;4]),([210.,130.,0.,1.],[0.;4])].into_iter());
             assert_eq!(marker.float_uniforms,before);
         }
     }

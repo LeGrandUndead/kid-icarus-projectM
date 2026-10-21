@@ -126,6 +126,41 @@ pub fn scale(then: &[[f32; 4]], now: &[[f32; 4]]) -> Option<[f32; 4]> {
     fits.then_some(k)
 }
 
+/// The texels a quad samples: its guest UVs' rectangle in texels (left,
+/// top, right, bottom, rows top-down as decoded), at least one texel each
+/// way, and the UVs as host coordinates inside that rectangle. A quad drawn
+/// from an atlas is baked from its own rectangle only, so the host's
+/// filtering at the larger PC size never reaches the neighbouring sprite
+/// (October 21: the white panel above the orb tray showed as lines over
+/// the orbs).
+pub fn crop(width: u32, height: u32, uv: &[[f32; 2]; 4]) -> ([u32; 4], [[f32; 2]; 4]) {
+    let (w, h) = (width as f32, height as f32);
+    let (mut lo, mut hi) = ([f32::INFINITY; 2], [f32::NEG_INFINITY; 2]);
+    for p in uv {
+        // texel space, rows top-down (PICA's V points up)
+        let t = [p[0] * w, (1.0 - p[1]) * h];
+        for i in 0..2 { lo[i] = lo[i].min(t[i]); hi[i] = hi[i].max(t[i]); }
+    }
+    let span = |lo: f32, hi: f32, size: u32| {
+        // texel edges, give or take float error
+        let a = ((lo + 0.01).floor().max(0.0) as u32).min(size - 1);
+        let b = ((hi - 0.01).ceil().max(0.0) as u32).clamp(a + 1, size);
+        (a, b)
+    };
+    let (x0, x1) = span(lo[0], hi[0], width);
+    let (y0, y1) = span(lo[1], hi[1], height);
+    let sample = uv.map(|p| [(p[0] * w - x0 as f32) / (x1 - x0) as f32, ((1.0 - p[1]) * h - y0 as f32) / (y1 - y0) as f32]);
+    ([x0, y0, x1, y1], sample)
+}
+
+/// The texels of a rectangle from `crop`, `scale` times larger when the
+/// texels are an enlarged version of the cropped texture.
+pub fn crop_texels(texels: &[[u8; 4]], width: u32, rect: [u32; 4], scale: u32) -> Vec<[u8; 4]> {
+    let [x0, y0, x1, y1] = rect.map(|v| v * scale);
+    let stride = (width * scale) as usize;
+    (y0..y1).flat_map(|y| texels[y as usize * stride + x0 as usize..y as usize * stride + x1 as usize].iter().copied()).collect()
+}
+
 /// Area (box) resampling of premultiplied RGBA to a smaller size, so an HD
 /// texture shown smaller than its texels stays clean (the overlay has no
 /// mipmaps; plain bilinear minification would alias).
@@ -230,6 +265,23 @@ mod tests {
         assert_eq!(scale(&then, &red), None);
         let brighter: Vec<[f32; 4]> = then.iter().map(|c| [c[0] * 0.5, c[1] * 0.5, c[2] * 0.5, c[3]]).collect();
         assert_eq!(scale(&brighter, &then), None);
+    }
+
+    #[test]
+    fn a_quad_bakes_only_the_texels_it_samples() {
+        // the orb tray: u 0.3398-0.5273, v 0.0117-0.1992 of a 256x256 atlas
+        let [l, r, b, t] = [87.0 / 256.0, 135.0 / 256.0, 3.0 / 256.0, 51.0 / 256.0];
+        let uv = [[l, t], [r, t], [l, b], [r, b]];
+        let (rect, sample) = crop(256, 256, &uv);
+        assert_eq!(rect, [87, 205, 135, 253]);
+        assert_eq!(sample, [[0.0, 0.0], [1.0, 0.0], [0.0, 1.0], [1.0, 1.0]]);
+        assert!(sample.iter().flatten().all(|v| (-0.02..=1.02).contains(v)));
+        // a one-column strip stretched across a panel keeps one texel
+        let strip = [[0.537_109_4, 0.412_109_4]; 4];
+        let (rect, _) = crop(256, 256, &strip);
+        assert_eq!((rect[2] - rect[0], rect[3] - rect[1]), (1, 1));
+        let texels: Vec<[u8; 4]> = (0..16u8).map(|i| [i, 0, 0, 255]).collect();
+        assert_eq!(crop_texels(&texels, 4, [1, 2, 3, 4], 1), vec![[9, 0, 0, 255], [10, 0, 0, 255], [13, 0, 0, 255], [14, 0, 0, 255]]);
     }
 
     #[test]

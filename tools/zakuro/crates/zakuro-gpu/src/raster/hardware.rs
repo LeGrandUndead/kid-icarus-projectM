@@ -244,43 +244,51 @@ fn capture_ui<M: GpuMemory>(memory:&mut M, draw:&Draw) {
         };inputs.push(input);
     }
     let outputs=crate::shader::run_vertices(s.unit,&inputs);
-    for quad in outputs.chunks_exact(4) {
+    let quads:Vec<_>=outputs.chunks_exact(4).filter_map(|quad| {
         let primary=quad[0][1];
-        if quad.iter().any(|o|o[1]!=primary || !o[..3].iter().flatten().all(|v|v.is_finite()) || o[0][3].abs()<0.0001) {continue;}
-        let xy=std::array::from_fn(|i| {let p=quad[i][0];[(1.0-p[1]/p[3])*160.0,(1.0-p[0]/p[3])*120.0]});
-        let uv=std::array::from_fn(|i|[quad[i][2][0],quad[i][2][1]]);
+        if quad.iter().any(|o|o[1]!=primary || !o[..3].iter().flatten().all(|v|v.is_finite()) || o[0][3].abs()<0.0001) {return None;}
+        let xy:[[f32;2];4]=std::array::from_fn(|i| {let p=quad[i][0];[(1.0-p[1]/p[3])*160.0,(1.0-p[0]/p[3])*120.0]});
+        let uv:[[f32;2];4]=std::array::from_fn(|i|[quad[i][2][0],quad[i][2][1]]);
+        Some((primary,xy,uv))
+    }).collect();
+    // a draw is one piece of interface (a panel's caps and middle, a
+    // counter's digits): it goes to an island whole or not at all
+    let group=quads.iter().fold([f32::INFINITY,f32::INFINITY,f32::NEG_INFINITY,f32::NEG_INFINITY],|b,(_,xy,_)| {
+        let q=crate::kiu_ui::layout::bounds(xy);[b[0].min(q[0]),b[1].min(q[1]),b[2].max(q[2]),b[3].max(q[3])]
+    });
+    for (primary,xy,uv) in quads {
         match &text {
-            Some(t) => crate::kiu_ui::push(t.hash,t.size[0],t.size[1],&t.texels,draw.registers,primary,xy,uv),
-            None => crate::kiu_ui::push(texture.source_hash.unwrap(),texture.width,texture.height,&texture.texels,draw.registers,primary,xy,uv),
+            Some(t) => crate::kiu_ui::push(t.hash,t.size[0],t.size[1],&t.texels,draw.registers,primary,xy,uv,group),
+            None => crate::kiu_ui::push(texture.source_hash.unwrap(),texture.width,texture.height,&texture.texels,draw.registers,primary,xy,uv,group),
         }
     }
 }
 /// Longest text/counter batch copied from one lower-screen draw.
 const MAX_UI_QUADS: usize = 64;
 
-// Move complete verified health/score batches, not individual pieces of
-// the animated artwork. Screen markers and captions do not match these bounds.
+// Move the health bar and score pieces to the wide window's edges
+// (super::kiu_hud_edge); markers, captions and effects stay.
 fn kiu_hud_anchor<M: GpuMemory>(memory: &mut M, shading: &Shading) -> f32 {
     if !kiu_hud_atlas(shading) { return 0.0; }
-    let Some(bounds) = kiu_hud_bounds(memory, shading) else { return 0.0 };
+    let (Some(bounds), Some(uv)) = (kiu_hud_bounds(memory, shading, 0), kiu_hud_bounds(memory, shading, 2)) else { return 0.0 };
     let u = &shading.unit.float_uniforms;
     let projected = (u[1][0] + 2.0/400.0 * 15.0/16.0).abs() <= 0.000001 && (u[1][3] - 15.0/16.0).abs() <= 0.000001;
-    let anchor = if projected { super::kiu_hud_anchor_bounds(bounds) } else { 0.0 };
-    crate::diagnostics::hud_batch(shading.viewport, bounds, [u[0], u[1]], anchor);
+    let anchor = if projected { super::kiu_hud_edge(bounds, uv) } else { 0.0 };
+    crate::diagnostics::hud_batch(shading.viewport, bounds, uv, [u[0], u[1]], anchor);
     anchor
 }
 
-/// the bounds of a HUD batch's positions (vertex input 0), at most 128
-/// vertices.
-fn kiu_hud_bounds<M: GpuMemory>(memory: &mut M, shading: &Shading) -> Option<[f32; 4]> {
+/// the bounds of the first two components of one input register over a
+/// HUD batch (0: positions, 2: texture coordinates), at most 128 vertices.
+fn kiu_hud_bounds<M: GpuMemory>(memory: &mut M, shading: &Shading, register: usize) -> Option<[f32; 4]> {
     let count = shading.indices.iter().copied().max().unwrap_or(0) as usize + 1;
     if count > 128 { return None; }
     let mut bounds = [f32::INFINITY, f32::INFINITY, f32::NEG_INFINITY, f32::NEG_INFINITY];
     for vertex in 0..count {
         let xy = match shading.inputs {
-            Inputs::Decoded(values) => { let v = values.get(vertex)?; [v[0][0],v[0][1]] },
+            Inputs::Decoded(values) => { let v = values.get(vertex)?; [v[register][0],v[register][1]] },
             Inputs::Raw(raw) => {
-                let field = raw.fields[0].as_ref()?;
+                let field = raw.fields[register].as_ref()?;
                 if field.count < 2 { return None; }
                 let (addr, _) = raw.arrays[field.array];
                 let size = super::component_size(field.ty) as usize;
