@@ -79,8 +79,46 @@ pub fn classify(env: &TexEnv, texels: &[[u8; 4]]) -> Tint {
 /// Premultiplied RGBA8 for the host overlay.
 pub fn bake(env: &TexEnv, primary: [f32; 4], texels: &[[u8; 4]]) -> Vec<u8> {
     let mut pixels = Vec::with_capacity(texels.len() * 4);
-    for &pixel in texels { pixels.extend(premultiply(texel(env, primary, pixel))); }
+    // runs of one texel (transparent space in atlases) are combined once
+    let mut last = None;
+    for &pixel in texels {
+        let out = match last {
+            Some((p, out)) if p == pixel => out,
+            _ => { let out = premultiply(texel(env, primary, pixel)); last = Some((pixel, out)); out }
+        };
+        pixels.extend(out);
+    }
     pixels
+}
+
+/// The combiner's results on a fixed sample of a texture's texels, clamped:
+/// what `scale` compares two colors of the same texture and combiner by.
+pub fn samples(env: &TexEnv, primary: [f32; 4], texels: &[[u8; 4]]) -> Vec<[f32; 4]> {
+    let step = (texels.len() / 61).max(1);
+    texels.iter().step_by(step).take(64).map(|&p| texel(env, primary, p).map(|c| c.clamp(0.0, 1.0))).collect()
+}
+
+/// When every sample of `now` is the matching sample of `then` times one
+/// factor per channel in [0, 1], those factors: the bake made for `then`
+/// shown with them as the host tint gives the bake `now` would (a fade, a
+/// darkening). Results are compared straight; the overlay applies the
+/// alpha factor to the premultiplied color too.
+pub fn scale(then: &[[f32; 4]], now: &[[f32; 4]]) -> Option<[f32; 4]> {
+    if then.len() != now.len() || then.is_empty() { return None; }
+    let mut k = [1.0f32; 4];
+    for (c, k) in k.iter_mut().enumerate() {
+        let (dot, norm) = then.iter().zip(now).fold((0.0, 0.0), |(d, n), (a, b)| (d + a[c] * b[c], n + a[c] * a[c]));
+        if norm > 1e-6 { *k = dot / norm; }
+        if !(-0.002..=1.002).contains(k) { return None; }
+        *k = k.clamp(0.0, 1.0);
+    }
+    // straight color under zero alpha is invisible: compare premultiplied
+    let fits = then.iter().zip(now).all(|(a, b)| {
+        let pb = premultiply(*b);
+        let scaled = [a[0] * k[0] * a[3] * k[3], a[1] * k[1] * a[3] * k[3], a[2] * k[2] * a[3] * k[3], a[3] * k[3]];
+        (0..4).all(|i| (scaled[i] * 255.0 - pb[i] as f32).abs() <= 1.5)
+    });
+    fits.then_some(k)
 }
 
 /// Area (box) resampling of premultiplied RGBA to a smaller size, so an HD
@@ -177,6 +215,26 @@ mod tests {
     /// a combiner multiplying the texture by the vertex color lets the
     /// host apply any color, so a color animation needs one bake; a replace
     /// ignores the color and must keep it baked (it changes nothing there).
+    #[test]
+    fn a_fade_reuses_the_bake_and_a_new_hue_does_not() {
+        let then = vec![[1.0, 0.5, 0.2, 1.0], [0.3, 0.3, 0.3, 0.5], [0.0, 0.0, 0.0, 0.0]];
+        let faded: Vec<[f32; 4]> = then.iter().map(|c| [c[0], c[1], c[2], c[3] * 0.4]).collect();
+        let k = scale(&then, &faded).unwrap();
+        assert!((k[3] - 0.4).abs() < 0.01 && (k[0] - 1.0).abs() < 0.01);
+        let red: Vec<[f32; 4]> = then.iter().map(|c| [1.0, c[1], c[2], c[3]]).collect();
+        assert_eq!(scale(&then, &red), None);
+        let brighter: Vec<[f32; 4]> = then.iter().map(|c| [c[0] * 0.5, c[1] * 0.5, c[2] * 0.5, c[3]]).collect();
+        assert_eq!(scale(&brighter, &then), None);
+    }
+
+    #[test]
+    fn runs_of_one_texel_bake_like_single_texels() {
+        let env = TexEnv::read(&registers(0x0003_0003, 0x0000_0000));
+        let texels = vec![[10, 20, 30, 200], [10, 20, 30, 200], [0, 0, 0, 0], [0, 0, 0, 0], [255, 0, 0, 255]];
+        let one_by_one: Vec<u8> = texels.iter().flat_map(|&p| premultiply(texel(&env, [0.5; 4], p))).collect();
+        assert_eq!(bake(&env, [0.5; 4], &texels), one_by_one);
+    }
+
     #[test]
     fn modulated_color_is_a_host_tint() {
         let texels = [[255, 128, 0, 255], [10, 20, 30, 128], [0, 0, 0, 0], [255, 255, 255, 255]];

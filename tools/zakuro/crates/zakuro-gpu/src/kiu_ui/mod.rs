@@ -76,15 +76,14 @@ struct Layer {
 
 const MAX_LAYERS: usize = 256;
 const CACHE_LIMIT: usize = 128;
-/// A texture whose bake color changes (a flash, a fade the combiner does
-/// not let the host apply) is rebaked at most every this many frames, and
-/// only within the per-frame budget; the newest bake is shown in between.
-/// Baking every color of every animating sprite on the drawing thread cost
-/// the boss defeat scene 10-30 ms a frame (October 21).
+/// A texture whose colors change (vertex color or combiner constants: a
+/// flash, the HUD fading out after a boss) first tries its slot's last bake
+/// with a host tint (bake::scale); otherwise it is rebaked at most every
+/// this many frames and within the per-frame budget, the newest bake shown
+/// in between. Baking every color of every fading HUD piece on the drawing
+/// thread cost the boss defeat scene 20-33 ms a frame (October 21).
 const REBAKE_FRAMES: u64 = 2;
 const REBAKE_TEXELS: usize = 2 * 256 * 256;
-/// Frames a bake color must hold before its HD version is made.
-const SETTLED_FRAMES: u64 = 8;
 /// Frames the last complete bottom screen is kept while the game does not
 /// redraw it (some scenes update the lower screen at a lower rate).
 const STALE_FRAMES: u32 = 6;
@@ -115,9 +114,11 @@ struct State {
     jobs: Option<std::sync::mpsc::Sender<Done>>,
     done: Option<std::sync::mpsc::Receiver<Done>>,
     baking: HashSet<Vec<u32>>,
-    /// per texture and combiner, by texture hash, size and combiner
-    /// registers (the bake key without its color).
-    bases: HashMap<Vec<u32>, Base>,
+    /// what each texture and combiner do with the vertex color
+    /// (bake::classify), by texture hash, size and combiner registers.
+    tints: HashMap<Vec<u32>, bake::Tint>,
+    /// the last bake of each texture and combiner whatever its colors.
+    slots: HashMap<Vec<u32>, Slot>,
     /// texels rebaked for animating colors this frame (REBAKE_TEXELS).
     rebaked: usize,
     /// Portraits and pictures by texture name: first and last frame seen in
@@ -138,17 +139,10 @@ const PICTURE_LIMIT: u64 = 720;   // 12 s
 const PORTRAIT_LIMIT: u64 = 1200; // 20 s
 const PICTURE_FADE: u64 = 30;
 
-/// A texture with one combiner, whatever the vertex color.
-struct Base {
-    /// what the combiner does with the color (bake::classify)
-    tint: bake::Tint,
-    /// the color last baked for, and the frame it first came
-    color: [u32; 4],
-    since: u64,
-    /// the newest bake, and the frame it was made
-    latest: Option<u64>,
-    baked: u64,
-}
+/// A texture with one combiner, whatever the vertex color and combiner
+/// constants: its newest bake, that bake's sample results
+/// (bake::samples) and the frame it was made.
+struct Slot { id: u64, samples: Vec<[f32; 4]>, baked: u64 }
 
 enum HdState { Loading, Ready(std::sync::Arc<Hd>), Missing }
 
@@ -265,9 +259,7 @@ fn evict(s: &mut State) {
     let live: HashSet<u64> = s.shown.iter().chain(&s.pending).map(|l| l.texture).collect();
     let mut freed = Vec::new();
     s.cache.retain(|_, (id, _)| if live.contains(id) { true } else { freed.push(*id); false });
-    for base in s.bases.values_mut() {
-        if base.latest.is_some_and(|id| freed.contains(&id)) { base.latest = None; }
-    }
+    s.slots.retain(|_, slot| !freed.contains(&slot.id));
     s.free.extend(freed);
 }
 
@@ -338,46 +330,59 @@ pub(crate) fn push(hash: u64, width: u32, height: u32, texels: &[[u8; 4]],
         let texels = &texels[..(width * height) as usize];
         let hd = hd_for(s, hash, texels, width, height);
         let env = crate::tev::TexEnv::read(registers);
-        // the texture and its combiner, then the color the bake takes
-        let mut key = vec![hash as u32, (hash >> 32) as u32, width, height];
-        for base in [0xc0, 0xc8, 0xd0, 0xd8, 0xf0, 0xf8] { key.extend_from_slice(&registers[base..base + 5]); }
-        key.extend([registers[0xe0], registers[0xfd]]);
-        if s.bases.len() > 4096 { s.bases.clear(); }
-        let frame = s.frame;
-        let base = s.bases.entry(key.clone()).or_insert_with(|| Base {
-            tint: bake::classify(&env, texels), color: [u32::MAX; 4], since: frame, latest: None, baked: 0,
-        });
+        // the texture and its combiner (the slot), then the colors a draw
+        // animates: the stage constants and buffer color, the vertex color
+        let mut slot_key = vec![hash as u32, (hash >> 32) as u32, width, height];
+        let mut key = Vec::with_capacity(slot_key.len() + 32);
+        for base in [0xc0, 0xc8, 0xd0, 0xd8, 0xf0, 0xf8] {
+            slot_key.extend([registers[base], registers[base + 1], registers[base + 2], registers[base + 4]]);
+            key.push(registers[base + 3]);
+        }
+        slot_key.push(registers[0xe0]);
+        key.push(registers[0xfd]);
+        key.splice(0..0, slot_key.iter().copied());
+        if s.tints.len() > 4096 { s.tints.clear(); }
+        if s.slots.len() > 4096 { s.slots.clear(); }
+        let tint = *s.tints.entry(key.clone()).or_insert_with(|| bake::classify(&env, texels));
         let in_range = primary.iter().all(|c| (0.0..=1.0).contains(c));
-        let (baked_primary, host_tint) = match base.tint {
+        let (baked_primary, host_tint) = match tint {
             bake::Tint::Unused => ([1.0; 4], [1.0; 4]),
             bake::Tint::Color if in_range => ([1.0; 4], primary),
             bake::Tint::Alpha => ([primary[0], primary[1], primary[2], 1.0], [1.0, 1.0, 1.0, primary[3].clamp(0.0, 1.0)]),
             _ => (primary, [1.0; 4]),
         };
-        let color = baked_primary.map(f32::to_bits);
-        if color != base.color { (base.color, base.since) = (color, frame); }
-        key.extend(color);
+        key.extend(baked_primary.map(f32::to_bits));
         if hd.is_some() { key.push(((s.display.max(1.0) * 4.0).ceil()) as u32); }
-        let texel_count = texels.len();
-        let (id, is_hd) = match (s.cache.get(&key), base.latest) {
-            (Some(&entry), _) => entry,
-            (None, Some(latest)) if frame - base.baked < REBAKE_FRAMES || s.rebaked + texel_count > REBAKE_TEXELS => (latest, true),
-            (None, latest) => {
-                if latest.is_some() { s.rebaked += texel_count; }
-                let start = std::time::Instant::now();
-                let pixels = bake::bake(&env, baked_primary, texels);
-                crate::stats::add(&crate::stats::UI_BAKES, 1);
-                crate::stats::add(&crate::stats::UI_BAKE_NANOS, start.elapsed().as_nanos() as u64);
-                let id = s.next;
-                s.next += 1;
-                s.uploads.push(OverlayTexture { id, offset: None, size: [width, height], pixels, linear: true });
-                s.cache.insert(key.clone(), (id, false));
-                (base.latest, base.baked) = (Some(id), frame);
-                (id, false)
+        let frame = s.frame;
+        // (texture, host tint, whether to make its HD version): a color
+        // seen again gets one, an animating color does not
+        let (id, host_tint, want_hd) = match s.cache.get(&key) {
+            Some(&(id, is_hd)) => (id, host_tint, !is_hd),
+            None => {
+                let samples = bake::samples(&env, baked_primary, texels);
+                let slot = s.slots.get(&slot_key);
+                let scale = slot.and_then(|slot| bake::scale(&slot.samples, &samples));
+                match (slot, scale) {
+                    (Some(slot), Some(k)) => (slot.id, std::array::from_fn(|i| host_tint[i] * k[i]), false),
+                    (Some(slot), None) if frame - slot.baked < REBAKE_FRAMES || s.rebaked + texels.len() > REBAKE_TEXELS =>
+                        (slot.id, host_tint, false),
+                    (slot, _) => {
+                        if slot.is_some() { s.rebaked += texels.len(); }
+                        let start = std::time::Instant::now();
+                        let pixels = bake::bake(&env, baked_primary, texels);
+                        crate::stats::add(&crate::stats::UI_BAKES, 1);
+                        crate::stats::add(&crate::stats::UI_BAKE_NANOS, start.elapsed().as_nanos() as u64);
+                        let id = s.next;
+                        s.next += 1;
+                        s.uploads.push(OverlayTexture { id, offset: None, size: [width, height], pixels, linear: true });
+                        s.cache.insert(key.clone(), (id, false));
+                        s.slots.insert(slot_key, Slot { id, samples, baked: frame });
+                        (id, host_tint, false)
+                    }
+                }
             }
         };
-        let settled = frame - base.since >= SETTLED_FRAMES;
-        if let (false, true, Some(hd), Some(jobs)) = (is_hd, settled, hd, &s.jobs) {
+        if let (true, Some(hd), Some(jobs)) = (want_hd, hd, &s.jobs) {
             if s.baking.insert(key.clone()) {
                 let jobs = jobs.clone();
                 // bake at the density the HUD is shown at (quarter steps),
@@ -446,8 +451,8 @@ fn apply_hd_jobs(s: &mut State) {
                 for layer in s.shown.iter_mut().chain(s.pending.iter_mut()) {
                     if layer.texture == old { layer.texture = id; }
                 }
-                for base in s.bases.values_mut() {
-                    if base.latest == Some(old) { base.latest = Some(id); }
+                for slot in s.slots.values_mut() {
+                    if slot.id == old { slot.id = id; }
                 }
                 s.free.push(old);
             }
