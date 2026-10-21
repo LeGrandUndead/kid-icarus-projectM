@@ -74,10 +74,8 @@ impl Hints {
             self.declining = false;
             self.run_start = at | thumb as u32;
         }
-        if !self.interpreting {
-            if self.text.contains(&at) {
-                self.seen.insert(at | thumb as u32);
-            }
+        if !self.interpreting && self.text.contains(&at) {
+            self.seen.insert(at | thumb as u32);
         }
         *self.missing_runs.entry(self.run_start).or_insert(0) += 1;
         self.interpreting = true;

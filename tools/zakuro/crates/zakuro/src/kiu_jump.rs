@@ -102,10 +102,11 @@ fn find(memory: &mut Memory) -> Option<u32> {
                 for offset in (0..0x1000).step_by(4) {
                     // cheap filter first: small count, selection below it
                     let count = word(&page, offset);
-                    if (2..=MAX_SLOTS).contains(&count) && word(&page, offset + 4) < count {
-                        if parse(&page[offset..offset + STRUCT_SIZE]).is_some() {
-                            return Some(address + offset as u32);
-                        }
+                    if (2..=MAX_SLOTS).contains(&count)
+                        && word(&page, offset + 4) < count
+                        && parse(&page[offset..offset + STRUCT_SIZE]).is_some()
+                    {
+                        return Some(address + offset as u32);
                     }
                 }
             }
@@ -126,15 +127,15 @@ pub fn route(from: u32, to: u32, count: u32) -> (u32, bool) {
 /// The frame-by-frame buttons for one Space jump.
 pub fn plan(selected: u32, jump: u32, count: u32) -> Vec<PadState> {
     let mut frames = Vec::new();
-    let mut press = |button: PadState, frames: &mut Vec<PadState>| {
-        frames.extend(std::iter::repeat(button).take(HOLD));
-        frames.extend(std::iter::repeat(PadState::empty()).take(GAP));
+    let press = |button: PadState, frames: &mut Vec<PadState>| {
+        frames.extend(std::iter::repeat_n(button, HOLD));
+        frames.extend(std::iter::repeat_n(PadState::empty(), GAP));
     };
     let (steps, right) = route(selected, jump, count);
     let (there, back) = if right { (PadState::RIGHT, PadState::LEFT) } else { (PadState::LEFT, PadState::RIGHT) };
     for _ in 0..steps { press(there, &mut frames); }
     press(PadState::DOWN, &mut frames);
-    frames.extend(std::iter::repeat(PadState::empty()).take(SETTLE));
+    frames.extend(std::iter::repeat_n(PadState::empty(), SETTLE));
     for _ in 0..steps { press(back, &mut frames); }
     frames
 }

@@ -2411,6 +2411,8 @@ impl Hardware {
             vk::PipelineCreateFlags::empty(),
             self.dynamic,
         )?;
+        crate::stats::add(&crate::stats::PIPELINES_MADE, 1);
+        crate::stats::add(&crate::stats::PIPELINE_NANOS, started.elapsed().as_nanos() as u64);
         log::debug!(
             target: "zakuro_gpu::pipelines",
             "compiled pipeline {} on the draw in {:.1} ms",
@@ -2427,7 +2429,10 @@ impl Hardware {
         let modules = [self.vertex_module(key.vertex), fragment_module(self.fragment_modules(), &key)];
         let started = std::time::Instant::now();
         let flags = vk::PipelineCreateFlags::FAIL_ON_PIPELINE_COMPILE_REQUIRED;
-        let pipeline = compile_pipeline(&self.device, self.pipeline_cache, self.layout, modules, &key, flags, self.dynamic).ok()?;
+        let pipeline = compile_pipeline(&self.device, self.pipeline_cache, self.layout, modules, &key, flags, self.dynamic);
+        crate::stats::add(&crate::stats::PIPELINES_MADE, 1);
+        crate::stats::add(&crate::stats::PIPELINE_NANOS, started.elapsed().as_nanos() as u64);
+        let pipeline = pipeline.ok()?;
         log::debug!(
             target: "zakuro_gpu::pipelines",
             "took pipeline {} from the cache in {:.1} ms",
@@ -3408,7 +3413,7 @@ impl Hardware {
             let stem = format!("draw-{sequence:08}-{address:08X}");
             // console size for each draw (hundreds of them), full size
             // every 16th, so a capture at 8x stays a few hundred MB
-            let step = if sequence % 16 == 0 { 1 } else { self.scale.max(1) };
+            let step = if sequence.is_multiple_of(16) { 1 } else { self.scale.max(1) };
             let (w, h) = (width / step, height / step);
             let mut ppm = format!("P6\n{w} {h}\n255\n").into_bytes();
             for y in 0..h {

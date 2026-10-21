@@ -37,10 +37,18 @@ pub(crate) fn ignore_depth_test() -> bool {
 static LIVE_NO_DEPTH: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 static LIVE_CPU_SHADING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 /// F5 in a render capture: depth testing off, to see what hides what.
-pub fn toggle_no_depth() -> bool { !LIVE_NO_DEPTH.fetch_xor(true, Ordering::Relaxed) }
+pub fn toggle_no_depth() { LIVE_NO_DEPTH.fetch_xor(true, Ordering::Relaxed); }
 /// F6 in a render capture: vertex shaders run on the CPU (the reference)
 /// instead of the GPU, to tell a shader translation fault from the rest.
-pub fn toggle_cpu_shading() -> bool { !LIVE_CPU_SHADING.fetch_xor(true, Ordering::Relaxed) }
+pub fn toggle_cpu_shading() { LIVE_CPU_SHADING.fetch_xor(true, Ordering::Relaxed); }
+/// the live switches that are on, for the screen and the log, empty when
+/// none is.
+pub fn live_switches() -> String {
+    let mut on = Vec::new();
+    if LIVE_NO_DEPTH.load(Ordering::Relaxed) { on.push("F5 depth test OFF"); }
+    if LIVE_CPU_SHADING.load(Ordering::Relaxed) { on.push("F6 CPU vertex shading ON"); }
+    on.join("  |  ")
+}
 /// the CPU shades during a draw-by-draw capture too, so each draw's
 /// vertices can be written out.
 pub(crate) fn cpu_shading() -> bool { LIVE_CPU_SHADING.load(Ordering::Relaxed) || draw_capture_path().is_some() }

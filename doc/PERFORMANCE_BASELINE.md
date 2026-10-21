@@ -124,6 +124,17 @@ Live check (October 20, `launch.py --sixty-fps --replay ...` on copied
 saves, windowed, 1080p, 5x): 59.8 frames emulated and shown a second
 throughout, emulating 4-12 ms a frame, 57 frames skipped in 100 minutes.
 
+## October 21: slow-frame log
+
+Any emulated frame over 25 ms now logs where its time went
+(`zakuro::slow_frame`, see [DIAGNOSTICS.md](DIAGNOSTICS.md)): renderer
+phases, the title's code and kernel, particle primitives, whole texture
+decodes and pipelines made on the drawing thread. Boss fights stutter; the
+next step is a boss played with this build and those lines read.
+
+Note: frames run under fast-forward (F3) are not real time; the "emulating"
+histogram of a session that used it is inflated.
+
 ## Next measurements
 
 Run the same chapter twice, with this build and with the previous one

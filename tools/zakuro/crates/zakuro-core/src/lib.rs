@@ -257,6 +257,9 @@ impl System {
     pub fn run_frame(&mut self) -> FrameOutcome {
         // HID samples its inputs on its own, whether or not anyone pressed
         // anything
+        if let Some(usage) = &mut self.usage {
+            usage.begin_frame();
+        }
         let input = self.services.hid.input;
         services::hid::update(self, input);
         // run up to the boundary step() would end the frame at, and end it

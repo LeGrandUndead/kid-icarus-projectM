@@ -22,9 +22,9 @@ impl InputTrace {
     pub fn sample(&mut self, frame: u64, raw: [f32; 2], captured: bool, input: InputState, replay: bool, _bounded: bool) {
         if self.failed { return; }
         let (x, y) = input.touch.unwrap_or_default();
-        let result = writeln!(self.writer, "{frame},{},{},{captured},{replay},{},{x},{y},{},{},{},{}",
-            raw[0], raw[1], input.touch.is_some(), input.circle_x, input.circle_y, input.buttons.bits(), "bounded")
-            .and_then(|_| if frame % 60 == 0 { self.writer.flush() } else { Ok(()) });
+        let result = writeln!(self.writer, "{frame},{},{},{captured},{replay},{},{x},{y},{},{},{},bounded",
+            raw[0], raw[1], input.touch.is_some(), input.circle_x, input.circle_y, input.buttons.bits())
+            .and_then(|_| if frame.is_multiple_of(60) { self.writer.flush() } else { Ok(()) });
         if let Err(error) = result {
             log::warn!("input trace disabled after write failure: {error}");
             self.failed = true;

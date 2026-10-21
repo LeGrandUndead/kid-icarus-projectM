@@ -4,7 +4,7 @@ pub mod backend;
 pub mod kiu_ui;
 mod diagnostics;
 mod replacements;
-pub use diagnostics::{start_render_capture, toggle_cpu_shading, toggle_no_depth};
+pub use diagnostics::{live_switches, start_render_capture, toggle_cpu_shading, toggle_no_depth};
 pub use diagnostics::diagnostic_frame;
 pub mod blend;
 #[cfg(feature = "vulkan")]

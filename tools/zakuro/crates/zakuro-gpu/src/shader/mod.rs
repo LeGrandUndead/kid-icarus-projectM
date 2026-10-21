@@ -1379,4 +1379,40 @@ mod tests {
         assert_eq!(b[0], [11.0, 2.0, 0.0, 1.0]);
         assert_eq!(c[0], [1.0, 2.0, 0.0, 1.0]);
     }
+
+    /// setemit's winding bit (22) swaps the first two vertices of the
+    /// triangle it completes, as a strip emitted as a list needs.
+    #[test]
+    fn setemit_winding_reverses_the_triangle() {
+        let setemit = |slot: u32, primitive: bool, winding: bool| {
+            (0x2B << 26) | (slot << 24) | ((primitive as u32) << 23) | ((winding as u32) << 22)
+        };
+        let emit = 0x2A << 26;
+        let mov = 0x13 << 26; // mov o0, v0
+        let add = 1 << 7; // add o0, v0, v1
+        let program = [
+            setemit(0, false, false),
+            mov,
+            emit,
+            setemit(1, false, false),
+            add,
+            emit,
+            setemit(2, true, true),
+            add,
+            emit,
+            0x22 << 26,
+        ];
+        let unit = unit_with(&program, &[IDENTITY]);
+        let mut state = ShaderState::new();
+        state.input[0] = [1.0, 2.0, 0.0, 1.0];
+        state.input[1] = [10.0, 0.0, 0.0, 0.0];
+        let mut emitter = Emitter::default();
+        run_geometry(&unit, &mut state, &mut emitter);
+
+        let [a, b, _] = emitter.triangles[0];
+        assert_eq!(a[0], [11.0, 2.0, 0.0, 1.0]);
+        assert_eq!(b[0], [1.0, 2.0, 0.0, 1.0]);
+        assert_eq!(wound([0, 1, 2], true), [1, 0, 2]);
+        assert_eq!(wound([0, 1, 2], false), [0, 1, 2]);
+    }
 }

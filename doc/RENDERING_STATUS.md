@@ -1,5 +1,23 @@
 # Rendering status — 9 October 2026
 
+**October 21:**
+
+- *Geometry shader winding.* `setemit` bit 22 asks for the triangle it
+  completes to be wound the other way; a shader emitting a strip as a list
+  sets it on every other triangle. Both shader interpreters ignored it, so
+  face culling dropped the wrong half of such strips. Seen on the grind
+  rail (a four-sided tube made by the geometry shader in fixed-primitive
+  mode): dark notches at every joint where back faces showed through.
+  Fixed in `shader/mod.rs` and `shader/batch.rs` (`wound`).
+- *Vertex colors.* The PICA200 takes the absolute value of each vertex
+  color and saturates it before interpolation; the renderer clamped after.
+  Both the GPU vertex shader and the CPU path now match the hardware.
+- *Overlay textures.* The overlay's Vulkan descriptor pool held 256 sets and
+  the end of a level showed more, which stopped the presenter
+  (`ERROR_OUT_OF_POOL_MEMORY`, the "crash at the end of a level"). Pools are
+  now added as needed.
+- Diagnostics used for these are in [DIAGNOSTICS.md](DIAGNOSTICS.md).
+
 **October 11:** the experimental build fixes inconsistent HUD width and verified high-resolution pause-menu atlas seams. Original bitmap detail remains unchanged. [Validation and fallback](PC_PRESENTATION.md).
 
 **October 10 experimental update:** `Launch-KIU-Experimental.cmd` provides a separate 1080p/wider-view build and relative flight aiming with the guided camera retained. It uses copied saves and independent settings. HUD asset detail, complete widescreen coverage and menu transitions remain under validation. See [experimental setup and limitations](PC_PRESENTATION.md).

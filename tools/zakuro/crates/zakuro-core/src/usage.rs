@@ -36,6 +36,21 @@ pub struct Usage {
     /// per guest frame: the renderer's CPU side, inside "emulating".
     gpu_commands: Histogram,
     gx_this_frame: Duration,
+    /// the frame being run: when it started and the renderer's counters
+    /// then, to say where a slow one's time went.
+    frame_start: Option<FrameStart>,
+    /// slow frames logged so far, the log stops at SLOW_FRAMES_LOGGED.
+    slow_logged: u32,
+}
+
+/// a frame over this is logged with its breakdown (zakuro::slow_frame).
+const SLOW_FRAME: Duration = Duration::from_millis(25);
+const SLOW_FRAMES_LOGGED: u32 = 2000;
+
+struct FrameStart {
+    at: std::time::Instant,
+    phases: Vec<(&'static str, u64, u64)>,
+    stats: [(&'static str, u64); 6],
 }
 
 #[derive(Clone)]
@@ -105,7 +120,58 @@ impl Usage {
             skipped: 0,
             gpu_commands: Histogram::default(),
             gx_this_frame: Duration::ZERO,
+            frame_start: None,
+            slow_logged: 0,
         }
+    }
+
+    /// a frame starts running: its clock and counters, for end_frame.
+    pub fn begin_frame(&mut self) {
+        self.frame_start = Some(FrameStart {
+            at: std::time::Instant::now(),
+            phases: zakuro_gpu::profile::totals(),
+            stats: zakuro_gpu::stats::all(),
+        });
+    }
+
+    /// one line for a frame over SLOW_FRAME: the renderer phases and
+    /// counters that moved, the rest being the title's code and the kernel.
+    fn log_slow_frame(&mut self, start: FrameStart, took: Duration) {
+        if took < SLOW_FRAME || self.slow_logged >= SLOW_FRAMES_LOGGED {
+            return;
+        }
+        self.slow_logged += 1;
+        let ms = |nanos: u64| nanos as f64 / 1e6;
+        let mut parts = Vec::new();
+        // top-level phases only (no leading spaces in their names), the
+        // nested ones are inside them
+        let mut renderer = 0;
+        for ((name, nanos, _), (_, before, _)) in zakuro_gpu::profile::totals().iter().zip(&start.phases) {
+            let spent = nanos - before;
+            if !name.starts_with(' ') {
+                renderer += spent;
+            }
+            if spent >= 1_000_000 {
+                parts.push(format!("{}: {:.1}", name.trim(), ms(spent)));
+            }
+        }
+        for ((name, now), (_, before)) in zakuro_gpu::stats::all().iter().zip(&start.stats) {
+            let moved = now - before;
+            if moved == 0 {
+                continue;
+            }
+            parts.push(if name.ends_with(" ns") { format!("{}: {:.1} ms", name.trim_end_matches(" ns"), ms(moved)) } else { format!("{name}: {moved}") });
+        }
+        let total = took.as_nanos() as u64;
+        log::info!(
+            target: "zakuro::slow_frame",
+            "frame {} took {:.1} ms: renderer {:.1}, title and kernel {:.1} | {}",
+            self.frames,
+            ms(total),
+            ms(renderer),
+            ms(total.saturating_sub(renderer)),
+            parts.join(", ")
+        );
     }
 
     pub fn service(&mut self, name: &str, command: u16) {
@@ -136,6 +202,10 @@ impl Usage {
         self.frames += 1;
         let gpu = std::mem::take(&mut self.gx_this_frame);
         self.gpu_commands.add(gpu);
+        if let Some(start) = self.frame_start.take() {
+            let took = start.at.elapsed();
+            self.log_slow_frame(start, took);
+        }
         if let Some(probe) = &mut self.probe { probe.frame(self.frames, self.swaps, gpu); }
     }
 

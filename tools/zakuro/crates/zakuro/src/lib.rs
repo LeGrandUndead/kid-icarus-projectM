@@ -718,17 +718,12 @@ impl App {
                     zakuro_gpu::start_render_capture();
                     return;
                 }
+                // render capture sessions only (Capture-Grind-Rail.cmd and
+                // the like), see doc/DIAGNOSTICS.md
                 KeyCode::F5 | KeyCode::F6 if std::env::var_os("KIU_RENDER_CAPTURE").is_some() => {
-                    use std::sync::atomic::{AtomicBool, Ordering};
-                    static NO_DEPTH: AtomicBool = AtomicBool::new(false);
-                    static CPU: AtomicBool = AtomicBool::new(false);
-                    if code == KeyCode::F5 { NO_DEPTH.store(zakuro_gpu::toggle_no_depth(), Ordering::Relaxed); }
-                    else { CPU.store(zakuro_gpu::toggle_cpu_shading(), Ordering::Relaxed); }
-                    let mut parts = Vec::new();
-                    if NO_DEPTH.load(Ordering::Relaxed) { parts.push("F5 depth test OFF"); }
-                    if CPU.load(Ordering::Relaxed) { parts.push("F6 CPU vertex shading ON"); }
-                    self.menus.diagnostic = parts.join("  |  ");
-                    log::info!("render switches: {}", if parts.is_empty() { "normal" } else { &self.menus.diagnostic });
+                    if code == KeyCode::F5 { zakuro_gpu::toggle_no_depth() } else { zakuro_gpu::toggle_cpu_shading() }
+                    self.menus.diagnostic = zakuro_gpu::live_switches();
+                    log::info!("render switches: {}", if self.menus.diagnostic.is_empty() { "normal" } else { &self.menus.diagnostic });
                     return;
                 }
                 KeyCode::F9 if self.presentation.enabled => {

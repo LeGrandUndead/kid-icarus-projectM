@@ -816,7 +816,7 @@ fn lod_bias_fixed(raw: u32) -> i16 {
 /// accepts texture dimensions no smaller than 8, so do not walk a mip chain
 /// past the last complete 8x8 level our decoder can represent.
 fn max_tiled_mip_level(width: u32, height: u32) -> u8 {
-    if width < 8 || height < 8 || width % 8 != 0 || height % 8 != 0 {
+    if width < 8 || height < 8 || !width.is_multiple_of(8) || !height.is_multiple_of(8) {
         return 0;
     }
     let mut level = 0u8;
@@ -824,7 +824,7 @@ fn max_tiled_mip_level(width: u32, height: u32) -> u8 {
         let next = level + 1;
         let w = width >> next;
         let h = height >> next;
-        if w < 8 || h < 8 || w % 8 != 0 || h % 8 != 0 {
+        if w < 8 || h < 8 || !w.is_multiple_of(8) || !h.is_multiple_of(8) {
             break;
         }
         level = next;
@@ -1147,6 +1147,9 @@ impl TextureCache {
             }
         }
 
+        // a whole decode, which the stats count (the hash check above runs
+        // on every first use in a list, this only for new or changed ones)
+        let started = std::time::Instant::now();
         let count = texture_chain_texels(width, height, max_level);
         if self.texels + count > CACHED_TEXELS {
             self.entries.clear();
@@ -1166,6 +1169,8 @@ impl TextureCache {
             byte_offset += level_size;
         }
         let texels: Arc<[[u8; 4]]> = all.into();
+        crate::stats::add(&crate::stats::TEXTURE_DECODES, 1);
+        crate::stats::add(&crate::stats::TEXTURE_DECODE_NANOS, started.elapsed().as_nanos() as u64);
         let decoded = Decoded { hash, bytes: data.to_vec(), texels: texels.clone(), checked };
         if let Some(old) = self.entries.insert(key, decoded) {
             self.texels -= old.texels.len();
@@ -2227,7 +2232,7 @@ pub(crate) fn kiu_linear_shader_key(unit: &ShaderUnit) -> Option<u64> {
 
 /// Only the observed independent four-vertex HUD rectangles are eligible.
 pub(crate) fn kiu_quad_indices(indices: &[u32]) -> bool {
-    !indices.is_empty() && indices.len() % 6 == 0 && indices.chunks_exact(6)
+    !indices.is_empty() && indices.len().is_multiple_of(6) && indices.chunks_exact(6)
         .enumerate().all(|(i, tri)| {
             let v = i as u32 * 4;
             tri == [v, v+1, v+2, v+1, v+3, v+2]
