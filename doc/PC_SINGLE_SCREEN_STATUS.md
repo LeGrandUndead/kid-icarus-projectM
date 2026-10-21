@@ -25,6 +25,30 @@ No other executable, launcher or save was replaced. The game's save format is
 untouched; PC options live in the profile's `roaming/zakuro/kiu-interface.txt`
 and `pc-interface-camera.txt`.
 
+## Menus on one screen (October 22)
+
+Out-of-stage menus no longer need Tab. The UI catalog
+(`prepare_native_ui_sources.py`) now lists the art of every menu archive
+(`us/menu/*/menu/bind.arc`, 1,995 textures, role `screen`). When the lower
+screen draws that art and no gameplay HUD, `PcPresentation` opens an
+automatic **MenuScreen** panel: the game's upper picture (wide aspect kept)
+and its lower picture side by side, as large as the window allows, the lower
+one clickable (same layout function for drawing and hit-testing). Positive
+gameplay evidence (relocated HUD, or the stage's opening portraits) for a
+third of a second closes it and captures the mouse for aiming; loading in
+between keeps it. A pause panel that leads into the menus (Retreat) becomes
+a menu screen. Tab still toggles it by hand; F9 is still the legacy view.
+
+Checked live on October 22 (driven remotely, keyboard): title, save select,
+main menu, Solo hub and chapter select all show on one screen. Still to
+check by a player: mouse clicks on the right-hand picture (remote clicks were
+unreliable in that session), entering a chapter (the panel must close and
+aim must capture), Gear, Power Board, Cauldron, Vault, Options, results.
+
+This is the "everything runs on one screen" step. Recomposing each menu from
+its own parts (doc/PC_SINGLE_SCREEN_ARCHITECTURE.md) comes after, menu by
+menu, on top of the same evidence.
+
 ## HUD fixes from the October 21 trace
 
 Found with the always-on `zakuro::hud_batch` log and a `--ui-census` run
