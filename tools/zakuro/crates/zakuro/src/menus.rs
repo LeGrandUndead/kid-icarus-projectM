@@ -34,12 +34,16 @@ pub enum Action {
     Settings,
     /// close the game's keyboard with this text and the button pressed.
     Keyboard(String, usize),
+    /// run the game as fast as the computer allows, or back to normal.
+    FastForward,
 }
 
 #[derive(Default)]
 pub struct Menus {
     /// the menu over a running game.
     pub menu_open: bool,
+    /// the game runs as fast as it can (F3), sound off.
+    pub fast_forward: bool,
     pub settings_open: bool,
     /// the binding waiting for a key, by its place in Keys::all_mut.
     pub rebinding: Option<usize>,
@@ -278,6 +282,13 @@ impl Menus {
                 });
             });
         }
+        if self.fast_forward {
+            egui::Area::new(egui::Id::new("fast-forward")).anchor(egui::Align2::RIGHT_TOP, Vec2::new(-12.0, 12.0)).interactable(false).show(&ctx, |ui| {
+                egui::Frame::popup(ui.style()).show(ui, |ui| {
+                    ui.label(RichText::new(">> Fast-forward (F3 to stop)").strong());
+                });
+            });
+        }
         if !self.menu_open {
             return actions;
         }
@@ -292,6 +303,9 @@ impl Menus {
                 let wide = |ui: &mut egui::Ui, text: &str| ui.add_sized([200.0, 28.0], egui::Button::new(text)).clicked();
                 if wide(ui, "Resume") {
                     actions.push(Action::Resume);
+                }
+                if wide(ui, if self.fast_forward { "Normal speed (F3)" } else { "Fast-forward (F3)" }) {
+                    actions.push(Action::FastForward);
                 }
                 if wide(ui, "Reset") {
                     actions.push(Action::Reset);

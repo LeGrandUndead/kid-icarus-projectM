@@ -421,6 +421,8 @@ const FRAME_TIME: Duration =
 /// how far behind the schedule may fall before it starts over instead of
 /// running fast to catch up, after a pause say.
 const CATCH_UP_LIMIT: Duration = Duration::from_millis(200);
+/// frames run for each one shown while fast-forwarding.
+const FAST_FORWARD_MOST: u32 = 16;
 /// frames that may go unshown in a row while catching up.
 const MAX_SKIPPED: u32 = 4;
 /// showing a frame has to cost at least this for skipping it to help: a
@@ -645,6 +647,8 @@ impl App {
         if let Some(audio) = &self.audio {
             audio.clear();
         }
+        self.menus.fast_forward = false;
+        zakuro_core::kiu_frame_rate::set_fast_forward(false);
         self.menus.menu_open = false;
         self.set_mouse_capture(false);
         self.keyboard.release();
@@ -694,6 +698,10 @@ impl App {
                 }
                 KeyCode::F2 if self.pc_controls && self.game.is_some() => {
                     self.set_mouse_capture(!self.mouse_captured);
+                    return;
+                }
+                KeyCode::F3 if self.game.is_some() => {
+                    self.set_fast_forward(!self.menus.fast_forward);
                     return;
                 }
                 KeyCode::F1 => {
@@ -1025,6 +1033,11 @@ impl App {
                 self.menus.menu_open = false;
                 self.keyboard.release();
             }
+            Action::FastForward => {
+                self.set_fast_forward(!self.menus.fast_forward);
+                self.menus.menu_open = false;
+                self.keyboard.release();
+            }
             Action::Reset => {
                 if let Some(path) = self.game.as_ref().map(|game| game.path.clone()) {
                     if let Err(error) = self.play(&path) {
@@ -1072,7 +1085,23 @@ impl App {
             self.keyboard.release();
         }
         let mut emulated = None;
-        if playing {
+        if playing && self.menus.fast_forward {
+            // as many frames as fit in one frame's time, one of them shown
+            let start = Instant::now();
+            let mut frames = 0;
+            while frames < FAST_FORWARD_MOST && start.elapsed() < FRAME_TIME {
+                self.emulate();
+                frames += 1;
+                if self.game.is_none() || self.presentation.access.is_some() || self.menus.menu_open {
+                    break;
+                }
+            }
+            if let Some(audio) = &self.audio {
+                audio.hold();
+            }
+            self.next_frame = Instant::now();
+            emulated = Some(start.elapsed());
+        } else if playing {
             let start = Instant::now();
             self.emulate();
             let took = start.elapsed();
@@ -1135,9 +1164,23 @@ impl App {
         }
 
         let now = Instant::now();
-        if now < self.next_frame {
+        if playing && self.menus.fast_forward {
+            // no waiting: the next batch of frames starts right away
+            self.next_frame = now;
+        } else if now < self.next_frame {
             std::thread::sleep(self.next_frame - now);
         }
+    }
+
+    /// fast-forward on or off: the game at its original 30 fps (less to
+    /// draw), no sound, frames run back to back.
+    fn set_fast_forward(&mut self, on: bool) {
+        self.menus.fast_forward = on;
+        zakuro_core::kiu_frame_rate::set_fast_forward(on);
+        if let Some(audio) = &self.audio {
+            audio.clear();
+        }
+        log::info!("{}", if on { "fast-forward on (F3 stops it)" } else { "fast-forward off" });
     }
 
     /// runs one frame of the game.
@@ -1198,7 +1241,7 @@ impl App {
         }
         game.count_frame();
         let sound = game.system.take_audio();
-        if let Some(audio) = &self.audio {
+        if let (Some(audio), false) = (&self.audio, self.menus.fast_forward) {
             audio.push(&sound);
         }
         match outcome {

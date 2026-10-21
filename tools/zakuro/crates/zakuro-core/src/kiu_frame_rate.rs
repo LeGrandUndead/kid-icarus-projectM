@@ -64,6 +64,15 @@ pub fn set_enabled(on: bool) {
     }
 }
 
+/// fast-forward runs the game at its original 30 fps, half the drawing per
+/// game step, whatever the 60 fps setting says.
+static FAST_FORWARD: AtomicBool = AtomicBool::new(false);
+
+/// while on, the 60 fps mode is set aside; the setting itself is kept.
+pub fn set_fast_forward(on: bool) {
+    FAST_FORWARD.store(on, Ordering::Relaxed);
+}
+
 /// what the game is doing now: 0 not known yet, 30 or 60.
 static ACTIVE: AtomicU8 = AtomicU8::new(0);
 
@@ -109,7 +118,7 @@ pub(crate) fn at_scheduler(system: &mut System, pre: bool) {
         return;
     }
     let interval = system.memory.read32(manager + 0x54);
-    let want = enabled();
+    let want = enabled() && !FAST_FORWARD.load(Ordering::Relaxed);
 
     if !pre {
         // the display wait rounds elapsed ticks back to its even count:
