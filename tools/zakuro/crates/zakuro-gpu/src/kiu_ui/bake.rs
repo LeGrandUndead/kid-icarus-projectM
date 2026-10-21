@@ -32,6 +32,41 @@ pub fn alpha_is_a_fade(env: &TexEnv, primary: [f32; 4], texels: &[[u8; 4]]) -> b
     })
 }
 
+/// How much of a draw's vertex color can be left to the host vertices
+/// instead of baked into the texture, so that one baked texture serves every
+/// step of a color or alpha animation (a flashing score, a fading panel)
+/// rather than a new bake and upload per animation frame.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Tint {
+    /// the combiner does not use the vertex color: bake with white, no tint.
+    Unused,
+    /// the combiner multiplies the texture by the whole vertex color: bake
+    /// with white, tint with the color.
+    Color,
+    /// only the alpha scales the result: bake with the color at full alpha,
+    /// tint with the alpha.
+    Alpha,
+    /// the color takes part some other way: bake with it.
+    Baked,
+}
+
+/// Which Tint the draw's combiner allows, checked on a sample of its real
+/// texels: the combiner's result with the color must equal its result with
+/// white, times the color.
+pub fn tint(env: &TexEnv, primary: [f32; 4], texels: &[[u8; 4]]) -> Tint {
+    if texels.is_empty() { return Tint::Baked; }
+    let step = (texels.len() / 61).max(1);
+    let white = [1.0; 4];
+    let unused = texels.iter().step_by(step).take(64).all(|&pixel| texel(env, primary, pixel) == texel(env, white, pixel));
+    if unused { return Tint::Unused; }
+    let in_range = primary.iter().all(|c| (0.0..=1.0).contains(c));
+    let modulates = in_range && texels.iter().step_by(step).take(64).all(|&pixel| {
+        let (lit, plain) = (texel(env, primary, pixel), texel(env, white, pixel));
+        (0..4).all(|i| (lit[i].clamp(0.0, 1.0) - plain[i].clamp(0.0, 1.0) * primary[i]).abs() < 1.5 / 255.0)
+    });
+    if modulates { Tint::Color } else if alpha_is_a_fade(env, primary, texels) { Tint::Alpha } else { Tint::Baked }
+}
+
 /// Premultiplied RGBA8 for the host overlay.
 pub fn bake(env: &TexEnv, primary: [f32; 4], texels: &[[u8; 4]]) -> Vec<u8> {
     let mut pixels = Vec::with_capacity(texels.len() * 4);
@@ -128,5 +163,23 @@ mod tests {
         let replace = registers(0x0003_0003, 0x0000_0000);
         let env = TexEnv::read(&replace);
         assert!(!alpha_is_a_fade(&env, [1.0, 1.0, 1.0, 0.3], &texels));
+    }
+
+    /// a combiner multiplying the texture by the vertex color lets the
+    /// host apply any color, so a color animation needs one bake; a replace
+    /// ignores the color and must keep it baked (it changes nothing there).
+    #[test]
+    fn modulated_color_is_a_host_tint() {
+        let texels = [[255, 128, 0, 255], [10, 20, 30, 128], [0, 0, 0, 0], [255, 255, 255, 255]];
+        let env = TexEnv::read(&registers(0x0003_0003, 0x0001_0001));
+        let flash = [1.0, 0.4, 0.2, 0.7];
+        assert_eq!(tint(&env, flash, &texels), Tint::Color);
+        // what the host draws: bake with white, times the color
+        for &pixel in &texels {
+            let (lit, plain) = (texel(&env, flash, pixel), texel(&env, [1.0; 4], pixel));
+            for i in 0..4 { assert!((lit[i] - plain[i] * flash[i]).abs() < 1e-5); }
+        }
+        let env = TexEnv::read(&registers(0x0003_0003, 0x0000_0000));
+        assert_eq!(tint(&env, flash, &texels), Tint::Unused);
     }
 }

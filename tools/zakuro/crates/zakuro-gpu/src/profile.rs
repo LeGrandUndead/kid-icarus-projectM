@@ -13,6 +13,7 @@ pub enum Phase {
     DrawHardware,
     HardwareTexture,
     HardwarePipeline,
+    PcInterface,
     DrawCpu,
     WriteBack,
     Submit,
@@ -23,7 +24,7 @@ pub enum Phase {
     TextureCopy,
 }
 
-pub const NAMES: [&str; 15] = [
+pub const NAMES: [&str; 16] = [
     "command lists",
     "  draws",
     "    shader prepare",
@@ -31,6 +32,7 @@ pub const NAMES: [&str; 15] = [
     "    hardware record",
     "      hw texture upload/lookup",
     "      hw pipeline lookup",
+    "      pc interface capture",
     "    cpu shading/raster",
     "  write back (GPU->guest)",
     "  submit",
@@ -41,8 +43,8 @@ pub const NAMES: [&str; 15] = [
     "texture copy",
 ];
 
-static NANOS: [AtomicU64; 15] = [const { AtomicU64::new(0) }; 15];
-static COUNTS: [AtomicU64; 15] = [const { AtomicU64::new(0) }; 15];
+static NANOS: [AtomicU64; 16] = [const { AtomicU64::new(0) }; 16];
+static COUNTS: [AtomicU64; 16] = [const { AtomicU64::new(0) }; 16];
 
 pub struct Scope {
     phase: Phase,

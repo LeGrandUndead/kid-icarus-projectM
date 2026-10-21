@@ -3016,7 +3016,10 @@ impl Hardware {
     }
 
     pub(super) fn draw<M: GpuMemory>(&mut self, memory: &mut M, draw: &Draw) -> Result<(), String> {
-        capture_ui(memory,draw);
+        {
+            let _profile = crate::profile::scope(crate::profile::Phase::PcInterface);
+            capture_ui(memory,draw);
+        }
         let [left, bottom, right, top] = draw.scissor;
         let (left, bottom) = (left.max(0), bottom.max(0));
         let (right, top) = (right.min(draw.width as i32), top.min(draw.height as i32));

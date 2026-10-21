@@ -66,8 +66,8 @@ struct Layer {
     texture: u64,
     xy: [[f32; 2]; 4],
     uv: [[f32; 2]; 4],
-    /// vertex alpha for fades the combiner applies linearly.
-    alpha: f32,
+    /// the vertex color the host applies (see bake::Tint), straight RGBA.
+    tint: [f32; 4],
     island: Option<layout::Island>,
     /// whose long-standing fade this layer follows: its own name, or for
     /// text written on a picture panel, the panel's.
@@ -308,8 +308,13 @@ pub(crate) fn push(hash: u64, width: u32, height: u32, texels: &[[u8; 4]],
         let texels = &texels[..(width * height) as usize];
         let hd = hd_for(s, hash, texels, width, height);
         let env = crate::tev::TexEnv::read(registers);
-        let fade = bake::alpha_is_a_fade(&env, primary, texels);
-        let baked_primary = if fade { [primary[0], primary[1], primary[2], 1.0] } else { primary };
+        let tint = bake::tint(&env, primary, texels);
+        let (baked_primary, host_tint) = match tint {
+            bake::Tint::Unused => ([1.0; 4], [1.0; 4]),
+            bake::Tint::Color => ([1.0; 4], primary),
+            bake::Tint::Alpha => ([primary[0], primary[1], primary[2], 1.0], [1.0, 1.0, 1.0, primary[3].clamp(0.0, 1.0)]),
+            bake::Tint::Baked => (primary, [1.0; 4]),
+        };
         let mut key = vec![hash as u32, (hash >> 32) as u32, width, height];
         key.extend(baked_primary.map(f32::to_bits));
         for base in [0xc0, 0xc8, 0xd0, 0xd8, 0xf0, 0xf8] { key.extend_from_slice(&registers[base..base + 5]); }
@@ -343,10 +348,10 @@ pub(crate) fn push(hash: u64, width: u32, height: u32, texels: &[[u8; 4]],
         if let Some(root) = crate::diagnostics::draw_capture_path() {
             capture_for_diagnostics(root, s.pending.len(), hash, &env, primary, texels, width, height, xy, uv);
         }
-        Some((id, if fade { primary[3].clamp(0.0, 1.0) } else { 1.0 }))
+        Some((id, host_tint))
     } else { None };
-    let (texture, alpha) = texture.unwrap_or((0, 1.0));
-    s.pending.push(Layer { role, name, texture, xy, uv, alpha, island, fade_key });
+    let (texture, tint) = texture.unwrap_or((0, [1.0; 4]));
+    s.pending.push(Layer { role, name, texture, xy, uv, tint, island, fade_key });
 }
 
 /// The HD version of a catalogued texture, if the local pack has one and it
@@ -502,10 +507,12 @@ pub fn overlay_in(width: u32, height: u32, view: [f32; 4], visible: bool) -> Ove
         };
         let fade = if matches!(layer.role, Role::Portrait | Role::Insert) { s.fades.get(&layer.fade_key).copied().unwrap_or(1.0) } else { 1.0 };
         if fade <= 0.0 { continue; }
-        let a = (layer.alpha * fade * 255.0).round() as u8;
+        // premultiplied, as the baked textures are
+        let alpha = layer.tint[3] * fade;
+        let color = [layer.tint[0] * alpha, layer.tint[1] * alpha, layer.tint[2] * alpha, alpha].map(|c| (c * 255.0).round() as u8);
         let vertices = (0..4).map(|i| {
             let [x, y] = place(layer.xy[i]);
-            OverlayVertex { position: [vx + x, vy + y], uv: overlay_uv(layer.uv[i]), color: [a; 4] }
+            OverlayVertex { position: [vx + x, vy + y], uv: overlay_uv(layer.uv[i]), color }
         }).collect();
         overlay.meshes.push(OverlayMesh { texture: layer.texture, clip: [0, 0, width, height], vertices, indices: vec![0, 1, 2, 1, 3, 2] });
     }
@@ -544,7 +551,7 @@ mod census {
                 let mut u = [f32::INFINITY, f32::INFINITY, f32::NEG_INFINITY, f32::NEG_INFINITY];
                 for p in l.uv { u[0] = u[0].min(p[0]); u[1] = u[1].min(p[1]); u[2] = u[2].max(p[0]); u[3] = u[3].max(p[1]); }
                 format!("{:?},{},{:.0},{:.0},{:.0},{:.0},{:.4},{:.4},{:.4},{:.4},{:.2},{}", l.role, names[l.name],
-                    b[0], b[1], b[2], b[3], u[0], u[1], u[2], u[3], l.alpha, l.island.map_or("-", |i| i.name))
+                    b[0], b[1], b[2], b[3], u[0], u[1], u[2], u[3], l.tint[3], l.island.map_or("-", |i| i.name))
             }).collect();
             // geometry only; ignore pure alpha animation for the change test
             let key: Vec<String> = rows.iter().map(|r| r.rsplitn(3, ',').nth(2).unwrap_or(r).to_owned()).collect();
