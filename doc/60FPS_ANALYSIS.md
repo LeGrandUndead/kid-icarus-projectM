@@ -75,10 +75,60 @@ with audio, which runs on the DSP clock and is not affected).
 - Do not change the PICA/GSP swap handling to present more often: there
   is no new picture to present.
 
-## Status
+## Status (October 21): playable 60 fps mode
 
-- Rate measurement: done (usage census).
-- Main-loop wait: not yet traced. Next step is (1).
-- Frame pacing at 30 fps: the frontend no longer skips cheap presents
-  after a heavy blank (see [PERFORMANCE_BASELINE.md](PERFORMANCE_BASELINE.md)),
-  which matters for smooth 30 fps before any 60 fps work.
+**Settings > Graphics > "60 FPS (experimental)"**, applied immediately and
+kept in `%APPDATA%/zakuro/kiu-60fps.txt` (`launch.py --sixty-fps` /
+`--thirty-fps` for one run). Code: `zakuro-core/src/kiu_frame_rate.rs`.
+
+### What it does
+
+The game's display scheduler (singleton at `0x00D63824`) waits `+0x54` =
+2 vertical blanks per frame. Its update step, the float 2.0 at
+`0x00828E30` (read by `0x00828D68`, turned into per-system deltas by
+`0x00607A4C`), is in 60ths of a second. Found by the October 18-19
+research (`codex/60fps-research`), the mode sets, at the scheduler's
+GetSystemTick calls (`0x00991164` before its callback, `0x009911CC` after):
+
+- interval 1 and the even-tick carry (`+0xA8/+0xAC`) cleared: a frame every
+  blank;
+- the update step 1.0: everything the game scales by its step keeps its
+  speed;
+- elapsed ticks (`+0xB0`) 1, before and after the callback.
+
+Turning it off puts 2 and 2.0 back at the next frame.
+
+### How correct it is
+
+Same recording, 30 vs 60 from vblank 6000 (`Bench-KIU.ps1 -Fps60`):
+
+- **Flight path, scripted events and captions** match the original at
+  every 2.5 s checkpoint from 6000 to 9000 (21 screenshots each). Score and
+  hits differ: the replayed aim lands at different moments.
+- **RAM comparison** (`KIU_RAM_SNAPSHOT_AT`, snapshots 2, 4, 8 and 16
+  blanks after the switch, `tools`-side analysis): 1,694 changing integers
+  advance at the same rate in both modes; **50 advance twice as fast**, no
+  floats do. The 50 are update counters: per-object "updates alive"
+  counters (`+0xB0`, incremented by `0x00917618` for every object in its
+  manager's lists), a few scene/scheduler counters and two message-id
+  counters.
+- `tools/recomp/overrides/kiu-60fps.c` runs `0x00917618` every other
+  update in 60 fps mode (the next library rebuild takes it in).
+- Remaining counters run at update rate; their readers are not known yet.
+  Write watches (`KIU_WATCH_WRITES`) give each counter's writer:
+  `0x00A408A8` (sample counts next to time-scaled sums), `0x006F78BC`,
+  `0x00929F08`, `0x001B30F4`, `0x0072C1F4`, `0x009100D4`.
+
+### Performance
+
+The renderer's aliasing write-backs were the cost of a rendered frame (see
+[PERFORMANCE_BASELINE.md](PERFORMANCE_BASELINE.md)). After removing them, a
+60 fps headless run spends 2.2 ms a blank on GPU commands (was 9.5), and
+the windowed 1080p/5x replay held 59.8 frames a second, emulating 4-12 ms a
+frame, from boot through land gameplay.
+
+### Not verified yet
+
+Sound timing by ear, land combat feel, bosses, menus with animations,
+cutscene video playback at 60 (the replay went through the menus at 60
+without desynchronising, which suggests they are step-based too).

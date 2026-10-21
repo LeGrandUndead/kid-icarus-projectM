@@ -55,7 +55,15 @@ if (-not (Test-Path -LiteralPath (Join-Path $generated 'entries.c'))) { throw '3
 Get-ChildItem -LiteralPath (Join-Path $generated 'hand') -Filter '*.c' -ErrorAction SilentlyContinue |
     ForEach-Object { Copy-Item -LiteralPath $_.FullName (Join-Path $generated ('hand_' + $_.Name)) -Force }
 
-# 3. compile (incremental, resumable)
+# 3. compile (incremental, resumable). The current library's objects seed
+# the new folder: compile_generated.py reuses every object whose generated
+# C did not change, so only the code the hints or overrides moved is built.
+if (-not (Test-Path -LiteralPath $next)) {
+    New-Item -ItemType Directory -Force $next | Out-Null
+    Get-ChildItem -LiteralPath $current -Filter '*.o' | Copy-Item -Destination $next
+    $manifest = Join-Path $current 'compile-manifest.json'
+    if (Test-Path -LiteralPath $manifest) { Copy-Item -LiteralPath $manifest $next }
+}
 & python "$kiuRoot/tools/recomp/compile_generated.py" $generated $next --compiler $env:CC --jobs $Jobs --optimization 2
 if ($LASTEXITCODE) { throw "Compile failed ($LASTEXITCODE)" }
 Copy-Item -LiteralPath $hints (Join-Path $next "$id.hints") -Force

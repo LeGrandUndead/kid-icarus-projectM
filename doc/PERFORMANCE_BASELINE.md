@@ -91,6 +91,39 @@ batch). In menus the host has plenty of headroom.
    `usage.txt`, and the comparison with the previous executable (which did
    not draw particles at all) tells how much of the heavy blank it is.
 
+## October 20: the renderer's aliasing write-backs
+
+`tools/recomp/Bench-KIU.ps1` replays the same recording headless (9,000
+vblanks, 5x, hardware renderer) and records the renderer's host time by
+phase and *why* GPU images came back to guest memory.
+
+The game draws both screens one after the other into the same VRAM
+(0x1F000000: top 256x512, then bottom 240x320), and a 128x256 colour target
+reuses the top screen's depth buffer at 0x1F300000. Each switch made the
+renderer write the previous surface back to guest memory: a GPU drain, a
+download and a re-upload, 2 to 3 ms, twice a rendered frame.
+
+*Change (`raster/hardware.rs`, `discard_dead`):* a surface another one is
+about to overwrite is dropped instead of written back when its content is
+spent: depth buffers, and colour buffers a display transfer already copied
+to the screen. `ZAKURO_KEEP_ALIASED=1` restores the old path.
+
+| 9,000 vblanks | before (a1) | after (a3) |
+|---|---|---|
+| GPU commands, mean per vblank, 30 fps | 6.51 ms | 1.87 ms |
+| GPU commands, mean per vblank, 60 fps from 6000 | 9.47 ms | 2.23 ms |
+| GPU commands over 16.7 ms, 60 fps | 1,151 | 14 |
+| write back, ms per vblank, 60 fps | 6.51 | 0.003 |
+| wall time of the 60 fps run | 108.5 s | 33 s |
+
+Image check: the top screen at vblanks 6000, 7500 and 9000 is identical to
+the old path pixel for pixel; the bottom screen differs by 1/255 in places
+(one rounding through guest memory fewer).
+
+Live check (October 20, `launch.py --sixty-fps --replay ...` on copied
+saves, windowed, 1080p, 5x): 59.8 frames emulated and shown a second
+throughout, emulating 4-12 ms a frame, 57 frames skipped in 100 minutes.
+
 ## Next measurements
 
 Run the same chapter twice, with this build and with the previous one

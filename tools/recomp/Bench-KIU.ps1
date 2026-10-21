@@ -9,11 +9,12 @@
 #   Bench-KIU.ps1 -Frames 16500        longer, reaches land gameplay
 #   Bench-KIU.ps1 -KeepAliased         the renderer's old write-back path, for comparison
 #
-# Screens are saved in the run folder at vblanks 6000, 7500 and the last one.
+# Screens are saved in the run folder at vblanks 6000, 7500 and the last one
+# (-DumpAt '6000,6150,...' for others). -Resolution sets the internal scale.
 #
 # Needs the recording from the 60 fps research (build\60fps-research\baseline)
 # and the archived initial save. Saves and the playable build are not touched.
-param([int]$Frames = 9000, [switch]$Fps60, [string]$Name = '', [switch]$NoBuild, [switch]$KeepAliased)
+param([int]$Frames = 9000, [switch]$Fps60, [string]$Name = '', [switch]$NoBuild, [switch]$KeepAliased, [int]$Resolution = 5, [string]$DumpAt = '')
 
 $ErrorActionPreference = 'Stop'
 . "$PSScriptRoot/environment.ps1"
@@ -52,9 +53,10 @@ if (Test-Path -LiteralPath $cache) {
 $env:ZAKURO_RECOMPILED = Join-Path $run '0004000000030100.dll'
 $env:ZAKURO_REPLAY = Join-Path $baseline 'input.replay'
 $env:ZAKURO_RASTERIZER = 'hardware'
-$env:ZAKURO_RESOLUTION = '5'
+$env:ZAKURO_RESOLUTION = "$Resolution"
 $env:ZAKURO_PRESENT = 'direct'
-$env:ZAKURO_DUMP_AT = "6000,7500,$Frames"
+if (-not $DumpAt) { $DumpAt = "6000,7500,$Frames" }
+$env:ZAKURO_DUMP_AT = $DumpAt
 # the screen dumps go to the temporary folder: make that the run folder
 $env:TMP = $run
 $env:TEMP = $run
