@@ -36,6 +36,16 @@ use crate::shader::{Program, ShaderUnit, Vec4, DESCRIPTOR_SIZE, INPUT_REGISTERS,
 use crate::GpuMemory;
 
 const SHADE_SPIRV: &[u8] = include_bytes!("../../shaders/shade.vert.spv");
+/// passes lit triangles on with their quaternions on one side, see
+/// flip.geom.
+const FLIP_SPIRV: &[u8] = include_bytes!("../../shaders/flip.geom.spv");
+
+/// whether the device draws with geometry shaders on, for flip.geom.
+static GEOMETRY_SHADERS: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+/// flip.geom's module while a renderer has one, as a raw handle: every
+/// pipeline with fragment lighting runs it. ZAKURO_NO_QUATERNION_FLIP=1
+/// leaves it out (the bands of wrong light on lit surfaces come back).
+static FLIP_MODULE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 const VERTEX_SPIRV: &[u8] = include_bytes!("../../shaders/raster.vert.spv");
 const FRAGMENT_SPIRV: &[u8] = include_bytes!("../../shaders/raster.frag.spv");
 /// raster.frag built with WRITES_DEPTH, for the draws whose depth the
@@ -1093,7 +1103,7 @@ fn compile_pipeline(
         .collect();
     let constants: Vec<u8> = key.fragment.iter().flat_map(|value| value.to_le_bytes()).collect();
     let specialization = vk::SpecializationInfo::default().map_entries(&entries).data(&constants);
-    let stages = [
+    let mut stages = vec![
         vk::PipelineShaderStageCreateInfo::default()
             .stage(vk::ShaderStageFlags::VERTEX)
             .module(vertex)
@@ -1104,6 +1114,16 @@ fn compile_pipeline(
             .name(c"main")
             .specialization_info(&specialization),
     ];
+    // fragment lighting reads the quaternions, which have to be on one
+    // side of each triangle before they are interpolated
+    let flip = FLIP_MODULE.load(std::sync::atomic::Ordering::Relaxed);
+    if key.fragment[26] != 0 && flip != 0 {
+        use ash::vk::Handle;
+        stages.insert(1, vk::PipelineShaderStageCreateInfo::default()
+            .stage(vk::ShaderStageFlags::GEOMETRY)
+            .module(vk::ShaderModule::from_raw(flip))
+            .name(c"main"));
+    }
     let bindings = [vk::VertexInputBindingDescription::default()
         .binding(0)
         .stride(VERTEX_SIZE as u32)
@@ -1393,6 +1413,16 @@ impl Hardware {
             let fragment_shader = module(FRAGMENT_SPIRV)?;
             let depth_fragment_shader = module(FRAGMENT_DEPTH_SPIRV)?;
             let shade_shader = module(SHADE_SPIRV)?;
+            let flip_shader = if GEOMETRY_SHADERS.load(std::sync::atomic::Ordering::Relaxed)
+                && std::env::var_os("ZAKURO_NO_QUATERNION_FLIP").is_none() {
+                Some(module(FLIP_SPIRV)?)
+            } else {
+                None
+            };
+            {
+                use ash::vk::Handle;
+                FLIP_MODULE.store(flip_shader.map_or(0, |m| m.as_raw()), std::sync::atomic::Ordering::Relaxed);
+            }
 
             let unmade = || Buffer {
                 buffer: vk::Buffer::null(),
@@ -4649,6 +4679,13 @@ impl Drop for Hardware {
             self.device.destroy_shader_module(self.fragment_shader, None);
             self.device.destroy_shader_module(self.depth_fragment_shader, None);
             self.device.destroy_shader_module(self.shade_shader, None);
+            {
+                use ash::vk::Handle;
+                let flip = FLIP_MODULE.swap(0, std::sync::atomic::Ordering::Relaxed);
+                if flip != 0 {
+                    self.device.destroy_shader_module(vk::ShaderModule::from_raw(flip), None);
+                }
+            }
             for &module in self.modules.values() {
                 self.device.destroy_shader_module(module, None);
             }
@@ -4769,7 +4806,10 @@ pub(crate) fn render_device(
     let mut logic_op_state = vk::PhysicalDeviceExtendedDynamicState2FeaturesEXT::default().extended_dynamic_state2_logic_op(true);
     // what the GPU shades counted along with its times
     let statistics = std::env::var_os("ZAKURO_GPU_TIMES").is_some() && supported.pipeline_statistics_query == vk::TRUE;
+    let geometry = supported.geometry_shader == vk::TRUE;
+    GEOMETRY_SHADERS.store(geometry, std::sync::atomic::Ordering::Relaxed);
     let features = vk::PhysicalDeviceFeatures::default()
+        .geometry_shader(geometry)
         .depth_clamp(true)
         .logic_op(logic_ops)
         .pipeline_statistics_query(statistics);
