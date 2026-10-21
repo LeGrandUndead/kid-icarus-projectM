@@ -21,6 +21,9 @@ const FRAMES_IN_FLIGHT: usize = 2;
 /// a whole image, as the area of it a screen takes and the bounds its
 /// samples keep within, for the fragment shader.
 const WHOLE: [f32; 8] = [0.0, 0.0, 1.0, 1.0, 0.0, 0.0, 1.0, 1.0];
+/// present.frag's effect: none, and the menu backdrop's blur and dimming.
+const NO_EFFECT: [f32; 4] = [0.0; 4];
+const BACKDROP: [f32; 4] = [0.012, 0.38, 0.0, 0.0];
 
 /// what a screen is drawn from in a frame.
 #[derive(Clone, Copy)]
@@ -690,8 +693,12 @@ impl VulkanPresenter {
             );
 
             let (top, bottom) = layout(self.extent.width, self.extent.height, self.arrangement);
-            for (index, viewport) in [top, bottom].into_iter().enumerate() {
-                let Some(viewport) = viewport else { continue };
+            // the backdrop first (menu screens), then the pictures over it
+            let backdrop = super::backdrop(self.extent.width, self.extent.height, self.arrangement);
+            let draws = backdrop.map(|v| (0, v, BACKDROP)).into_iter()
+                .chain(top.map(|v| (0, v, NO_EFFECT)))
+                .chain(bottom.map(|v| (1, v, NO_EFFECT)));
+            for (index, viewport, effect) in draws {
                 let (descriptor, crop) = match sources[index] {
                     Source::Nothing => continue,
                     Source::Own => (self.screens[index].descriptor, WHOLE),
@@ -710,7 +717,7 @@ impl VulkanPresenter {
                     &[descriptor],
                     &[],
                 );
-                let constants: Vec<u8> = crop.iter().flat_map(|c| c.to_le_bytes()).collect();
+                let constants: Vec<u8> = crop.iter().chain(&effect).flat_map(|c| c.to_le_bytes()).collect();
                 device.cmd_push_constants(command_buffer, self.pipeline_layout, vk::ShaderStageFlags::FRAGMENT, 0, &constants);
                 device.cmd_draw(command_buffer, 3, 1, 0, 0);
             }
@@ -1042,7 +1049,7 @@ fn create_pipeline(
     // where the screen lies in the image and the bounds its samples keep in
     let constants = [vk::PushConstantRange::default()
         .stage_flags(vk::ShaderStageFlags::FRAGMENT)
-        .size(size_of_val(&WHOLE) as u32)];
+        .size(size_of_val(&WHOLE) as u32 + 16)];
     let pipeline_layout = unsafe {
         device.create_pipeline_layout(
             &vk::PipelineLayoutCreateInfo::default()

@@ -133,16 +133,19 @@ impl ScreenLayout {
 /// aspect ratio and centring them. a screen that does not show has no place.
 pub fn layout(window_width: u32, window_height: u32, arrangement: ScreenLayout) -> (Option<Viewport>, Option<Viewport>) {
     if let ScreenLayout::MenuScreen { wide } = arrangement {
+        // the interactive lower picture is the menu itself, so it is the
+        // larger one; the upper picture (preview, description) beside it
         let top_aspect = if wide { 16.0 / 9.0 } else { 5.0 / 3.0 };
         let (w, h) = (window_width as f32, window_height as f32);
-        // margins and the gap between the two pictures, in heights
-        let (margin, gap) = (0.03, 0.04);
-        let height = (h * (1.0 - 2.0 * margin)).min(w / (top_aspect + 4.0 / 3.0 + gap + 2.0 * margin));
-        let (top_width, bottom_width) = (height * top_aspect, height * 4.0 / 3.0);
-        let x = (w - top_width - bottom_width - gap * height) * 0.5;
+        const TOP: f32 = 0.65; // upper picture height per lower picture height
+        const GAP: f32 = 0.05; // between them, per lower picture height
+        let fits_width = w * 0.95 / (TOP * top_aspect + GAP + 4.0 / 3.0);
+        let height = (h * 0.68).min(fits_width);
+        let (top_height, top_width, bottom_width) = (height * TOP, height * TOP * top_aspect, height * 4.0 / 3.0);
+        let x = (w - top_width - GAP * height - bottom_width) * 0.5;
         let y = (h - height) * 0.5;
-        return (Some(Viewport { x, y, width: top_width, height }),
-            Some(Viewport { x: x + top_width + gap * height, y, width: bottom_width, height }));
+        return (Some(Viewport { x, y: (h - top_height) * 0.5, width: top_width, height: top_height }),
+            Some(Viewport { x: x + top_width + GAP * height, y, width: bottom_width, height }));
     }
     if arrangement == ScreenLayout::StackedWide {
         let height=(window_height as f32*0.5).min(window_width as f32*9.0/16.0);
@@ -206,6 +209,17 @@ pub fn layout(window_width: u32, window_height: u32, arrangement: ScreenLayout) 
     (top, bottom)
 }
 
+/// Where the upper picture is drawn again, blurred and dimmed, behind the
+/// layout (menu screens: the game's own live art fills the window instead of
+/// black bars). It covers the window, cropped to keep its aspect.
+pub fn backdrop(window_width: u32, window_height: u32, arrangement: ScreenLayout) -> Option<Viewport> {
+    let ScreenLayout::MenuScreen { wide } = arrangement else { return None };
+    let aspect = if wide { 16.0 / 9.0 } else { 5.0 / 3.0 };
+    let (w, h) = (window_width as f32, window_height as f32);
+    let (width, height) = if w / h > aspect { (w, w / aspect) } else { (h * aspect, h) };
+    Some(Viewport { x: (w - width) * 0.5, y: (h - height) * 0.5, width, height })
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum PresentError {
     #[error("{0}")]
@@ -260,12 +274,16 @@ mod tests {
                 let (t,b)=(top.unwrap(),bottom.unwrap());
                 assert!((t.width/t.height-if wide {16.0/9.0} else {5.0/3.0}).abs()<0.0001);
                 assert!((b.width/b.height-4.0/3.0).abs()<0.0001);
-                assert_eq!((t.y,t.height),(b.y,b.height));
-                assert!(t.x>=0.0 && t.x+t.width<b.x && b.x+b.width<=w as f32+0.001 && b.y+b.height<=h as f32);
+                assert!(b.height>t.height, "the menu itself is the larger picture");
+                assert!(t.x>=0.0 && t.x+t.width<b.x && b.x+b.width<=w as f32+0.001 && b.y>=0.0 && b.y+b.height<=h as f32);
+                let d=backdrop(w,h,ScreenLayout::MenuScreen { wide }).unwrap();
+                assert!(d.x<=0.0 && d.y<=0.0 && d.x+d.width>=w as f32-0.001 && d.y+d.height>=h as f32-0.001);
             }
         }
-        let (_,b)=layout(1920,1080,ScreenLayout::MenuScreen { wide: true });
-        assert!(b.unwrap().height>560.0, "large enough to read and click at 1080p");
+        let (t,b)=layout(1920,1080,ScreenLayout::MenuScreen { wide: true });
+        let (t,b)=(t.unwrap(),b.unwrap());
+        assert!(b.height>680.0 && t.height>440.0, "large enough to read and click at 1080p");
+        assert!(backdrop(1920,1080,ScreenLayout::TopWide).is_none());
     }
     #[test]
     fn legacy_composition_does_not_squeeze_an_existing_wide_camera() {

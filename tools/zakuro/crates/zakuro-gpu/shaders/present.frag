@@ -6,9 +6,13 @@ layout(set = 0, binding = 0) uniform sampler2D screen;
 // coordinates, then the corners inset by half a texel, which samples keep
 // within so filtering takes nothing from around it. the whole image when it
 // holds just the screen.
+// effect: x the spacing of a soft 5x5 blur as a share of the screen (0: none), y the
+// brightness it is drawn at. the menu screen's backdrop is the upper picture
+// blurred and dimmed behind both crisp ones.
 layout(push_constant) uniform Crop {
     vec4 area;
     vec4 bounds;
+    vec4 effect;
 } crop;
 // a screen drawn bigger than the window shows it is averaged over every
 // texel a window pixel covers, which smooths its edges the way drawing at a
@@ -16,6 +20,16 @@ layout(push_constant) uniform Crop {
 void main() {
     vec2 at = crop.area.xy + uv * crop.area.zw;
     vec2 size = vec2(textureSize(screen, 0));
+    if (crop.effect.x > 0.0) {
+        vec3 sum = vec3(0.0);
+        for (int y = -2; y <= 2; y++) {
+            for (int x = -2; x <= 2; x++) {
+                sum += texture(screen, clamp(at + vec2(x, y) * crop.effect.x * crop.area.zw, crop.bounds.xy, crop.bounds.zw)).rgb;
+            }
+        }
+        colour = vec4(sum / 25.0 * crop.effect.y, 1.0);
+        return;
+    }
     vec2 covered = fwidth(at) * size;
     if (max(covered.x, covered.y) <= 1.0) {
         colour = vec4(texture(screen, clamp(at, crop.bounds.xy, crop.bounds.zw)).rgb, 1.0);
