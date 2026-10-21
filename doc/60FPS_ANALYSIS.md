@@ -113,7 +113,9 @@ Same recording, 30 vs 60 from vblank 6000 (`Bench-KIU.ps1 -Fps60`):
   manager's lists), a few scene/scheduler counters and two message-id
   counters.
 - `tools/recomp/overrides/kiu-60fps.c` runs `0x00917618` every other
-  update in 60 fps mode (the next library rebuild takes it in).
+  update in 60 fps mode. In the library rebuilt on October 21 the same
+  comparison finds 16 update-rate counters left (from 50), none of them
+  per-object; flight path and captions still match at 7500, 8250 and 9000.
 - Remaining counters run at update rate; their readers are not known yet.
   Write watches (`KIU_WATCH_WRITES`) give each counter's writer:
   `0x00A408A8` (sample counts next to time-scaled sums), `0x006F78BC`,
