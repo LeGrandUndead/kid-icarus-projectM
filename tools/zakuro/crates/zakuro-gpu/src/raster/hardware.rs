@@ -3406,8 +3406,17 @@ impl Hardware {
             static SEQUENCE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
             let sequence = SEQUENCE.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             let stem = format!("draw-{sequence:08}-{address:08X}");
-            let mut ppm = format!("P6\n{width} {height}\n255\n").into_bytes();
-            for p in pixels.chunks_exact(4) { ppm.extend_from_slice(&p[..3]); }
+            // console size for each draw (hundreds of them), full size
+            // every 16th, so a capture at 8x stays a few hundred MB
+            let step = if sequence % 16 == 0 { 1 } else { self.scale.max(1) };
+            let (w, h) = (width / step, height / step);
+            let mut ppm = format!("P6\n{w} {h}\n255\n").into_bytes();
+            for y in 0..h {
+                for x in 0..w {
+                    let i = ((y * step * width + x * step) * 4) as usize;
+                    ppm.extend_from_slice(pixels.get(i..i + 3).unwrap_or(&[0, 0, 0]));
+                }
+            }
             std::fs::write(root.join(format!("{stem}.ppm")), ppm).map_err(|e| e.to_string())?;
             let bytes: Vec<u8> = registers.iter().flat_map(|r| r.to_le_bytes()).collect();
             std::fs::write(root.join(format!("{stem}.bin")), bytes).map_err(|e| e.to_string())?;

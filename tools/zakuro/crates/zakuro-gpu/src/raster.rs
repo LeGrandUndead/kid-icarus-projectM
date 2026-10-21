@@ -1355,6 +1355,13 @@ fn bind_texture<M: GpuMemory>(
         },
     };
 
+    // a render capture takes textures as they are used, not only when
+    // first decoded (most were decoded before F8)
+    if drawn.is_none() && crate::diagnostics::draw_capture_path().is_some() {
+        if let Some(decoded) = cache.entries.get(&key) {
+            crate::diagnostics::texture(addr, format, width, height, &decoded.bytes);
+        }
+    }
     trace_texture_state(
         unit,
         addr,
@@ -2279,6 +2286,7 @@ pub fn draw<M: GpuMemory>(
     resources: &mut Resources,
     indexed: bool,
 ) -> u32 {
+    crate::diagnostics::draw(registers);
     let mut wide = kiu_wide_shader(registers, vertex_shader);
     let vertex_count = registers[REG_VERTEX_COUNT];
     let first_vertex = registers[REG_VERTEX_OFFSET];
@@ -2382,6 +2390,7 @@ pub fn draw_immediate<M: GpuMemory>(
     resources: &mut Resources,
     vertices: &[[Vec4; 16]],
 ) -> u32 {
+    crate::diagnostics::draw(registers);
     let mut wide = kiu_wide_shader(registers, vertex_shader);
     // immediate mode sizes its vertices by GPUREG_VSH_NUM_ATTR.
     let count = ((registers[REG_VS_ATTRIBUTE_COUNT] & 0xF) + 1) as usize;

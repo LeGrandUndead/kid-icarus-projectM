@@ -1232,6 +1232,7 @@ impl App {
         game.system.memory.queue_kiu_mouse(motion);
         zakuro_gpu::kiu_ui::set_touch(input.touch);
         zakuro_gpu::kiu_ui::begin_frame();
+        zakuro_gpu::diagnostic_frame(game.frame);
         let outcome = game.system.run_frame();
         let scene = zakuro_gpu::kiu_ui::end_frame();
         let land = game.system.memory.kiu_land_publications();

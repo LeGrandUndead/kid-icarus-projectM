@@ -7,13 +7,23 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 static FRAME: AtomicU64 = AtomicU64::new(0);
 pub fn diagnostic_frame(frame: u64) { FRAME.store(frame, Ordering::Relaxed); }
+/// the first of the two frames F8 asked to be captured draw by draw.
+static F8_FRAME: AtomicU64 = AtomicU64::new(u64::MAX);
 pub(crate) fn draw_capture_path() -> Option<&'static PathBuf> {
     static REQUEST: OnceLock<Option<(u64, PathBuf)>> = OnceLock::new();
-    let (frame, path) = REQUEST.get_or_init(|| {
+    let frame = FRAME.load(Ordering::Relaxed);
+    if let Some((target, path)) = REQUEST.get_or_init(|| {
         Some((std::env::var("KIU_DRAW_FRAME").ok()?.parse().ok()?,
               PathBuf::from(std::env::var_os("KIU_DRAW_CAPTURE")?)))
-    }).as_ref()?;
-    (*frame == FRAME.load(Ordering::Relaxed)).then_some(path)
+    }).as_ref() {
+        return (*target == frame).then_some(path);
+    }
+    // F8 in a live render capture: the picture after each draw of two
+    // frames (the game may draw only every other one), with its registers
+    static LIVE: OnceLock<Option<PathBuf>> = OnceLock::new();
+    let path = LIVE.get_or_init(|| Some(PathBuf::from(std::env::var_os("KIU_RENDER_CAPTURE")?).join("frame"))).as_ref()?;
+    let first = F8_FRAME.load(Ordering::Relaxed);
+    (frame >= first && frame - first < 2).then_some(path)
 }
 
 /// Offline isolation only; never enabled by the normal launcher.
@@ -61,6 +71,8 @@ pub fn start_render_capture() {
         c.active = true;
         log::info!("render capture started: {}", c.root.display());
     }
+    // half a second later, so the key press itself is long gone
+    F8_FRAME.store(FRAME.load(Ordering::Relaxed) + 30, Ordering::Relaxed);
 }
 
 pub(crate) fn draw(registers: &[u32]) {
