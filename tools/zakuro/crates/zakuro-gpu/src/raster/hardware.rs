@@ -261,30 +261,39 @@ const MAX_UI_QUADS: usize = 64;
 // Move complete verified health/score batches, not individual pieces of
 // the animated artwork. Screen markers and captions do not match these bounds.
 fn kiu_hud_anchor<M: GpuMemory>(memory: &mut M, shading: &Shading) -> f32 {
+    if !kiu_hud_atlas(shading) { return 0.0; }
+    let Some(bounds) = kiu_hud_bounds(memory, shading) else { return 0.0 };
     let u = &shading.unit.float_uniforms;
-    if !kiu_hud_atlas(shading) || (u[1][0] + 2.0/400.0 * 15.0/16.0).abs() > 0.000001
-        || (u[1][3] - 15.0/16.0).abs() > 0.000001 { return 0.0; }
+    let projected = (u[1][0] + 2.0/400.0 * 15.0/16.0).abs() <= 0.000001 && (u[1][3] - 15.0/16.0).abs() <= 0.000001;
+    let anchor = if projected { super::kiu_hud_anchor_bounds(bounds) } else { 0.0 };
+    crate::diagnostics::hud_batch(shading.viewport, bounds, [u[0], u[1]], anchor);
+    anchor
+}
+
+/// the bounds of a HUD batch's positions (vertex input 0), at most 128
+/// vertices.
+fn kiu_hud_bounds<M: GpuMemory>(memory: &mut M, shading: &Shading) -> Option<[f32; 4]> {
     let count = shading.indices.iter().copied().max().unwrap_or(0) as usize + 1;
-    if count > 128 { return 0.0; }
+    if count > 128 { return None; }
     let mut bounds = [f32::INFINITY, f32::INFINITY, f32::NEG_INFINITY, f32::NEG_INFINITY];
     for vertex in 0..count {
         let xy = match shading.inputs {
-            Inputs::Decoded(values) => { let Some(v) = values.get(vertex) else { return 0.0 }; [v[0][0],v[0][1]] },
+            Inputs::Decoded(values) => { let v = values.get(vertex)?; [v[0][0],v[0][1]] },
             Inputs::Raw(raw) => {
-                let Some(field) = &raw.fields[0] else { return 0.0 };
-                if field.count < 2 { return 0.0; }
+                let field = raw.fields[0].as_ref()?;
+                if field.count < 2 { return None; }
                 let (addr, _) = raw.arrays[field.array];
                 let size = super::component_size(field.ty) as usize;
                 let at = addr + vertex as u32 * field.stride + field.offset;
-                let Some(bytes) = memory.slice(at, size*2) else { return 0.0 };
+                let bytes = memory.slice(at, size*2)?;
                 [super::component(&bytes[..size], field.ty), super::component(&bytes[size..], field.ty)]
             }
         };
-        if xy.iter().any(|v| !v.is_finite()) { return 0.0; }
+        if xy.iter().any(|v| !v.is_finite()) { return None; }
         bounds[0] = bounds[0].min(xy[0]); bounds[1] = bounds[1].min(xy[1]);
         bounds[2] = bounds[2].max(xy[0]); bounds[3] = bounds[3].max(xy[1]);
     }
-    super::kiu_hud_anchor_bounds(bounds)
+    Some(bounds)
 }
 
 /// a draw's input registers, as the vertex shader gets them.

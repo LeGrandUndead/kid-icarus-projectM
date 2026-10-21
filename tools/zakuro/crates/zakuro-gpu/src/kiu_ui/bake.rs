@@ -94,8 +94,13 @@ pub fn bake(env: &TexEnv, primary: [f32; 4], texels: &[[u8; 4]]) -> Vec<u8> {
 /// The combiner's results on a fixed sample of a texture's texels, clamped:
 /// what `scale` compares two colors of the same texture and combiner by.
 pub fn samples(env: &TexEnv, primary: [f32; 4], texels: &[[u8; 4]]) -> Vec<[f32; 4]> {
-    let step = (texels.len() / 61).max(1);
-    texels.iter().step_by(step).take(64).map(|&p| texel(env, primary, p).map(|c| c.clamp(0.0, 1.0))).collect()
+    // visible texels: a sample of only transparent ones (an atlas's empty
+    // space) would match any color
+    let step = (texels.len() / 1021).max(1);
+    let mut picked: Vec<[u8; 4]> = texels.iter().step_by(step).filter(|p| p[3] > 0).copied().collect();
+    if picked.len() > 64 { let keep = picked.len() / 64; picked = picked.into_iter().step_by(keep).take(64).collect(); }
+    picked.extend(texels.iter().step_by((texels.len() / 15).max(1)).take(16));
+    picked.into_iter().map(|p| texel(env, primary, p).map(|c| c.clamp(0.0, 1.0))).collect()
 }
 
 /// When every sample of `now` is the matching sample of `then` times one

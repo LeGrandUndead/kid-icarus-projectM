@@ -26,6 +26,25 @@ pub(crate) fn draw_capture_path() -> Option<&'static PathBuf> {
     (frame >= first && frame - first < 2).then_some(path)
 }
 
+/// Always on, bounded: each distinct top-screen HUD batch (the game's 2D
+/// HUD program: health bar, score, and whatever else it draws there) once,
+/// with its bounds, projection rows and the PC anchor it got, so a HUD piece
+/// the PC layout misses (October 21: the health bar shrinking when Pit is
+/// hit) can be read from any session log.
+pub(crate) fn hud_batch(viewport: (f32, f32, f32, f32), bounds: [f32; 4], projection: [[f32; 4]; 2], anchor: f32) {
+    if viewport.3 != 400.0 { return; } // the lower screen is kiu_ui's
+    static SEEN: OnceLock<Mutex<HashSet<[i32; 13]>>> = OnceLock::new();
+    let key: [i32; 13] = std::array::from_fn(|i| match i {
+        0..4 => bounds[i].round() as i32,
+        4..12 => (projection[(i - 4) / 4][(i - 4) % 4] * 1e5).round() as i32,
+        _ => (anchor * 1e4).round() as i32,
+    });
+    let Ok(mut seen) = SEEN.get_or_init(Default::default).lock() else { return };
+    if seen.len() >= 400 || !seen.insert(key) { return; }
+    log::info!(target: "zakuro::hud_batch", "frame {} bounds {:?} projection {:?} anchor {}",
+        FRAME.load(Ordering::Relaxed), bounds, projection, anchor);
+}
+
 /// Offline isolation only; never enabled by the normal launcher.
 pub(crate) fn ignore_depth_test() -> bool {
     static IGNORE: OnceLock<bool> = OnceLock::new();
