@@ -406,7 +406,9 @@ fn to_vertex(map: &OutputMap, attributes: &[Vec4; 16]) -> Vertex {
     // a shader that writes no color means "use white", not "use whatever
     // happened to be in that register", an untextured draw should come out
     // lit rather than black, and a textured one unmodulated.
-    let color_or = |slot: Option<(usize, usize)>| slot.map_or(1.0, get);
+    // the hardware takes the absolute value and saturates each vertex
+    // color before interpolation (see the GPU vertex shader too)
+    let color_or = |slot: Option<(usize, usize)>| slot.map_or(1.0, |slot| get(slot).abs().min(1.0));
 
     Vertex {
         clip: [

@@ -200,7 +200,10 @@ impl<'a> Translator<'a> {
         };
         let _ = writeln!(out, "    vec4 position = vec4({});", vector(0..4, "0.0"));
         out.push_str(EPILOGUE);
-        let _ = writeln!(out, "    out_color = vec4({});", vector(4..8, "1.0"));
+        // the PICA200 takes each vertex color's absolute value and
+        // saturates it before interpolating (Citra does the same): a shader
+        // writing -1 gets white, not a dark wedge where it crosses zero
+        let _ = writeln!(out, "    out_color = min(abs(vec4({})), vec4(1.0));", vector(4..8, "1.0"));
         let _ = writeln!(out, "    out_texcoords01 = vec4({});", vector(8..12, "0.0"));
         let _ = writeln!(out, "    out_texcoord2 = vec2({});", vector(12..14, "0.0"));
         out.push_str("    out_depth = position.z / position.w * depth_map.x + depth_map.y;\n");
