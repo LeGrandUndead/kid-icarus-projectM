@@ -3678,9 +3678,15 @@ impl Hardware {
                 return Ok(copy.image.view);
             }
         }
+        // small buffers drawn to be sampled again are the game's glow and
+        // blur passes: they sample themselves a texel apart, which at the
+        // console's resolution blends smoothly and at a higher one leaves
+        // a grid of separate copies. those keep the console's resolution.
+        let native = self.scale > 1 && effect_buffer(texture) && !matches!(self.surfaces[source].kind, Kind::Depth(_));
+        let n = if native { 1 } else { self.scale };
         if !self.copies.contains_key(texture) {
             let usage = vk::ImageUsageFlags::SAMPLED | vk::ImageUsageFlags::STORAGE;
-            let image = self.image(texture.width * self.scale, texture.height * self.scale, COLOR_FORMAT, usage, vk::ImageAspectFlags::COLOR)?;
+            let image = self.image(texture.width * n, texture.height * n, COLOR_FORMAT, usage, vk::ImageAspectFlags::COLOR)?;
             self.copies.insert(*texture, Copied { image, surface: source, generation, used: batch });
         }
         let view = self.copies[texture].image.view;
@@ -3691,10 +3697,12 @@ impl Hardware {
             // so the copy flips them, and its pixels round to the format as
             // memory would have them
             let format = format_index(texture.format);
-            let n = self.scale;
+            let scale = self.scale;
+            // averaged down to the console's resolution for effect buffers
+            let down = (scale / n) as i32;
             let (width, height) = ((texture.width * n) as i32, (texture.height * n) as i32);
-            let (row, source_height) = ((row * n) as i32, (self.surfaces[source].height * n) as i32);
-            let constants = [width, height, height, height, 1, 1, 1, format, format, row, source_height];
+            let (row, source_height) = ((row * scale) as i32, (self.surfaces[source].height * scale) as i32);
+            let constants = [width, height, height * down, height, down, down, 1, format, format, row, source_height];
             self.dispatch_transfer((self.surfaces[source].image.view, view), constants, (texture.width * n, texture.height * n))?;
         }
         self.uploads = true;
@@ -3710,6 +3718,10 @@ impl Hardware {
     /// since the last copy (power names change rarely; no stall: the copy is
     /// read once its batch is done, see `retire_oldest`).
     fn read_text(&mut self, texture: &DrawnTexture) -> Result<(), String> {
+        // a copy kept at the console's resolution is not the size read here
+        if self.scale > 1 && effect_buffer(texture) {
+            return Ok(());
+        }
         let Some(copy) = self.copies.get(texture) else { return Ok(()) };
         let (generation, image) = (copy.generation, copy.image.image);
         if self.text_reads.get(texture).is_some_and(|read| read.generation == generation) {
@@ -4942,4 +4954,13 @@ mod tests {
             }
         }
     }
+}
+
+/// whether a texture the game drew is one of its small effect buffers (glow,
+/// blur), sampled at the console's resolution, see copy_texture.
+/// ZAKURO_SCALED_EFFECTS=1 keeps them at the drawing resolution.
+fn effect_buffer(texture: &DrawnTexture) -> bool {
+    static SCALED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    !*SCALED.get_or_init(|| std::env::var_os("ZAKURO_SCALED_EFFECTS").is_some())
+        && texture.width * texture.height <= 128 * 256
 }
