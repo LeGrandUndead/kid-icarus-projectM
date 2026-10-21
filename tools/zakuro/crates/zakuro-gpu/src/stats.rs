@@ -16,9 +16,15 @@ pub static TEXTURE_DECODE_NANOS: AtomicU64 = AtomicU64::new(0);
 /// driver's cache, which the draw waits for, and the nanoseconds.
 pub static PIPELINES_MADE: AtomicU64 = AtomicU64::new(0);
 pub static PIPELINE_NANOS: AtomicU64 = AtomicU64::new(0);
+/// lower-screen interface textures baked with their combiner on the
+/// drawing thread (kiu_ui), and the nanoseconds.
+pub static UI_BAKES: AtomicU64 = AtomicU64::new(0);
+pub static UI_BAKE_NANOS: AtomicU64 = AtomicU64::new(0);
+
+pub const COUNT: usize = 8;
 
 /// every counter, named, for a frame's breakdown.
-pub fn all() -> [(&'static str, u64); 6] {
+pub fn all() -> [(&'static str, u64); COUNT] {
     [
         ("particle primitives", get(&PARTICLE_PRIMITIVES)),
         ("particle ns", get(&PARTICLE_NANOS)),
@@ -26,6 +32,8 @@ pub fn all() -> [(&'static str, u64); 6] {
         ("texture decode ns", get(&TEXTURE_DECODE_NANOS)),
         ("pipelines made", get(&PIPELINES_MADE)),
         ("pipeline ns", get(&PIPELINE_NANOS)),
+        ("interface bakes", get(&UI_BAKES)),
+        ("interface bake ns", get(&UI_BAKE_NANOS)),
     ]
 }
 

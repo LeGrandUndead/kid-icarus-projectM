@@ -50,7 +50,7 @@ const SLOW_FRAMES_LOGGED: u32 = 2000;
 struct FrameStart {
     at: std::time::Instant,
     phases: Vec<(&'static str, u64, u64)>,
-    stats: [(&'static str, u64); 6],
+    stats: [(&'static str, u64); zakuro_gpu::stats::COUNT],
 }
 
 #[derive(Clone)]

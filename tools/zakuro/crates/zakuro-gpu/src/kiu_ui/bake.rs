@@ -50,21 +50,30 @@ pub enum Tint {
     Baked,
 }
 
-/// Which Tint the draw's combiner allows, checked on a sample of its real
-/// texels: the combiner's result with the color must equal its result with
-/// white, times the color.
-pub fn tint(env: &TexEnv, primary: [f32; 4], texels: &[[u8; 4]]) -> Tint {
+/// vertex colors a combiner is tried with: what it does with them tells
+/// what it does with any color, the combiner being linear in it or not.
+const PROBES: [[f32; 4]; 3] = [[0.3, 0.6, 0.9, 0.5], [0.8, 0.2, 0.4, 0.9], [0.05, 0.95, 0.5, 0.25]];
+
+/// Which Tint a combiner allows with a texture, checked on a sample of its
+/// real texels with a few colors: unused when the result never changes with
+/// the color; a color tint when it is always the result with white times
+/// the color; an alpha fade when the color's alpha only scales the alpha.
+/// It does not depend on the draw's own color, so a texture and combiner
+/// are classified once (the check costs ~200 combiner runs, a per-draw
+/// check cost the boss defeat scene's many sprites 10-30 ms a frame).
+pub fn classify(env: &TexEnv, texels: &[[u8; 4]]) -> Tint {
     if texels.is_empty() { return Tint::Baked; }
     let step = (texels.len() / 61).max(1);
+    let sample = || texels.iter().step_by(step).take(64);
     let white = [1.0; 4];
-    let unused = texels.iter().step_by(step).take(64).all(|&pixel| texel(env, primary, pixel) == texel(env, white, pixel));
+    let unused = PROBES.iter().all(|&p| sample().all(|&pixel| texel(env, p, pixel) == texel(env, white, pixel)));
     if unused { return Tint::Unused; }
-    let in_range = primary.iter().all(|c| (0.0..=1.0).contains(c));
-    let modulates = in_range && texels.iter().step_by(step).take(64).all(|&pixel| {
-        let (lit, plain) = (texel(env, primary, pixel), texel(env, white, pixel));
-        (0..4).all(|i| (lit[i].clamp(0.0, 1.0) - plain[i].clamp(0.0, 1.0) * primary[i]).abs() < 1.5 / 255.0)
-    });
-    if modulates { Tint::Color } else if alpha_is_a_fade(env, primary, texels) { Tint::Alpha } else { Tint::Baked }
+    let modulates = PROBES.iter().all(|&p| sample().all(|&pixel| {
+        let (lit, plain) = (texel(env, p, pixel), texel(env, white, pixel));
+        (0..4).all(|i| (lit[i].clamp(0.0, 1.0) - plain[i].clamp(0.0, 1.0) * p[i]).abs() < 1.5 / 255.0)
+    }));
+    if modulates { return Tint::Color; }
+    if PROBES.iter().all(|&p| alpha_is_a_fade(env, p, texels)) { Tint::Alpha } else { Tint::Baked }
 }
 
 /// Premultiplied RGBA8 for the host overlay.
@@ -173,13 +182,13 @@ mod tests {
         let texels = [[255, 128, 0, 255], [10, 20, 30, 128], [0, 0, 0, 0], [255, 255, 255, 255]];
         let env = TexEnv::read(&registers(0x0003_0003, 0x0001_0001));
         let flash = [1.0, 0.4, 0.2, 0.7];
-        assert_eq!(tint(&env, flash, &texels), Tint::Color);
+        assert_eq!(classify(&env, &texels), Tint::Color);
         // what the host draws: bake with white, times the color
         for &pixel in &texels {
             let (lit, plain) = (texel(&env, flash, pixel), texel(&env, [1.0; 4], pixel));
             for i in 0..4 { assert!((lit[i] - plain[i] * flash[i]).abs() < 1e-5); }
         }
         let env = TexEnv::read(&registers(0x0003_0003, 0x0000_0000));
-        assert_eq!(tint(&env, flash, &texels), Tint::Unused);
+        assert_eq!(classify(&env, &texels), Tint::Unused);
     }
 }

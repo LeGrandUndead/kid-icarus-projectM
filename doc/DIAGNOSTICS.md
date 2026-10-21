@@ -27,7 +27,8 @@ frame 41230 took 48.2 ms: renderer 31.0, title and kernel 17.2 | command lists: 
 - after the bar, every renderer phase over 1 ms and every counter that moved:
   geometry-shader particle primitives, whole texture decodes (new or changed
   textures), pipelines made on the drawing thread (compiled, or taken from the
-  driver's cache) and the time each took.
+  driver's cache) and the time each took, and lower-screen interface textures baked
+  with their combiner on the drawing thread (`interface bakes`).
 
 To find what makes a scene stutter, play it, then read those lines.
 
