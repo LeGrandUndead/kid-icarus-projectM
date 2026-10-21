@@ -107,6 +107,10 @@ pub enum ScreenLayout {
     BottomOverlay { wide: bool },
     /// Legacy two-screen composition retaining the already-selected wide view.
     StackedWide,
+    /// An out-of-stage menu on one PC screen: the game's upper picture
+    /// (preview, description) and its interactive lower one side by side,
+    /// as large as the window allows, both live and the lower one clickable.
+    MenuScreen { wide: bool },
 }
 
 impl ScreenLayout {
@@ -120,6 +124,7 @@ impl ScreenLayout {
             ScreenLayout::BottomOnly => (320, 240),
             ScreenLayout::BottomOverlay { wide } => if wide { (1280,720) } else { (400,240) },
             ScreenLayout::StackedWide => (1280,1440),
+            ScreenLayout::MenuScreen { .. } => (1280,720),
         }
     }
 }
@@ -127,6 +132,18 @@ impl ScreenLayout {
 /// works out where the screens go inside a window, keeping the 3DS's
 /// aspect ratio and centring them. a screen that does not show has no place.
 pub fn layout(window_width: u32, window_height: u32, arrangement: ScreenLayout) -> (Option<Viewport>, Option<Viewport>) {
+    if let ScreenLayout::MenuScreen { wide } = arrangement {
+        let top_aspect = if wide { 16.0 / 9.0 } else { 5.0 / 3.0 };
+        let (w, h) = (window_width as f32, window_height as f32);
+        // margins and the gap between the two pictures, in heights
+        let (margin, gap) = (0.03, 0.04);
+        let height = (h * (1.0 - 2.0 * margin)).min(w / (top_aspect + 4.0 / 3.0 + gap + 2.0 * margin));
+        let (top_width, bottom_width) = (height * top_aspect, height * 4.0 / 3.0);
+        let x = (w - top_width - bottom_width - gap * height) * 0.5;
+        let y = (h - height) * 0.5;
+        return (Some(Viewport { x, y, width: top_width, height }),
+            Some(Viewport { x: x + top_width + gap * height, y, width: bottom_width, height }));
+    }
     if arrangement == ScreenLayout::StackedWide {
         let height=(window_height as f32*0.5).min(window_width as f32*9.0/16.0);
         let y=(window_height as f32-2.0*height)*0.5;
@@ -177,7 +194,8 @@ pub fn layout(window_width: u32, window_height: u32, arrangement: ScreenLayout) 
             width: 320.0 * scale,
             height: 240.0 * scale,
         }),
-        ScreenLayout::TopOnly | ScreenLayout::TopWide | ScreenLayout::BottomOverlay { .. } | ScreenLayout::StackedWide => None,
+        ScreenLayout::TopOnly | ScreenLayout::TopWide | ScreenLayout::BottomOverlay { .. } | ScreenLayout::StackedWide
+            | ScreenLayout::MenuScreen { .. } => None,
         ScreenLayout::BottomOnly => Some(Viewport {
             x: offset_x,
             y: offset_y,
@@ -233,6 +251,21 @@ mod tests {
                 assert!((x-160.0).abs()<0.001 && (y-120.0).abs()<0.001);
             }
         }
+    }
+    #[test]
+    fn a_menu_screen_shows_both_pictures_side_by_side_inside_any_window() {
+        for (w,h) in [(1920,1080),(1280,720),(800,1200),(2560,1080),(640,480)] {
+            for wide in [true,false] {
+                let (top,bottom)=layout(w,h,ScreenLayout::MenuScreen { wide });
+                let (t,b)=(top.unwrap(),bottom.unwrap());
+                assert!((t.width/t.height-if wide {16.0/9.0} else {5.0/3.0}).abs()<0.0001);
+                assert!((b.width/b.height-4.0/3.0).abs()<0.0001);
+                assert_eq!((t.y,t.height),(b.y,b.height));
+                assert!(t.x>=0.0 && t.x+t.width<b.x && b.x+b.width<=w as f32+0.001 && b.y+b.height<=h as f32);
+            }
+        }
+        let (_,b)=layout(1920,1080,ScreenLayout::MenuScreen { wide: true });
+        assert!(b.unwrap().height>560.0, "large enough to read and click at 1080p");
     }
     #[test]
     fn legacy_composition_does_not_squeeze_an_existing_wide_camera() {

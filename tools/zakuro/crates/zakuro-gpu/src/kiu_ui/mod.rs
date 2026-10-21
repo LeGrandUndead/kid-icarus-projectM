@@ -39,6 +39,10 @@ pub enum Role {
     Insert,
     /// Known but decorative bottom-screen art (backgrounds, chapter titles).
     Decor,
+    /// Art of the out-of-stage menus (title, save select, Solo, chapter
+    /// select, Gear...; `us/menu/*/menu/bind.arc`): evidence that a menu
+    /// screen is up. Never relocated.
+    Screen,
     /// Not in the catalog, typically system-font text (power names). Only
     /// relocated when it lies inside a HUD island, as part of that layout.
     Unlisted,
@@ -52,6 +56,7 @@ impl Role {
             "menu" => Role::Menu,
             "decor" => Role::Decor,
             "insert" => Role::Insert,
+            "screen" => Role::Screen,
             _ => return None,
         })
     }
@@ -104,6 +109,10 @@ struct State {
     pending: Vec<Layer>,
     shown: Vec<Layer>,
     bottom_draws: u32,
+    /// draws of menu-screen art this frame, and whether the last frame the
+    /// game drew its lower screen had any
+    screen_art: u32,
+    menu_screen: bool,
     stale: u32,
     frame: u64,
     scene: BottomScene,
@@ -192,6 +201,9 @@ fn state() -> Option<&'static Mutex<State>> {
         let count = |role| catalog.values().filter(|s| s.role == role).count();
         log::info!("Original PC interface layers: {} portrait, {} insert, {} HUD, {} menu, {} decor textures",
             count(Role::Portrait), count(Role::Insert), count(Role::Hud), count(Role::Menu), count(Role::Decor));
+        if count(Role::Screen) == 0 {
+            log::warn!("The UI catalog has no menu-screen art: menus need Tab (run tools/recomp/prepare_native_ui_sources.py)");
+        }
         let (jobs, done) = std::sync::mpsc::channel();
         crate::replacements::hud_pack_enabled(); // starts decoding the HD HUD atlases
         Some(Mutex::new(State { catalog, names, next: 1u64 << 61, census: census::Census::from_environment(),
@@ -207,6 +219,7 @@ pub fn begin_frame() {
     let Ok(mut s) = state.lock() else { return };
     s.pending.clear();
     s.bottom_draws = 0;
+    s.screen_art = 0;
     s.rebaked = 0;
     s.frame += 1;
 }
@@ -240,9 +253,11 @@ pub fn end_frame() -> BottomScene {
         (name, 1.0 - (over as f32 / PICTURE_FADE as f32).min(1.0))
     }).collect();
     let names = &s.names;
+    if fresh { s.menu_screen = s.screen_art > 0; }
     s.scene = scene::classify(s.frame, fresh, s.shown.iter().map(|l| scene::Evidence {
         role: l.role, atlas: &names[l.name], uv: l.uv, island: l.island.is_some(),
     }));
+    s.scene.menu_screen = s.menu_screen;
     if let Some(census) = &mut s.census { census.record(s.frame, fresh, &s.shown, names); }
     evict(s);
     s.scene
@@ -285,6 +300,11 @@ pub(crate) fn note_rejected(reason: &'static str, detail: String) {
 /// A 2D draw reached the guest bottom screen (any texture).
 pub(crate) fn note_bottom_draw() {
     if let Some(Ok(mut s)) = state().map(Mutex::lock) { s.bottom_draws += 1; }
+}
+
+/// A bottom-screen draw sampled menu-screen art (Role::Screen).
+pub(crate) fn note_screen_art() {
+    if let Some(Ok(mut s)) = state().map(Mutex::lock) { s.screen_art += 1; }
 }
 
 /// The role of a lower-screen texture: catalogued, or `Unlisted` for any
