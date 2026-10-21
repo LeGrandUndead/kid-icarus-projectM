@@ -163,7 +163,9 @@ impl Usage {
             parts.push(if name.ends_with(" ns") { format!("{}: {:.1} ms", name.trim_end_matches(" ns"), ms(moved)) } else { format!("{name}: {moved}") });
         }
         let total = took.as_nanos() as u64;
-        log::info!(
+        // a warning, like the sound running dry: it is a stutter, and the
+        // headless benches log warnings only
+        log::warn!(
             target: "zakuro::slow_frame",
             "frame {} took {:.1} ms: renderer {:.1}, title and kernel {:.1} | {}",
             self.frames,
