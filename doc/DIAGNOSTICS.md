@@ -32,6 +32,17 @@ frame 41230 took 48.2 ms: renderer 31.0, title and kernel 17.2 | command lists: 
 
 To find what makes a scene stutter, play it, then read those lines.
 
+### Top-screen HUD batches (`zakuro::hud_batch`)
+
+From the first known health bar or score on, each distinct batch of the
+game's 2D HUD program on the top screen is logged once (at most 1,500):
+bounds, texture rectangle, projection rows and the window-edge shift it got
+(0 for markers, captions and effects). For finding HUD pieces the PC layout
+misses or mis-scales.
+
+The lower-screen census (`--ui-census`, `build/native-ui/census/`) lists
+every relocated layer per changed frame with its island and draw index.
+
 ## Fast-forward (F3)
 
 In game, or in the Escape menu: frames run back to back, sound off, the game

@@ -25,6 +25,26 @@ No other executable, launcher or save was replaced. The game's save format is
 untouched; PC options live in the profile's `roaming/zakuro/kiu-interface.txt`
 and `pc-interface-camera.txt`.
 
+## HUD fixes from the October 21 trace
+
+Found with the always-on `zakuro::hud_batch` log and a `--ui-census` run
+(doc/DIAGNOSTICS.md):
+
+- **Health bar shrinking when hit**: the bar and score were recognised by
+  their exact rest rectangles. A hit shakes them a few pixels and a stage
+  start slides them in, so they lost their wide-window anchoring and took
+  the gameplay view's zoom (133% view: drawn at 0.75 toward the middle).
+  They are now recognised by the atlas rectangle each piece draws and its
+  width (`raster::kiu_hud_edge`), wherever the animation puts them.
+- **Cut-up pieces beside the item**: islands took single quads by their own
+  centre, so the left cap of a screen-wide pickup panel joined the action
+  group alone (white bar). A lower-screen draw now joins an island whole or
+  not at all (`layout::island_for` takes the draw's bounds).
+- **Lines over the orbs**: relocated quads were baked from the whole atlas
+  and filtered at PC size into the neighbouring sprite (the white panel
+  above the orb tray). Each quad is now baked from its own rectangle
+  (`bake::crop`), which also makes bakes smaller.
+
 ## HUD layout v2 (October 15 evening, design board "V2")
 
 The user's choice from doc/PC_INTERFACE_DESIGN_DIRECTION.md, implemented in
