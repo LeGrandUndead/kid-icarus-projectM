@@ -21,24 +21,11 @@ pub enum PresentationMode {
     LowerScreenPanel { automatic: bool },
     /// Development/regression comparison: both original screens.
     LegacyDualScreen,
-    /// An out-of-stage menu (title, Solo, chapter select...): both of the
-    /// game's pictures side by side on the one PC screen, the lower one
-    /// clickable, shown automatically while the game shows a menu screen.
-    MenuScreen,
 }
 
 /// Change the panel because of what the game is showing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum PanelRequest { Keep, Open, Close, Relayout }
-
-/// Why the lower screen was opened without the player asking.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum AutoPanel {
-    /// the in-game pause menu: a panel over the frozen gameplay view
-    Pause,
-    /// an out-of-stage menu screen: MenuScreen
-    MenuScreen,
-}
+pub enum PanelRequest { Keep, Open, Close }
 
 /// Consecutive frames of gameplay HUD without any menu art before an
 /// automatically opened pause panel closes again (a third of a second).
@@ -53,8 +40,8 @@ pub struct PcPresentation {
     pub boundary: bool,
     blocked_buttons: PadState,
     blocked_stick: bool,
-    /// The panel was opened for a detected menu, not by the player.
-    automatic: Option<AutoPanel>,
+    /// The panel was opened for a detected pause menu, not by the player.
+    automatic: bool,
     /// The player closed an automatic panel; wait until that menu is gone.
     suppressed: bool,
     gameplay_frames: u32,
@@ -64,10 +51,7 @@ impl PcPresentation {
     pub fn new(enabled: bool) -> Self { Self { enabled, ..Self::default() } }
     pub fn layout(&self, original: Screens, wide: bool) -> ScreenLayout {
         if self.enabled {
-            if self.access.is_some() {
-                return if self.automatic == Some(AutoPanel::MenuScreen) { ScreenLayout::MenuScreen { wide } }
-                    else { ScreenLayout::BottomOverlay { wide } };
-            }
+            if self.access.is_some() { return ScreenLayout::BottomOverlay { wide }; }
             if self.legacy { return if wide { ScreenLayout::StackedWide } else { ScreenLayout::Stacked }; }
             return if wide { ScreenLayout::TopWide } else { ScreenLayout::TopOnly };
         }
@@ -77,8 +61,7 @@ impl PcPresentation {
 
     pub fn mode(&self) -> PresentationMode {
         if !self.enabled { PresentationMode::Original }
-        else if self.access.is_some() && self.automatic == Some(AutoPanel::MenuScreen) { PresentationMode::MenuScreen }
-        else if self.access.is_some() { PresentationMode::LowerScreenPanel { automatic: self.automatic.is_some() } }
+        else if self.access.is_some() { PresentationMode::LowerScreenPanel { automatic: self.automatic } }
         else if self.legacy { PresentationMode::LegacyDualScreen }
         else { PresentationMode::Gameplay }
     }
@@ -88,45 +71,28 @@ impl PcPresentation {
         self.mode() == PresentationMode::Gameplay && captured && !runtime_menu
     }
 
-    /// The automatic panel kind, if the panel is open because of the game.
-    pub fn automatic(&self) -> Option<AutoPanel> { self.automatic.filter(|_| self.access.is_some()) }
-
-    /// Follows the game's own pause menu and its out-of-stage menu screens.
-    /// `allowed` is false while a runtime menu/modal owns input or the option
-    /// is off. Opening needs the menu's own art; closing needs positive
-    /// evidence of gameplay, never just missing art (loading, sub-panels).
+    /// Follows the game's own pause menu. `allowed` is false while a runtime
+    /// menu/modal owns input or the option is off.
     pub fn observe(&mut self, scene: BottomScene, allowed: bool) -> PanelRequest {
         if !self.enabled || self.legacy { return PanelRequest::Keep; }
-        // menu art beside gameplay HUD is not a menu screen
-        let want = if scene.menu_screen && !scene.pause_menu && scene.hud == 0 { Some(AutoPanel::MenuScreen) }
-            else if scene.pause_menu { Some(AutoPanel::Pause) } else { None };
-        if let Some(kind) = want {
+        if scene.pause_menu {
             self.gameplay_frames = 0;
-            if self.access.is_none() {
-                if allowed && !self.suppressed {
-                    self.automatic = Some(kind);
-                    return PanelRequest::Open;
-                }
-                return PanelRequest::Keep;
-            }
-            // retreating from a pause menu leads into the menus (and a
-            // menu screen never turns into a pause panel)
-            if self.automatic == Some(AutoPanel::Pause) && kind == AutoPanel::MenuScreen {
-                self.automatic = Some(kind);
-                return PanelRequest::Relayout;
+            if allowed && self.access.is_none() && !self.suppressed {
+                self.automatic = true;
+                return PanelRequest::Open;
             }
             return PanelRequest::Keep;
         }
-        if !scene.menu && !scene.menu_screen { self.suppressed = false; }
-        let Some(kind) = self.automatic() else { return PanelRequest::Keep };
+        if !scene.menu { self.suppressed = false; }
+        if !(self.automatic && self.access.is_some()) { return PanelRequest::Keep; }
+        // Closing needs positive evidence of gameplay, not just a missing
+        // label: option sub-panels may draw other art.
         if scene.fresh {
-            let gameplay = !scene.menu && !scene.menu_screen
-                && (scene.hud > 0 || (kind == AutoPanel::MenuScreen && scene.portraits > 0));
-            if gameplay { self.gameplay_frames += 1; } else { self.gameplay_frames = 0; }
+            if !scene.menu && scene.hud > 0 { self.gameplay_frames += 1; } else { self.gameplay_frames = 0; }
         }
         if self.gameplay_frames >= CLOSE_AFTER {
             self.gameplay_frames = 0;
-            self.automatic = None;
+            self.automatic = false;
             return PanelRequest::Close;
         }
         PanelRequest::Keep
@@ -135,8 +101,8 @@ impl PcPresentation {
     /// The panel closed for any reason. A player closing an automatic panel
     /// over a still-visible pause menu is respected until that menu ends.
     pub fn panel_closed(&mut self, by_player: bool, scene: BottomScene) {
-        if self.automatic.is_some() && by_player && (scene.pause_menu || scene.menu || scene.menu_screen) { self.suppressed = true; }
-        self.automatic = None;
+        if self.automatic && by_player && (scene.pause_menu || scene.menu) { self.suppressed = true; }
+        self.automatic = false;
         self.gameplay_frames = 0;
     }
 
@@ -206,35 +172,6 @@ mod tests {
         for _ in 0..100 { assert_eq!(p.observe(BottomScene { hud: 3, ..BottomScene::default() }, true), PanelRequest::Keep); }
         for _ in 0..CLOSE_AFTER - 1 { assert_eq!(p.observe(scene(false, false, 3), true), PanelRequest::Keep); }
         assert_eq!(p.observe(scene(false, false, 3), true), PanelRequest::Close);
-    }
-
-    #[test]
-    fn menu_screens_show_both_pictures_until_gameplay_starts() {
-        let menu = BottomScene { fresh: true, menu_screen: true, ..BottomScene::default() };
-        let loading = BottomScene { fresh: true, ..BottomScene::default() };
-        let dialogue = BottomScene { fresh: true, portraits: 2, ..BottomScene::default() };
-        let mut p = PcPresentation::new(true);
-        assert_eq!(p.observe(menu, true), PanelRequest::Open);
-        p.access = Some((Screens::TopOnly, None));
-        assert_eq!(p.mode(), PresentationMode::MenuScreen);
-        assert_eq!(p.layout(Screens::TopOnly, true), ScreenLayout::MenuScreen { wide: true });
-        assert_eq!(p.context(false, false), InputContext::PointerMenu);
-        // loading between the menus and a stage keeps the menu layout
-        for _ in 0..200 { assert_eq!(p.observe(loading, true), PanelRequest::Keep); }
-        // the stage's opening dialogue (portraits, no HUD yet) is gameplay
-        for _ in 0..CLOSE_AFTER - 1 { assert_eq!(p.observe(dialogue, true), PanelRequest::Keep); }
-        assert_eq!(p.observe(dialogue, true), PanelRequest::Close);
-        // a pause panel that leads into the menus becomes a menu screen
-        let mut q = PcPresentation::new(true);
-        assert_eq!(q.observe(scene(true, true, 0), true), PanelRequest::Open);
-        q.access = Some((Screens::TopOnly, None));
-        assert_eq!(q.observe(menu, true), PanelRequest::Relayout);
-        assert_eq!(q.mode(), PresentationMode::MenuScreen);
-        // portraits alone do not close a pause panel
-        let mut r = PcPresentation::new(true);
-        r.observe(scene(true, true, 0), true);
-        r.access = Some((Screens::TopOnly, None));
-        for _ in 0..100 { assert_eq!(r.observe(dialogue, true), PanelRequest::Keep); }
     }
 
     #[test]

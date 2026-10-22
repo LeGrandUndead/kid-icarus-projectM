@@ -207,8 +207,6 @@ fn capture_ui<M: GpuMemory>(memory:&mut M, draw:&Draw) {
     // Text drawn into a buffer first (power names): its latest host copy.
     let text=texture.drawn.and_then(|d| crate::kiu_ui::text(d.addr,[d.width,d.height]));
     let Some(role)=(if text.is_some() {Some(crate::kiu_ui::Role::Unlisted)} else {crate::kiu_ui::role(texture.source_hash)}) else {reject("no source hash");return};
-    // menu-screen art is evidence of the menu, drawn where the game drew it
-    if role==crate::kiu_ui::Role::Screen { crate::kiu_ui::note_screen_art(); return; }
     // Colors are only reproduced for the standard 2D layout pipeline: one
     // texture, normal alpha blending. Menu atlases are only evidence (UVs).
     let exact = draw.registers[REG_TEXTURE_CONFIG]&7==1 && draw.registers[0x101]==0x01760000;
@@ -222,7 +220,29 @@ fn capture_ui<M: GpuMemory>(memory:&mut M, draw:&Draw) {
     if let Some(reason)=failed {reject(reason);return;}
     // Text and counters are batches of quads in one draw (October 15 census:
     // single-quad capture dropped every digit). Each quad becomes one layer.
-    let Some(inputs)=vertex_inputs(memory,s,s.indices.len()/6*4) else {return};
+    let vertices=s.indices.len()/6*4;
+    let mut inputs=Vec::with_capacity(vertices);
+    for vertex in 0..vertices {
+        let input=match s.inputs {
+            Inputs::Decoded(values)=>{let Some(v)=values.get(vertex) else{return}; *v},
+            Inputs::Raw(raw)=>{
+                let mut values=raw.defaults;
+                for (register,field) in raw.fields.iter().enumerate() {
+                    if let Some(field)=field {
+                        let (addr,_)=raw.arrays[field.array];let size=super::component_size(field.ty);
+                        let at=addr+vertex as u32*field.stride+field.offset;
+                        let Some(bytes)=memory.slice(at,(size*field.count) as usize) else{return};
+                        let mut value=[0.0,0.0,0.0,1.0];
+                        for (i,slot) in value.iter_mut().enumerate().take(field.count as usize) {
+                            *slot=super::component(&bytes[i*size as usize..(i+1)*size as usize],field.ty);
+                        }
+                        values[register]=value;
+                    }
+                }
+                values
+            }
+        };inputs.push(input);
+    }
     let outputs=crate::shader::run_vertices(s.unit,&inputs);
     let quads:Vec<_>=outputs.chunks_exact(4).filter_map(|quad| {
         let primary=quad[0][1];
@@ -243,58 +263,6 @@ fn capture_ui<M: GpuMemory>(memory:&mut M, draw:&Draw) {
         }
     }
 }
-/// The input registers of a draw's first `count` vertices, worked out on
-/// the CPU (for the PC interface's own look at a draw).
-fn vertex_inputs<M: GpuMemory>(memory:&mut M, s:&Shading, count:usize) -> Option<Vec<[Vec4;INPUT_REGISTERS]>> {
-    let mut inputs=Vec::with_capacity(count);
-    for vertex in 0..count {
-        let input=match s.inputs {
-            Inputs::Decoded(values)=>*values.get(vertex)?,
-            Inputs::Raw(raw)=>{
-                let mut values=raw.defaults;
-                for (register,field) in raw.fields.iter().enumerate() {
-                    if let Some(field)=field {
-                        let (addr,_)=raw.arrays[field.array];let size=super::component_size(field.ty);
-                        let at=addr+vertex as u32*field.stride+field.offset;
-                        let bytes=memory.slice(at,(size*field.count) as usize)?;
-                        let mut value=[0.0,0.0,0.0,1.0];
-                        for (i,slot) in value.iter_mut().enumerate().take(field.count as usize) {
-                            *slot=super::component(&bytes[i*size as usize..(i+1)*size as usize],field.ty);
-                        }
-                        values[register]=value;
-                    }
-                }
-                values
-            }
-        };inputs.push(input);
-    }
-    Some(inputs)
-}
-
-/// Whether a lower-screen draw covers the whole screen (a menu background,
-/// see kiu_ui::menu), from its first 64 vertices shaded on the CPU.
-fn kiu_menu_background<M: GpuMemory>(memory:&mut M, draw:&Draw) -> bool {
-    let Geometry::Shaded(s)=draw.geometry else {return false};
-    let count=s.indices.iter().copied().max().map_or(0,|m|m as usize+1);
-    crate::kiu_ui::menu::trace(format_args!("draw target {:#x} {}x{} vertices {} indices {} blend {:#x} op {:#x} texcfg {:#x}",
-        draw.target,draw.width,draw.height,count,s.indices.len(),draw.registers[REG_BLEND_FUNC],draw.registers[REG_COLOR_OPERATION],draw.registers[REG_TEXTURE_CONFIG]));
-    if count==0 || count>1024 {return false;}
-    let Some(inputs)=vertex_inputs(memory,s,count) else {
-        crate::kiu_ui::menu::trace(format_args!("  inputs unreadable ({})", match s.inputs { Inputs::Decoded(_) => "decoded", Inputs::Raw(_) => "raw" }));
-        return false;
-    };
-    // a vertex the CPU cannot place counts as off screen
-    let screen:Vec<[f32;2]>=crate::shader::run_vertices(s.unit,&inputs).iter().map(|o| {
-        let p=o[0];
-        if !p.iter().all(|v|v.is_finite()) || p[3].abs()<0.0001 {[-1e4,-1e4]}
-        else {[(1.0-p[1]/p[3])*160.0,(1.0-p[0]/p[3])*120.0]}
-    }).collect();
-    let background=crate::kiu_ui::menu::is_background(s.indices.chunks_exact(3)
-        .map(|t| [t[0],t[1],t[2]].map(|i| screen.get(i as usize).copied().unwrap_or([-1e4;2]))));
-    crate::kiu_ui::menu::trace(format_args!("  background {background}, first vertices {:?}", &screen[..screen.len().min(3)]));
-    background
-}
-
 /// Longest text/counter batch copied from one lower-screen draw.
 const MAX_UI_QUADS: usize = 64;
 
@@ -3069,14 +3037,6 @@ impl Hardware {
             let _profile = crate::profile::scope(crate::profile::Phase::PcInterface);
             capture_ui(memory,draw);
         }
-        // a menu screen laid over the upper picture (kiu_ui::menu): its
-        // lower screen without backgrounds, alpha as coverage
-        let menu_bottom = crate::kiu_ui::menu::menu_overlay()
-            && matches!(draw.geometry, Geometry::Shaded(s) if s.viewport == (0.0, 0.0, 240.0, 320.0));
-        if menu_bottom {
-            crate::kiu_ui::menu::note_bottom_target(draw.target, draw.width * draw.height * draw.format.bytes_per_pixel() as u32);
-            if kiu_menu_background(memory, draw) { return Ok(()); }
-        }
         let [left, bottom, right, top] = draw.scissor;
         let (left, bottom) = (left.max(0), bottom.max(0));
         let (right, top) = (right.min(draw.width as i32), top.min(draw.height as i32));
@@ -3239,7 +3199,6 @@ impl Hardware {
         // only the bits compile_pipeline reads, so draws that differ
         // elsewhere share a pipeline
         let blend = (r[REG_COLOR_OPERATION] & 0x100 != 0).then_some(r[REG_BLEND_FUNC] & 0xFFFF_0707);
-        let blend = if menu_bottom { blend.map(crate::kiu_ui::menu::coverage_blend) } else { blend };
         let mut logic_op = LogicOp::read(r);
         let mut color_mask = color_mask;
         if !self.logic_ops {
@@ -3607,9 +3566,7 @@ impl Hardware {
             t.scale.1 as i32,
             t.flip as i32,
             format_index(t.input_format),
-            // a menu screen's lower picture keeps its coverage on the GPU
-            // for the presenter (kiu_ui::menu); guest memory has no alpha
-            if crate::kiu_ui::menu::keeps_alpha(addr) { format_index(ColorFormat::Rgba8) } else { format_index(t.output_format) },
+            format_index(t.output_format),
             row as i32 * n,
             input_size.1 as i32 * n,
         ];

@@ -832,8 +832,6 @@ impl App {
 
     fn show_layout(&mut self, screens: Screens) {
         self.layout = screens;
-        // a menu screen's lower picture is drawn for laying over the upper one
-        zakuro_gpu::kiu_ui::set_menu_overlay(self.presentation.mode() == pc_presentation::PresentationMode::MenuScreen);
         if let Some(backend) = &mut self.backend { backend.set_layout(self.presentation.layout(screens, self.experimental_wide)); }
     }
 
@@ -1285,23 +1283,12 @@ impl App {
             && !self.gui.as_ref().is_some_and(Gui::wants_keyboard);
         match self.presentation.observe(scene, allowed) {
             pc_presentation::PanelRequest::Open => {
+                log::info!("Game pause menu shown: opening the lower-screen panel (Tab or Esc returns)");
                 self.open_screen_access();
-                match self.presentation.automatic() {
-                    Some(pc_presentation::AutoPanel::MenuScreen) =>
-                        log::info!("Game menu screen: both pictures on one screen, the right one clickable"),
-                    _ => log::info!("Game pause menu shown: opening the lower-screen panel (Tab or Esc returns)"),
-                }
-            }
-            pc_presentation::PanelRequest::Relayout => {
-                log::info!("Game menu screen after the pause menu: both pictures on one screen");
-                self.show_layout(self.layout);
             }
             pc_presentation::PanelRequest::Close => {
-                let menu = self.presentation.automatic() == Some(pc_presentation::AutoPanel::MenuScreen);
-                log::info!("Gameplay resumed: closing the {}", if menu { "menu screen" } else { "pause panel" });
+                log::info!("Gameplay resumed: closing the pause panel");
                 self.close_screen_access_by(true, false);
-                // leaving the menus for a stage: aim with the mouse again
-                if menu { self.set_mouse_capture(true); }
             }
             pc_presentation::PanelRequest::Keep => {}
         }
