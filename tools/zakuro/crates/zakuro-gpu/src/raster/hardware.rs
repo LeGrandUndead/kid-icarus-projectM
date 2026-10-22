@@ -276,16 +276,23 @@ fn vertex_inputs<M: GpuMemory>(memory:&mut M, s:&Shading, count:usize) -> Option
 fn kiu_menu_background<M: GpuMemory>(memory:&mut M, draw:&Draw) -> bool {
     let Geometry::Shaded(s)=draw.geometry else {return false};
     let count=s.indices.iter().copied().max().map_or(0,|m|m as usize+1);
-    if count==0 || count>64 {return false;}
-    let Some(inputs)=vertex_inputs(memory,s,count) else {return false};
-    let mut b=[f32::INFINITY,f32::INFINITY,f32::NEG_INFINITY,f32::NEG_INFINITY];
-    for o in crate::shader::run_vertices(s.unit,&inputs) {
+    crate::kiu_ui::menu::trace(format_args!("draw target {:#x} {}x{} vertices {} indices {} blend {:#x} op {:#x} texcfg {:#x}",
+        draw.target,draw.width,draw.height,count,s.indices.len(),draw.registers[REG_BLEND_FUNC],draw.registers[REG_COLOR_OPERATION],draw.registers[REG_TEXTURE_CONFIG]));
+    if count==0 || count>1024 {return false;}
+    let Some(inputs)=vertex_inputs(memory,s,count) else {
+        crate::kiu_ui::menu::trace(format_args!("  inputs unreadable ({})", match s.inputs { Inputs::Decoded(_) => "decoded", Inputs::Raw(_) => "raw" }));
+        return false;
+    };
+    // a vertex the CPU cannot place counts as off screen
+    let screen:Vec<[f32;2]>=crate::shader::run_vertices(s.unit,&inputs).iter().map(|o| {
         let p=o[0];
-        if !p.iter().all(|v|v.is_finite()) || p[3].abs()<0.0001 {return false;}
-        let (x,y)=((1.0-p[1]/p[3])*160.0,(1.0-p[0]/p[3])*120.0);
-        b=[b[0].min(x),b[1].min(y),b[2].max(x),b[3].max(y)];
-    }
-    crate::kiu_ui::menu::is_background(b)
+        if !p.iter().all(|v|v.is_finite()) || p[3].abs()<0.0001 {[-1e4,-1e4]}
+        else {[(1.0-p[1]/p[3])*160.0,(1.0-p[0]/p[3])*120.0]}
+    }).collect();
+    let background=crate::kiu_ui::menu::is_background(s.indices.chunks_exact(3)
+        .map(|t| [t[0],t[1],t[2]].map(|i| screen.get(i as usize).copied().unwrap_or([-1e4;2]))));
+    crate::kiu_ui::menu::trace(format_args!("  background {background}, first vertices {:?}", &screen[..screen.len().min(3)]));
+    background
 }
 
 /// Longest text/counter batch copied from one lower-screen draw.
@@ -3600,7 +3607,9 @@ impl Hardware {
             t.scale.1 as i32,
             t.flip as i32,
             format_index(t.input_format),
-            format_index(t.output_format),
+            // a menu screen's lower picture keeps its coverage on the GPU
+            // for the presenter (kiu_ui::menu); guest memory has no alpha
+            if crate::kiu_ui::menu::keeps_alpha(addr) { format_index(ColorFormat::Rgba8) } else { format_index(t.output_format) },
             row as i32 * n,
             input_size.1 as i32 * n,
         ];

@@ -333,6 +333,7 @@ impl Gpu {
             // a menu screen's lower picture starts transparent (kiu_ui::menu);
             // guest memory keeps what the game wrote
             let mut cleared;
+            crate::kiu_ui::menu::trace(format_args!("fill {address:#x} +{:#x} value {value:#x} width {width}", buffer.len()));
             let gpu: &[u8] = match crate::kiu_ui::menu::transparent_part(address, buffer.len() as u32) {
                 Some(range) => { cleared = buffer.clone(); cleared[range].fill(0); &cleared }
                 None => &buffer,

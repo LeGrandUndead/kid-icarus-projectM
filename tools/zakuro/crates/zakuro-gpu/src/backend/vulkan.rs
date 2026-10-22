@@ -703,6 +703,10 @@ impl VulkanPresenter {
             for (index, viewport, effect) in draws {
                 let pipeline = if effect == COVERAGE { self.overlay_pipeline } else { self.pipeline };
                 device.cmd_bind_pipeline(command_buffer, vk::PipelineBindPoint::GRAPHICS, pipeline);
+                if effect == COVERAGE {
+                    crate::kiu_ui::menu::trace(format_args!("present lower picture from {}", match sources[index] {
+                        Source::Nothing => "nothing", Source::Own => "an uploaded copy (no alpha)", Source::Gpu(_) => "the renderer's image" }));
+                }
                 let (descriptor, crop) = match sources[index] {
                     Source::Nothing => continue,
                     Source::Own => (self.screens[index].descriptor, WHOLE),
