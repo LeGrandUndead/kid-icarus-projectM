@@ -330,7 +330,14 @@ impl Gpu {
         self.fills += 1;
         #[cfg(feature = "vulkan")]
         if let Some(hardware) = self.resources.hardware.as_mut() {
-            if let Err(error) = hardware.filled(address, &buffer) {
+            // a menu screen's lower picture starts transparent (kiu_ui::menu);
+            // guest memory keeps what the game wrote
+            let mut cleared;
+            let gpu: &[u8] = match crate::kiu_ui::menu::transparent_part(address, buffer.len() as u32) {
+                Some(range) => { cleared = buffer.clone(); cleared[range].fill(0); &cleared }
+                None => &buffer,
+            };
+            if let Err(error) = hardware.filled(address, gpu) {
                 log::error!("the GPU could not clear a buffer, {error}");
             }
         }

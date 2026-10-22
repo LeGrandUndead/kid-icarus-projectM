@@ -21,9 +21,9 @@ const FRAMES_IN_FLIGHT: usize = 2;
 /// a whole image, as the area of it a screen takes and the bounds its
 /// samples keep within, for the fragment shader.
 const WHOLE: [f32; 8] = [0.0, 0.0, 1.0, 1.0, 0.0, 0.0, 1.0, 1.0];
-/// present.frag's effect: none, and the menu backdrop's blur and dimming.
-const NO_EFFECT: [f32; 4] = [0.0; 4];
-const BACKDROP: [f32; 4] = [0.012, 0.38, 0.0, 0.0];
+/// present.frag's effect: an opaque picture, or one laid over by coverage.
+const OPAQUE: [f32; 4] = [0.0; 4];
+const COVERAGE: [f32; 4] = [1.0, 0.0, 0.0, 0.0];
 
 /// what a screen is drawn from in a frame.
 #[derive(Clone, Copy)]
@@ -87,6 +87,8 @@ pub struct VulkanPresenter {
     descriptor_pool: vk::DescriptorPool,
     pipeline_layout: vk::PipelineLayout,
     pipeline: vk::Pipeline,
+    /// the same, blending a premultiplied picture over what is there
+    overlay_pipeline: vk::Pipeline,
     sampler: vk::Sampler,
     /// a set per frame in flight and screen, pointed at the renderer's
     /// images when screens are drawn straight from them.
@@ -205,7 +207,7 @@ impl VulkanPresenter {
         let render_pass = create_render_pass(&device, surface_format.format)?;
 
         let descriptor_layout = create_descriptor_layout(&device)?;
-        let (pipeline_layout, pipeline) =
+        let (pipeline_layout, pipeline, overlay_pipeline) =
             create_pipeline(&device, render_pass, descriptor_layout)?;
         let srgb = matches!(surface_format.format, vk::Format::B8G8R8A8_SRGB | vk::Format::R8G8B8A8_SRGB);
         let overlay = OverlayPainter::new(&device, render_pass, FRAMES_IN_FLIGHT, srgb)?;
@@ -348,6 +350,7 @@ impl VulkanPresenter {
             descriptor_pool,
             pipeline_layout,
             pipeline,
+            overlay_pipeline,
             sampler,
             gpu_sets,
             shared: ManuallyDrop::into_inner(shared),
@@ -693,12 +696,13 @@ impl VulkanPresenter {
             );
 
             let (top, bottom) = layout(self.extent.width, self.extent.height, self.arrangement);
-            // the backdrop first (menu screens), then the pictures over it
-            let backdrop = super::backdrop(self.extent.width, self.extent.height, self.arrangement);
-            let draws = backdrop.map(|v| (0, v, BACKDROP)).into_iter()
-                .chain(top.map(|v| (0, v, NO_EFFECT)))
-                .chain(bottom.map(|v| (1, v, NO_EFFECT)));
+            // a menu screen's lower picture is laid over the upper one
+            let blends = super::bottom_blends(self.arrangement);
+            let draws = top.map(|v| (0, v, OPAQUE)).into_iter()
+                .chain(bottom.map(|v| (1, v, if blends { COVERAGE } else { OPAQUE })));
             for (index, viewport, effect) in draws {
+                let pipeline = if effect == COVERAGE { self.overlay_pipeline } else { self.pipeline };
+                device.cmd_bind_pipeline(command_buffer, vk::PipelineBindPoint::GRAPHICS, pipeline);
                 let (descriptor, crop) = match sources[index] {
                     Source::Nothing => continue,
                     Source::Own => (self.screens[index].descriptor, WHOLE),
@@ -889,6 +893,7 @@ impl Drop for VulkanPresenter {
             self.device.destroy_command_pool(self.command_pool, None);
             self.device.destroy_sampler(self.sampler, None);
             self.device.destroy_pipeline(self.pipeline, None);
+            self.device.destroy_pipeline(self.overlay_pipeline, None);
             self.device.destroy_pipeline_layout(self.pipeline_layout, None);
             self.device
                 .destroy_descriptor_pool(self.descriptor_pool, None);
@@ -1041,7 +1046,7 @@ fn create_pipeline(
     device: &ash::Device,
     render_pass: vk::RenderPass,
     descriptor_layout: vk::DescriptorSetLayout,
-) -> Result<(vk::PipelineLayout, vk::Pipeline), PresentError> {
+) -> Result<(vk::PipelineLayout, vk::Pipeline, vk::Pipeline), PresentError> {
     let vertex = create_shader_module(device, VERTEX_SPIRV)?;
     let fragment = create_shader_module(device, FRAGMENT_SPIRV)?;
 
@@ -1089,6 +1094,16 @@ fn create_pipeline(
         .color_write_mask(vk::ColorComponentFlags::RGBA)];
     let blend =
         vk::PipelineColorBlendStateCreateInfo::default().attachments(&blend_attachments);
+    let over_attachments = [vk::PipelineColorBlendAttachmentState::default()
+        .blend_enable(true)
+        .src_color_blend_factor(vk::BlendFactor::ONE)
+        .dst_color_blend_factor(vk::BlendFactor::ONE_MINUS_SRC_ALPHA)
+        .color_blend_op(vk::BlendOp::ADD)
+        .src_alpha_blend_factor(vk::BlendFactor::ONE)
+        .dst_alpha_blend_factor(vk::BlendFactor::ONE_MINUS_SRC_ALPHA)
+        .alpha_blend_op(vk::BlendOp::ADD)
+        .color_write_mask(vk::ColorComponentFlags::RGBA)];
+    let over = vk::PipelineColorBlendStateCreateInfo::default().attachments(&over_attachments);
     let dynamic_states = [vk::DynamicState::VIEWPORT, vk::DynamicState::SCISSOR];
     let dynamic =
         vk::PipelineDynamicStateCreateInfo::default().dynamic_states(&dynamic_states);
@@ -1106,8 +1121,10 @@ fn create_pipeline(
         .render_pass(render_pass)
         .subpass(0);
 
+    let over_info = info.color_blend_state(&over);
+    let info = info.color_blend_state(&blend);
     let pipelines = unsafe {
-        device.create_graphics_pipelines(vk::PipelineCache::null(), &[info], None)
+        device.create_graphics_pipelines(vk::PipelineCache::null(), &[info, over_info], None)
     }
     .map_err(|(_, error)| vk_fail("creating the pipeline")(error))?;
 
@@ -1116,7 +1133,7 @@ fn create_pipeline(
         device.destroy_shader_module(fragment, None);
     }
 
-    Ok((pipeline_layout, pipelines[0]))
+    Ok((pipeline_layout, pipelines[0], pipelines[1]))
 }
 
 pub(super) fn create_shader_module(

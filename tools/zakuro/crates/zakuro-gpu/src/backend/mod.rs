@@ -107,9 +107,10 @@ pub enum ScreenLayout {
     BottomOverlay { wide: bool },
     /// Legacy two-screen composition retaining the already-selected wide view.
     StackedWide,
-    /// An out-of-stage menu on one PC screen: the game's upper picture
-    /// (preview, description) and its interactive lower one side by side,
-    /// as large as the window allows, both live and the lower one clickable.
+    /// An out-of-stage menu on one PC screen: the game's upper picture (the
+    /// room, previews) fills the window as in gameplay, and the lower one's
+    /// menu, drawn without its backgrounds over a transparent buffer
+    /// (kiu_ui::menu), is laid over it, large, on the right, clickable.
     MenuScreen { wide: bool },
 }
 
@@ -133,19 +134,15 @@ impl ScreenLayout {
 /// aspect ratio and centring them. a screen that does not show has no place.
 pub fn layout(window_width: u32, window_height: u32, arrangement: ScreenLayout) -> (Option<Viewport>, Option<Viewport>) {
     if let ScreenLayout::MenuScreen { wide } = arrangement {
-        // the interactive lower picture is the menu itself, so it is the
-        // larger one; the upper picture (preview, description) beside it
-        let top_aspect = if wide { 16.0 / 9.0 } else { 5.0 / 3.0 };
-        let (w, h) = (window_width as f32, window_height as f32);
-        const TOP: f32 = 0.65; // upper picture height per lower picture height
-        const GAP: f32 = 0.05; // between them, per lower picture height
-        let fits_width = w * 0.95 / (TOP * top_aspect + GAP + 4.0 / 3.0);
-        let height = (h * 0.68).min(fits_width);
-        let (top_height, top_width, bottom_width) = (height * TOP, height * TOP * top_aspect, height * 4.0 / 3.0);
-        let x = (w - top_width - GAP * height - bottom_width) * 0.5;
-        let y = (h - height) * 0.5;
-        return (Some(Viewport { x, y: (h - top_height) * 0.5, width: top_width, height: top_height }),
-            Some(Viewport { x: x + top_width + GAP * height, y, width: bottom_width, height }));
+        let (top, _) = layout(window_width, window_height, if wide { ScreenLayout::TopWide } else { ScreenLayout::TopOnly });
+        let Some(top) = top else { return (None, None) };
+        // the menu at 78% of the view's height, its right edge a margin in
+        let height = top.height * 0.78;
+        let width = (height * 4.0 / 3.0).min(top.width * 0.9);
+        let height = width * 0.75;
+        let margin = top.height * 0.04;
+        return (Some(top), Some(Viewport { x: top.x + top.width - width - margin,
+            y: top.y + (top.height - height) * 0.5, width, height }));
     }
     if arrangement == ScreenLayout::StackedWide {
         let height=(window_height as f32*0.5).min(window_width as f32*9.0/16.0);
@@ -209,16 +206,9 @@ pub fn layout(window_width: u32, window_height: u32, arrangement: ScreenLayout) 
     (top, bottom)
 }
 
-/// Where the upper picture is drawn again, blurred and dimmed, behind the
-/// layout (menu screens: the game's own live art fills the window instead of
-/// black bars). It covers the window, cropped to keep its aspect.
-pub fn backdrop(window_width: u32, window_height: u32, arrangement: ScreenLayout) -> Option<Viewport> {
-    let ScreenLayout::MenuScreen { wide } = arrangement else { return None };
-    let aspect = if wide { 16.0 / 9.0 } else { 5.0 / 3.0 };
-    let (w, h) = (window_width as f32, window_height as f32);
-    let (width, height) = if w / h > aspect { (w, w / aspect) } else { (h * aspect, h) };
-    Some(Viewport { x: (w - width) * 0.5, y: (h - height) * 0.5, width, height })
-}
+/// Whether the lower picture is laid over the upper one by its own
+/// coverage (alpha) instead of covering its rectangle.
+pub fn bottom_blends(arrangement: ScreenLayout) -> bool { matches!(arrangement, ScreenLayout::MenuScreen { .. }) }
 
 #[derive(Debug, thiserror::Error)]
 pub enum PresentError {
@@ -267,23 +257,20 @@ mod tests {
         }
     }
     #[test]
-    fn a_menu_screen_shows_both_pictures_side_by_side_inside_any_window() {
+    fn a_menu_screen_fills_the_window_with_the_menu_over_the_view() {
         for (w,h) in [(1920,1080),(1280,720),(800,1200),(2560,1080),(640,480)] {
             for wide in [true,false] {
                 let (top,bottom)=layout(w,h,ScreenLayout::MenuScreen { wide });
+                let view=layout(w,h,if wide {ScreenLayout::TopWide} else {ScreenLayout::TopOnly}).0;
+                assert_eq!(top,view, "the upper picture is the whole view, as in gameplay");
                 let (t,b)=(top.unwrap(),bottom.unwrap());
-                assert!((t.width/t.height-if wide {16.0/9.0} else {5.0/3.0}).abs()<0.0001);
                 assert!((b.width/b.height-4.0/3.0).abs()<0.0001);
-                assert!(b.height>t.height, "the menu itself is the larger picture");
-                assert!(t.x>=0.0 && t.x+t.width<b.x && b.x+b.width<=w as f32+0.001 && b.y>=0.0 && b.y+b.height<=h as f32);
-                let d=backdrop(w,h,ScreenLayout::MenuScreen { wide }).unwrap();
-                assert!(d.x<=0.0 && d.y<=0.0 && d.x+d.width>=w as f32-0.001 && d.y+d.height>=h as f32-0.001);
+                assert!(b.x>=t.x && b.y>=t.y && b.x+b.width<=t.x+t.width+0.001 && b.y+b.height<=t.y+t.height+0.001);
             }
         }
-        let (t,b)=layout(1920,1080,ScreenLayout::MenuScreen { wide: true });
-        let (t,b)=(t.unwrap(),b.unwrap());
-        assert!(b.height>680.0 && t.height>440.0, "large enough to read and click at 1080p");
-        assert!(backdrop(1920,1080,ScreenLayout::TopWide).is_none());
+        let (_,b)=layout(1920,1080,ScreenLayout::MenuScreen { wide: true });
+        assert!(b.unwrap().height>800.0, "large enough to read and click at 1080p");
+        assert!(bottom_blends(ScreenLayout::MenuScreen { wide: true }) && !bottom_blends(ScreenLayout::TopWide));
     }
     #[test]
     fn legacy_composition_does_not_squeeze_an_existing_wide_camera() {

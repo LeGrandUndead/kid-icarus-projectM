@@ -832,6 +832,8 @@ impl App {
 
     fn show_layout(&mut self, screens: Screens) {
         self.layout = screens;
+        // a menu screen's lower picture is drawn for laying over the upper one
+        zakuro_gpu::kiu_ui::set_menu_overlay(self.presentation.mode() == pc_presentation::PresentationMode::MenuScreen);
         if let Some(backend) = &mut self.backend { backend.set_layout(self.presentation.layout(screens, self.experimental_wide)); }
     }
 

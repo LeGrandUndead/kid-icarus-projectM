@@ -17,6 +17,8 @@ mod bake;
 pub mod camera;
 pub mod config;
 pub mod layout;
+pub mod menu;
+pub use menu::set_menu_overlay;
 pub mod scene;
 
 use std::collections::{HashMap, HashSet};
