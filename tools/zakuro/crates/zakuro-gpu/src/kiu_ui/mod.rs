@@ -39,6 +39,9 @@ pub enum Role {
     Insert,
     /// Known but decorative bottom-screen art (backgrounds, chapter titles).
     Decor,
+    /// Art of the out-of-stage menus (`us/menu/*/menu/bind.arc`): evidence
+    /// of which menu screen is up, on either screen. Never relocated.
+    Screen,
     /// Not in the catalog, typically system-font text (power names). Only
     /// relocated when it lies inside a HUD island, as part of that layout.
     Unlisted,
@@ -52,6 +55,7 @@ impl Role {
             "menu" => Role::Menu,
             "decor" => Role::Decor,
             "insert" => Role::Insert,
+            "screen" => Role::Screen,
             _ => return None,
         })
     }
@@ -182,6 +186,30 @@ fn parse_catalog(text: &str) -> (HashMap<u64, Source>, Vec<String>) {
     (catalog, names)
 }
 
+/// The save select's own art (menu 020): the speech bubble atlas on the
+/// upper screen and the three books on the lower one. Any of it drawn means
+/// the save select is up.
+const SAVE_SELECT_ART: [&str; 4] = ["menu020/MenSelfileUp0011", "menu020/MenSelfileBook0001",
+    "menu020/MenSelfileBook0002", "menu020/MenSelfileBook0003"];
+
+/// Hashes of SAVE_SELECT_ART, fixed once the catalog is read, so every draw
+/// of either screen can be checked without a lock.
+static SAVE_SELECT_HASHES: OnceLock<HashSet<u64>> = OnceLock::new();
+/// Draws of save-select art since the last end_frame.
+static SAVE_SELECT_DRAWS: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+
+fn save_select_hashes(catalog: &HashMap<u64, Source>) -> HashSet<u64> {
+    catalog.iter().filter(|(_, s)| s.role == Role::Screen && SAVE_SELECT_ART.contains(&s.name.as_str()))
+        .map(|(&hash, _)| hash).collect()
+}
+
+/// A draw on either screen sampled this original texture.
+pub(crate) fn note_texture(hash: u64) {
+    if SAVE_SELECT_HASHES.get().is_some_and(|set| set.contains(&hash)) {
+        SAVE_SELECT_DRAWS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    }
+}
+
 fn state() -> Option<&'static Mutex<State>> {
     static STATE: OnceLock<Option<Mutex<State>>> = OnceLock::new();
     STATE.get_or_init(|| {
@@ -190,8 +218,13 @@ fn state() -> Option<&'static Mutex<State>> {
         let (catalog, names) = parse_catalog(&text);
         if catalog.is_empty() { return None; }
         let count = |role| catalog.values().filter(|s| s.role == role).count();
-        log::info!("Original PC interface layers: {} portrait, {} insert, {} HUD, {} menu, {} decor textures",
-            count(Role::Portrait), count(Role::Insert), count(Role::Hud), count(Role::Menu), count(Role::Decor));
+        log::info!("Original PC interface layers: {} portrait, {} insert, {} HUD, {} menu, {} decor, {} menu-screen textures",
+            count(Role::Portrait), count(Role::Insert), count(Role::Hud), count(Role::Menu), count(Role::Decor), count(Role::Screen));
+        let save_select = save_select_hashes(&catalog);
+        if save_select.is_empty() {
+            log::warn!("The UI catalog has no save-select art: the save select stays a Tab panel (run tools/recomp/prepare_native_ui_sources.py)");
+        }
+        let _ = SAVE_SELECT_HASHES.set(save_select);
         let (jobs, done) = std::sync::mpsc::channel();
         crate::replacements::hud_pack_enabled(); // starts decoding the HD HUD atlases
         Some(Mutex::new(State { catalog, names, next: 1u64 << 61, census: census::Census::from_environment(),
@@ -243,6 +276,7 @@ pub fn end_frame() -> BottomScene {
     s.scene = scene::classify(s.frame, fresh, s.shown.iter().map(|l| scene::Evidence {
         role: l.role, atlas: &names[l.name], uv: l.uv, island: l.island.is_some(),
     }));
+    s.scene.save_select = SAVE_SELECT_DRAWS.swap(0, std::sync::atomic::Ordering::Relaxed) > 0;
     if let Some(census) = &mut s.census { census.record(s.frame, fresh, &s.shown, names); }
     evict(s);
     s.scene
@@ -643,6 +677,13 @@ mod tests {
         assert_eq!(c[&0xEF].name, "gm_01");
         assert!(!c.contains_key(&0x12));
         assert!(names.contains(&"gc_00".to_owned()));
+    }
+    #[test]
+    fn save_select_art_is_known_by_name_and_role() {
+        let (c, _) = parse_catalog("A1\tscreen\tmenu020/MenSelfileUp0011\tmenu/020\nA2\tscreen\tmenu020/MenSelfileBook0002\tx\n\
+            A3\tscreen\tmenu040/MenSelfileUp0011\tx\nA4\tdecor\tmenu020/MenSelfileBook0001\tx\nA5\tscreen\tmenu020/MenCmnBack0002\tx\n");
+        let set = save_select_hashes(&c);
+        assert_eq!(set, [0xA1, 0xA2].into_iter().collect());
     }
     #[test]
     fn original_portrait_uv_uses_top_down_host_texture_rows() {

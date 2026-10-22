@@ -1283,11 +1283,16 @@ impl App {
             && !self.gui.as_ref().is_some_and(Gui::wants_keyboard);
         match self.presentation.observe(scene, allowed) {
             pc_presentation::PanelRequest::Open => {
-                log::info!("Game pause menu shown: opening the lower-screen panel (Tab or Esc returns)");
                 self.open_screen_access();
+                if self.presentation.automatic() == Some(pc_presentation::AutoPanel::SaveSelect) {
+                    log::info!("Save select: bubble and books on one screen, click a book (Tab shows the plain view)");
+                } else {
+                    log::info!("Game pause menu shown: opening the lower-screen panel (Tab or Esc returns)");
+                }
             }
             pc_presentation::PanelRequest::Close => {
-                log::info!("Gameplay resumed: closing the pause panel");
+                let save_select = self.presentation.automatic() == Some(pc_presentation::AutoPanel::SaveSelect);
+                log::info!("{}", if save_select { "Save select left: back to the usual view" } else { "Gameplay resumed: closing the pause panel" });
                 self.close_screen_access_by(true, false);
             }
             pc_presentation::PanelRequest::Keep => {}

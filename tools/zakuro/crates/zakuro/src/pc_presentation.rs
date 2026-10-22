@@ -21,6 +21,18 @@ pub enum PresentationMode {
     LowerScreenPanel { automatic: bool },
     /// Development/regression comparison: both original screens.
     LegacyDualScreen,
+    /// The game's save select on one screen: its bubble above its books,
+    /// the books clickable (ScreenLayout::SaveSelect), while the game shows it.
+    SaveSelect,
+}
+
+/// Why the lower screen was opened without the player asking.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AutoPanel {
+    /// the in-game pause menu: a panel over the frozen gameplay view
+    Pause,
+    /// the save select, composed as one scene
+    SaveSelect,
 }
 
 /// Change the panel because of what the game is showing.
@@ -30,6 +42,9 @@ pub enum PanelRequest { Keep, Open, Close }
 /// Consecutive frames of gameplay HUD without any menu art before an
 /// automatically opened pause panel closes again (a third of a second).
 const CLOSE_AFTER: u32 = 20;
+/// Frames without the save select's art before its layout ends (a quarter of
+/// a second: frames the game skips or fades through do not flicker it).
+const SAVE_SELECT_GONE: u32 = 15;
 
 #[derive(Default)]
 pub struct PcPresentation {
@@ -40,18 +55,23 @@ pub struct PcPresentation {
     pub boundary: bool,
     blocked_buttons: PadState,
     blocked_stick: bool,
-    /// The panel was opened for a detected pause menu, not by the player.
-    automatic: bool,
+    /// The panel was opened for a detected menu, not by the player.
+    automatic: Option<AutoPanel>,
     /// The player closed an automatic panel; wait until that menu is gone.
     suppressed: bool,
     gameplay_frames: u32,
+    /// Consecutive frames without save-select art.
+    away_frames: u32,
 }
 
 impl PcPresentation {
     pub fn new(enabled: bool) -> Self { Self { enabled, ..Self::default() } }
     pub fn layout(&self, original: Screens, wide: bool) -> ScreenLayout {
         if self.enabled {
-            if self.access.is_some() { return ScreenLayout::BottomOverlay { wide }; }
+            if self.access.is_some() {
+                return if self.automatic == Some(AutoPanel::SaveSelect) { ScreenLayout::SaveSelect { wide } }
+                    else { ScreenLayout::BottomOverlay { wide } };
+            }
             if self.legacy { return if wide { ScreenLayout::StackedWide } else { ScreenLayout::Stacked }; }
             return if wide { ScreenLayout::TopWide } else { ScreenLayout::TopOnly };
         }
@@ -61,7 +81,8 @@ impl PcPresentation {
 
     pub fn mode(&self) -> PresentationMode {
         if !self.enabled { PresentationMode::Original }
-        else if self.access.is_some() { PresentationMode::LowerScreenPanel { automatic: self.automatic } }
+        else if self.access.is_some() && self.automatic == Some(AutoPanel::SaveSelect) { PresentationMode::SaveSelect }
+        else if self.access.is_some() { PresentationMode::LowerScreenPanel { automatic: self.automatic.is_some() } }
         else if self.legacy { PresentationMode::LegacyDualScreen }
         else { PresentationMode::Gameplay }
     }
@@ -71,20 +92,41 @@ impl PcPresentation {
         self.mode() == PresentationMode::Gameplay && captured && !runtime_menu
     }
 
-    /// Follows the game's own pause menu. `allowed` is false while a runtime
-    /// menu/modal owns input or the option is off.
+    /// The automatic panel kind, if the panel is open because of the game.
+    pub fn automatic(&self) -> Option<AutoPanel> { self.automatic.filter(|_| self.access.is_some()) }
+
+    /// Follows the game's own pause menu and its save select. `allowed` is
+    /// false while a runtime menu/modal owns input or the option is off.
     pub fn observe(&mut self, scene: BottomScene, allowed: bool) -> PanelRequest {
         if !self.enabled || self.legacy { return PanelRequest::Keep; }
+        if scene.save_select { self.away_frames = 0; } else { self.away_frames = self.away_frames.saturating_add(1); }
+        // the save select owns its own layout, opened and closed by its art
+        if self.automatic() == Some(AutoPanel::SaveSelect) {
+            if self.away_frames >= SAVE_SELECT_GONE {
+                self.automatic = None;
+                return PanelRequest::Close;
+            }
+            return PanelRequest::Keep;
+        }
+        if scene.save_select {
+            if self.access.is_none() {
+                if allowed && !self.suppressed {
+                    self.automatic = Some(AutoPanel::SaveSelect);
+                    return PanelRequest::Open;
+                }
+            }
+            return PanelRequest::Keep;
+        }
         if scene.pause_menu {
             self.gameplay_frames = 0;
             if allowed && self.access.is_none() && !self.suppressed {
-                self.automatic = true;
+                self.automatic = Some(AutoPanel::Pause);
                 return PanelRequest::Open;
             }
             return PanelRequest::Keep;
         }
         if !scene.menu { self.suppressed = false; }
-        if !(self.automatic && self.access.is_some()) { return PanelRequest::Keep; }
+        if self.automatic() != Some(AutoPanel::Pause) { return PanelRequest::Keep; }
         // Closing needs positive evidence of gameplay, not just a missing
         // label: option sub-panels may draw other art.
         if scene.fresh {
@@ -92,7 +134,7 @@ impl PcPresentation {
         }
         if self.gameplay_frames >= CLOSE_AFTER {
             self.gameplay_frames = 0;
-            self.automatic = false;
+            self.automatic = None;
             return PanelRequest::Close;
         }
         PanelRequest::Keep
@@ -101,8 +143,8 @@ impl PcPresentation {
     /// The panel closed for any reason. A player closing an automatic panel
     /// over a still-visible pause menu is respected until that menu ends.
     pub fn panel_closed(&mut self, by_player: bool, scene: BottomScene) {
-        if self.automatic && by_player && (scene.pause_menu || scene.menu) { self.suppressed = true; }
-        self.automatic = false;
+        if self.automatic.is_some() && by_player && (scene.pause_menu || scene.menu || scene.save_select) { self.suppressed = true; }
+        self.automatic = None;
         self.gameplay_frames = 0;
     }
 
@@ -172,6 +214,43 @@ mod tests {
         for _ in 0..100 { assert_eq!(p.observe(BottomScene { hud: 3, ..BottomScene::default() }, true), PanelRequest::Keep); }
         for _ in 0..CLOSE_AFTER - 1 { assert_eq!(p.observe(scene(false, false, 3), true), PanelRequest::Keep); }
         assert_eq!(p.observe(scene(false, false, 3), true), PanelRequest::Close);
+    }
+
+    #[test]
+    fn the_save_select_gets_its_own_layout_while_its_art_is_drawn() {
+        let select = BottomScene { fresh: true, save_select: true, ..BottomScene::default() };
+        let other = BottomScene { fresh: true, ..BottomScene::default() };
+        let mut p = PcPresentation::new(true);
+        assert_eq!(p.observe(select, true), PanelRequest::Open);
+        p.access = Some((Screens::TopOnly, None));
+        assert_eq!(p.mode(), PresentationMode::SaveSelect);
+        assert_eq!(p.layout(Screens::TopOnly, true), ScreenLayout::SaveSelect { wide: true });
+        assert_eq!(p.context(false, false), InputContext::PointerMenu);
+        // a few frames without its art (skipped frames, fades) keep it
+        for _ in 0..SAVE_SELECT_GONE - 1 { assert_eq!(p.observe(other, true), PanelRequest::Keep); }
+        assert_eq!(p.observe(select, true), PanelRequest::Keep);
+        for _ in 0..SAVE_SELECT_GONE - 1 { assert_eq!(p.observe(other, true), PanelRequest::Keep); }
+        assert_eq!(p.observe(other, true), PanelRequest::Close);
+        p.access = None;
+        p.panel_closed(false, other);
+        assert_eq!(p.mode(), PresentationMode::Gameplay);
+        // the player leaving it with Tab is respected while it lasts
+        assert_eq!(p.observe(select, true), PanelRequest::Open);
+        p.access = Some((Screens::TopOnly, None));
+        p.access = None;
+        p.panel_closed(true, select);
+        for _ in 0..30 { assert_eq!(p.observe(select, true), PanelRequest::Keep); }
+        assert_eq!(p.observe(other, true), PanelRequest::Keep);
+        assert_eq!(p.observe(select, true), PanelRequest::Open);
+        // not while the runtime's own menus own the input
+        let mut q = PcPresentation::new(true);
+        assert_eq!(q.observe(select, false), PanelRequest::Keep);
+        // a pause panel is never turned into the save select layout
+        let mut r = PcPresentation::new(true);
+        assert_eq!(r.observe(scene(true, true, 0), true), PanelRequest::Open);
+        r.access = Some((Screens::TopOnly, None));
+        assert_eq!(r.observe(select, true), PanelRequest::Keep);
+        assert_eq!(r.mode(), PresentationMode::LowerScreenPanel { automatic: true });
     }
 
     #[test]

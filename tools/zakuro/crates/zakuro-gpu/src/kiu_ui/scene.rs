@@ -51,6 +51,9 @@ pub struct BottomScene {
     /// A pause-menu label or an option bar is drawn: the player is in the
     /// pause menu or one of its sub-screens (Options).
     pub menu: bool,
+    /// The game's save select is up (its speech bubble or books were drawn
+    /// this frame, on either screen).
+    pub save_select: bool,
     /// The land Power Palette is on screen (power icons from atlas `mr` in
     /// the action island). Air special orbs come from `gc_00` instead.
     pub palette: bool,
@@ -102,7 +105,7 @@ pub fn classify<'a>(frame: u64, fresh: bool, layers: impl Iterator<Item = Eviden
             }
             Role::Menu => {}
             Role::Insert => scene.inserts = scene.inserts.saturating_add(1),
-            Role::Hud | Role::Decor | Role::Unlisted => {}
+            Role::Hud | Role::Decor | Role::Unlisted | Role::Screen => {}
         }
         if layer.island {
             scene.hud = scene.hud.saturating_add(1);

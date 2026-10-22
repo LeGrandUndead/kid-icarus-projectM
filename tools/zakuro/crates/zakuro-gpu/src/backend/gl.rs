@@ -4,7 +4,7 @@ use std::collections::HashMap;
 
 use glow::HasContext;
 
-use super::{layout, Overlay, OverlayVertex, PresentError, Presenter, ScreenImage, ScreenLayout, Viewport};
+use super::{backdrop, feather, layout, Overlay, OverlayVertex, PresentError, Presenter, ScreenImage, ScreenLayout, Viewport};
 
 const VERTEX_SHADER: &str = r#"#version 330 core
 // a single oversized triangle covers the viewport with no vertex buffer.
@@ -22,11 +22,18 @@ const FRAGMENT_SHADER: &str = r#"#version 330 core
 in vec2 uv;
 out vec4 color;
 uniform sampler2D screen;
+// how far in from the left, top, right and bottom edges the screen fades
+// into the window's background (zero: solid, the usual case)
+uniform vec4 feather;
+float ramp(float d, float width) { return width <= 0.0 ? 1.0 : smoothstep(0.0, width, d); }
+float fade() {
+    return ramp(uv.x, feather.x) * ramp(uv.y, feather.y) * ramp(1.0 - uv.x, feather.z) * ramp(1.0 - uv.y, feather.w);
+}
 void main() {
     vec2 size = vec2(textureSize(screen, 0));
     vec2 covered = fwidth(uv) * size;
     if (max(covered.x, covered.y) <= 1.0) {
-        color = vec4(texture(screen, uv).rgb, 1.0);
+        color = vec4(texture(screen, uv).rgb, fade());
         return;
     }
     ivec2 taps = ivec2(clamp(ceil(covered), 1.0, 4.0));
@@ -37,7 +44,7 @@ void main() {
             sum += texture(screen, uv + offset).rgb;
         }
     }
-    color = vec4(sum / float(taps.x * taps.y), 1.0);
+    color = vec4(sum / float(taps.x * taps.y), fade());
 }
 "#;
 
@@ -187,9 +194,12 @@ impl GlPresenter {
         }
     }
 
-    fn draw_screen(&self, index: usize, viewport: Viewport) {
+    fn draw_screen(&self, index: usize, viewport: Viewport, edges: [f32; 4]) {
         let gl = &self.gl;
         unsafe {
+            if let Some(location) = gl.get_uniform_location(self.program, "feather") {
+                gl.uniform_4_f32(Some(&location), edges[0], edges[1], edges[2], edges[3]);
+            }
             // OpenGL's origin is the bottom left, so the y coordinate flips.
             let y = self.window.1 as f32 - viewport.y - viewport.height;
             gl.viewport(
@@ -226,8 +236,13 @@ impl Presenter for GlPresenter {
         let gl = &self.gl;
         unsafe {
             gl.viewport(0, 0, self.window.0 as i32, self.window.1 as i32);
-            gl.clear_color(0.0, 0.0, 0.0, 1.0);
+            let [r, g, b, a] = backdrop(self.arrangement);
+            gl.clear_color(r, g, b, a);
             gl.clear(glow::COLOR_BUFFER_BIT);
+            // screens are opaque except where a layout fades their edges
+            gl.enable(glow::BLEND);
+            gl.blend_equation(glow::FUNC_ADD);
+            gl.blend_func_separate(glow::SRC_ALPHA, glow::ONE_MINUS_SRC_ALPHA, glow::ZERO, glow::ONE);
             gl.use_program(Some(self.program));
             gl.bind_vertex_array(Some(self.vertex_array));
             if let Some(location) = gl.get_uniform_location(self.program, "screen") {
@@ -236,11 +251,12 @@ impl Presenter for GlPresenter {
         }
 
         let (top_viewport, bottom_viewport) = layout(self.window.0, self.window.1, self.arrangement);
+        let edges = feather(self.arrangement);
         if let Some(viewport) = top_viewport.filter(|_| !top.is_empty()) {
-            self.draw_screen(0, viewport);
+            self.draw_screen(0, viewport, edges.0);
         }
         if let Some(viewport) = bottom_viewport.filter(|_| !bottom.is_empty()) {
-            self.draw_screen(1, viewport);
+            self.draw_screen(1, viewport, edges.1);
         }
 
         unsafe {

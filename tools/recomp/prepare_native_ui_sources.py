@@ -10,7 +10,10 @@ Roles: portrait (FB_* dialogue art), insert (pictures the dialogue refers to:
 CI_* gag/cutaway art, SP_* special pictures, BL_/BR_* boss and rival title
 cards), hud (gameplay HUD atlases), menu (pause panel atlas, used only as
 evidence of the pause menu), decor (known art that is intentionally not
-relocated: backgrounds, chapter titles, results, loading).
+relocated: backgrounds, chapter titles, results, loading), screen (the art of
+the out-of-stage menus, `us/menu/*/menu/bind.arc`, named `menu<id>/<texture>`:
+evidence of which menu screen is up, e.g. the save select's bubble and books,
+never relocated).
 """
 from __future__ import annotations
 import argparse
@@ -19,8 +22,9 @@ import re
 import sys
 
 ROOT = Path(__file__).resolve().parents[2]
-sys.path[:0] = [str(ROOT / 'tools/formats/cgfx'), str(ROOT / 'tools/recomp')]
+sys.path[:0] = [str(ROOT / 'tools/formats/cgfx'), str(ROOT / 'tools/formats/darc'), str(ROOT / 'tools/recomp')]
 from cgfx_textures import textures  # noqa: E402
+from darc_tool_fixed import parse_darc  # noqa: E402
 from export_texture_sources import fingerprint  # noqa: E402
 
 # common/info atlases, by what their art is (see doc/PC_SINGLE_SCREEN_AUDIT.md)
@@ -63,6 +67,16 @@ def build(romfs: Path, legacy_portraits: Path | None):
             key = f'{fingerprint(raw):016X}'
             # a texture shared by several chapters keeps its first, most specific role
             rows.setdefault(key, (role, name, f'{folder}/info/00.bcres'))
+    # out-of-stage menus: each menu's art is one CGFX inside its bind archive
+    for arc in sorted((romfs / 'us/menu').glob('*/menu/bind.arc')):
+        data = arc.read_bytes()
+        folder = arc.parent.parent.name
+        for entry in parse_darc(data).entries:
+            if entry.is_dir or entry.data_offset is None or not entry.path.endswith('.bcres'):
+                continue
+            for name, width, height, fmt, mips, raw in textures(data[entry.data_offset:entry.data_offset + entry.size]):
+                if raw is not None:
+                    rows.setdefault(f'{fingerprint(raw):016X}', ('screen', f'menu{folder}/{name}', f'menu/{folder}/menu/bind.arc'))
     if legacy_portraits and legacy_portraits.is_file():
         for line in legacy_portraits.read_text().split():
             rows.setdefault(line.strip().upper(), ('portrait', '', 'portrait-hashes.txt'))

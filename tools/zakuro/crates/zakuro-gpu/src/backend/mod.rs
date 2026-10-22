@@ -107,6 +107,12 @@ pub enum ScreenLayout {
     BottomOverlay { wide: bool },
     /// Legacy two-screen composition retaining the already-selected wide view.
     StackedWide,
+    /// The game's save select on one PC screen: its upper picture (the black
+    /// speech bubble with the file's details) across the top of the window,
+    /// and its lower picture (the three books, the bubble's tail pointing at
+    /// the chosen one, Back and How to Play) below it, clickable. Both melt
+    /// into the game's white page at their edges so they read as one scene.
+    SaveSelect { wide: bool },
 }
 
 impl ScreenLayout {
@@ -120,6 +126,7 @@ impl ScreenLayout {
             ScreenLayout::BottomOnly => (320, 240),
             ScreenLayout::BottomOverlay { wide } => if wide { (1280,720) } else { (400,240) },
             ScreenLayout::StackedWide => (1280,1440),
+            ScreenLayout::SaveSelect { .. } => (1280,720),
         }
     }
 }
@@ -127,6 +134,20 @@ impl ScreenLayout {
 /// works out where the screens go inside a window, keeping the 3DS's
 /// aspect ratio and centring them. a screen that does not show has no place.
 pub fn layout(window_width: u32, window_height: u32, arrangement: ScreenLayout) -> (Option<Viewport>, Option<Viewport>) {
+    if let ScreenLayout::SaveSelect { wide } = arrangement {
+        // a 16:9 stage, as large as the window allows
+        let (w, h) = (window_width as f32, window_height as f32);
+        let scale = (w / 16.0).min(h / 9.0);
+        let (sw, sh) = (16.0 * scale, 9.0 * scale);
+        let (sx, sy) = ((w - sw) * 0.5, (h - sh) * 0.5);
+        let top_aspect = if wide { 16.0 / 9.0 } else { 5.0 / 3.0 };
+        let top_height = sh * SAVE_SELECT_TOP;
+        let top_width = top_height * top_aspect;
+        let bottom_height = sh * SAVE_SELECT_BOTTOM;
+        let bottom_width = bottom_height * 4.0 / 3.0;
+        return (Some(Viewport { x: sx + (sw - top_width) * 0.5, y: sy, width: top_width, height: top_height }),
+            Some(Viewport { x: sx + (sw - bottom_width) * 0.5, y: sy + sh - bottom_height, width: bottom_width, height: bottom_height }));
+    }
     if arrangement == ScreenLayout::StackedWide {
         let height=(window_height as f32*0.5).min(window_width as f32*9.0/16.0);
         let y=(window_height as f32-2.0*height)*0.5;
@@ -177,7 +198,8 @@ pub fn layout(window_width: u32, window_height: u32, arrangement: ScreenLayout) 
             width: 320.0 * scale,
             height: 240.0 * scale,
         }),
-        ScreenLayout::TopOnly | ScreenLayout::TopWide | ScreenLayout::BottomOverlay { .. } | ScreenLayout::StackedWide => None,
+        ScreenLayout::TopOnly | ScreenLayout::TopWide | ScreenLayout::BottomOverlay { .. } | ScreenLayout::StackedWide
+            | ScreenLayout::SaveSelect { .. } => None,
         ScreenLayout::BottomOnly => Some(Viewport {
             x: offset_x,
             y: offset_y,
@@ -186,6 +208,37 @@ pub fn layout(window_width: u32, window_height: u32, arrangement: ScreenLayout) 
         }),
     };
     (top, bottom)
+}
+
+/// Share of the stage height the save select's upper picture takes; the
+/// lower one takes SAVE_SELECT_BOTTOM and overlaps the upper one's foot,
+/// where the bubble's tail meets the books.
+const SAVE_SELECT_TOP: f32 = 0.72;
+const SAVE_SELECT_BOTTOM: f32 = 0.43;
+
+/// How far in from each edge (left, top, right, bottom, as a share of the
+/// picture) a screen fades into the window's background, for the top and the
+/// bottom screen. Zero everywhere except the save select.
+pub fn feather(arrangement: ScreenLayout) -> ([f32; 4], [f32; 4]) {
+    match arrangement {
+        ScreenLayout::SaveSelect { .. } => ([0.07, 0.0, 0.07, 0.10], [0.09, 0.12, 0.09, 0.0]),
+        _ => ([0.0; 4], [0.0; 4]),
+    }
+}
+
+/// The window's background: black, or for the save select the game's white
+/// page the pictures fade into.
+pub fn backdrop(arrangement: ScreenLayout) -> [f32; 4] {
+    match arrangement {
+        ScreenLayout::SaveSelect { .. } => [0.976, 0.973, 0.965, 1.0],
+        _ => [0.0, 0.0, 0.0, 1.0],
+    }
+}
+
+/// The fade factor a feathered picture has at `uv` (0..1 across it).
+pub fn feather_alpha(uv: [f32; 2], edges: [f32; 4]) -> f32 {
+    let ramp = |d: f32, width: f32| if width <= 0.0 { 1.0 } else { let t = (d / width).clamp(0.0, 1.0); t * t * (3.0 - 2.0 * t) };
+    ramp(uv[0], edges[0]) * ramp(uv[1], edges[1]) * ramp(1.0 - uv[0], edges[2]) * ramp(1.0 - uv[1], edges[3])
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -233,6 +286,36 @@ mod tests {
                 assert!((x-160.0).abs()<0.001 && (y-120.0).abs()<0.001);
             }
         }
+    }
+    #[test]
+    fn save_select_puts_the_bubble_above_the_books_inside_any_window() {
+        for (w,h) in [(1920,1080),(1280,720),(800,1200),(2560,1080),(640,480)] {
+            for wide in [true,false] {
+                let (top,bottom)=layout(w,h,ScreenLayout::SaveSelect { wide });
+                let (t,b)=(top.unwrap(),bottom.unwrap());
+                assert!((t.width/t.height-if wide {16.0/9.0} else {5.0/3.0}).abs()<0.0001);
+                assert!((b.width/b.height-4.0/3.0).abs()<0.0001);
+                for v in [t,b] { assert!(v.x>=-0.001 && v.y>=-0.001 && v.x+v.width<=w as f32+0.001 && v.y+v.height<=h as f32+0.001, "{v:?} {w}x{h}"); }
+                // centered, books below the bubble, overlapping only at the bubble's foot
+                assert!(((t.x+t.width*0.5)-(b.x+b.width*0.5)).abs()<0.01);
+                assert!(b.y>t.y && b.y<t.y+t.height && b.y+b.height>t.y+t.height);
+                assert!(t.y+t.height-b.y < b.height*0.4);
+            }
+        }
+        let (_,b)=layout(1920,1080,ScreenLayout::SaveSelect { wide: true });
+        assert!(b.unwrap().height>420.0, "books large enough to read and click at 1080p");
+    }
+    #[test]
+    fn only_the_save_select_feathers_and_brightens_the_background() {
+        assert_eq!(feather(ScreenLayout::TopWide), ([0.0; 4], [0.0; 4]));
+        assert_eq!(backdrop(ScreenLayout::BottomOverlay { wide: true }), [0.0, 0.0, 0.0, 1.0]);
+        let (top, bottom) = feather(ScreenLayout::SaveSelect { wide: true });
+        assert_eq!(feather_alpha([0.5, 0.5], top), 1.0);
+        assert_eq!(feather_alpha([0.0, 0.5], top), 0.0);
+        assert_eq!(feather_alpha([0.5, 0.0], top), 1.0, "the bubble's top is not faded");
+        assert_eq!(feather_alpha([0.5, 1.0], bottom), 1.0, "Back and How to Play stay solid");
+        assert_eq!(feather_alpha([0.5, 0.0], bottom), 0.0);
+        assert_eq!(feather_alpha([0.3, 0.7], [0.0; 4]), 1.0);
     }
     #[test]
     fn legacy_composition_does_not_squeeze_an_existing_wide_camera() {
