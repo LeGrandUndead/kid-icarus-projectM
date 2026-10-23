@@ -1,0 +1,10 @@
+{
+  "_doc": "PC changes to menu art, applied by build_menu_pc_pack.py on top of the reconstruction. 'texture' is a texture name, or '<menuNNN>/<name>' for one menu's copy. 'clear': pixel rectangles x0,y0,x1,y1 of the original texture made transparent (3DS-only art). 'tint': new RGB for a painted backdrop, keeping its shading. Rectangles are in the texture's stored row order, as the runtime and the decoded PNGs have it. No image data here.",
+  "changes": [
+    {
+      "texture": "imsg",
+      "clear": [[0, 63, 55, 128]],
+      "why": "3DS battery, wireless strength and connection icons (top screen corner of the menus): meaningless on a PC"
+    }
+  ]
+}

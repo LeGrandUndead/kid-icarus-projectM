@@ -43,6 +43,7 @@ def main() -> int:
     ap.add_argument("--dialogue-preview", action="store_true", help="isolated original-portrait gameplay preview")
     ap.add_argument("--original-hud-resolution", action="store_true", help="PC interface: original HUD art (same as --hud-art original)")
     ap.add_argument("--hud-art", choices=("pc", "original"), default="pc", help="pc = HUD reconstructed from your ROM (build/texture-work/hud-pc), original = ROM resolution")
+    ap.add_argument("--menu-art", choices=("pc", "original"), default="pc", help="pc = menu screens' art reconstructed from your ROM (build/texture-work/menu-pc, tools/recomp/build_menu_pc_pack.py), original = as on the 3DS")
     ap.add_argument("--pc-interface", action="store_true", help="gameplay preview + original specials/powers/counters HUD and automatic pause panel (separate executable, preview profile)")
     ap.add_argument("--no-native-hud", action="store_true", help="PC interface: keep only the portraits, for comparison")
     ap.add_argument("--ui-census", action="store_true", help="PC interface: record catalogued lower-screen draws to a CSV for tracing")
@@ -131,7 +132,7 @@ def main() -> int:
     env.pop("KIU_SINGLE_SCREEN", None)
     env.pop("KIU_NATIVE_DIALOGUE", None)
     env.pop("KIU_GAMEPLAY_CAMERA_SCALE", None)
-    for name in ("KIU_NATIVE_UI", "KIU_NATIVE_HUD", "KIU_UI_CENSUS", "KIU_RAM_SNAPSHOT", "KIU_HUD_PACK"):
+    for name in ("KIU_NATIVE_UI", "KIU_NATIVE_HUD", "KIU_UI_CENSUS", "KIU_RAM_SNAPSHOT", "KIU_HUD_PACK", "KIU_MENU_PACK"):
         env.pop(name, None)
     if args.pc_interface:
         sources = ROOT / "build/native-ui/ui-sources.tsv"
@@ -146,6 +147,12 @@ def main() -> int:
         if hud_pack:
             env["KIU_HUD_PACK"] = str(hud_pack.resolve())
             print(f"HUD art: {hud_pack.name}, reconstructed from your ROM (--hud-art original to compare).", flush=True)
+        # PC menu art: every menu screen's textures rebuilt locally from the
+        # ROM (sharper, 3DS-only icons removed) by build_menu_pc_pack.py
+        menu_pack = ROOT / "build/texture-work/menu-pc"
+        if args.menu_art == "pc" and menu_pack.is_dir():
+            env["KIU_MENU_PACK"] = str(menu_pack.resolve())
+            print("Menu art: menu-pc, reconstructed from your ROM (--menu-art original to compare).", flush=True)
         if camera_override or args.original_aspect: env["KIU_GAMEPLAY_CAMERA_SCALE"] = str(args.camera_scale)
     elif args.dialogue_preview:
         sources = ROOT / "build/native-ui/dialogue-sources/portrait-hashes.txt"

@@ -316,6 +316,16 @@ pub(crate) fn note_rejected(reason: &'static str, detail: String) {
     }
 }
 
+/// Census only: a 2D layout draw of either screen sampling a known ROM
+/// texture, with the screen rectangle it covers and the part of the texture.
+pub(crate) fn census_draw(top: bool, hash: u64, size: [u32; 2], xy: layout::Rect, uv: layout::Rect, primary: [f32; 4]) {
+    let Some(Ok(mut s)) = state().map(Mutex::lock) else { return };
+    let s = &mut *s;
+    let name = s.catalog.get(&hash).map_or_else(|| format!("{hash:016X}"), |source| source.name.clone());
+    let frame = s.frame;
+    if let Some(census) = &mut s.census { census.draw(frame, top, &name, hash, size, xy, uv, primary); }
+}
+
 /// A 2D draw reached the guest bottom screen (any texture).
 pub(crate) fn note_bottom_draw() {
     if let Some(Ok(mut s)) = state().map(Mutex::lock) { s.bottom_draws += 1; }
@@ -633,6 +643,8 @@ mod census {
         last: Vec<String>,
         rejected: Option<std::fs::File>,
         seen: std::collections::HashSet<String>,
+        draws: Option<std::fs::File>,
+        drawn: std::collections::HashSet<String>,
     }
     impl Census {
         pub fn from_environment() -> Option<Census> {
@@ -641,12 +653,24 @@ mod census {
             let _ = writeln!(file, "frame,fresh,role,atlas,x0,y0,x1,y1,u0,v0,u1,v1,alpha,island,draw");
             let mut rejected = std::fs::File::create(path.with_file_name("lower-screen-rejected.csv")).ok();
             if let Some(f) = &mut rejected { let _ = writeln!(f, "first_frame,reason,detail"); }
-            Some(Census { file, last: Vec::new(), rejected, seen: Default::default() })
+            let mut draws = std::fs::File::create(path.with_file_name("screen-draws.csv")).ok();
+            if let Some(f) = &mut draws { let _ = writeln!(f, "first_frame,screen,name,hash,size,x0,y0,x1,y1,u0,v0,u1,v1,r,g,b,a"); }
+            Some(Census { file, last: Vec::new(), rejected, seen: Default::default(), draws, drawn: Default::default() })
         }
         pub(super) fn rejected(&mut self, frame: u64, reason: &str, detail: String) {
             let key = format!("{reason},{detail}");
             if self.seen.len() < 4096 && self.seen.insert(key.clone()) {
                 if let Some(f) = &mut self.rejected { let _ = writeln!(f, "{frame},{key}"); }
+            }
+        }
+        /// one row per distinct texture, place and part of it (whole pixels)
+        #[allow(clippy::too_many_arguments)]
+        pub(super) fn draw(&mut self, frame: u64, top: bool, name: &str, hash: u64, size: [u32; 2],
+            xy: [f32; 4], uv: [f32; 4], c: [f32; 4]) {
+            let key = format!("{},{name},{hash:016X},{}x{},{:.0},{:.0},{:.0},{:.0},{:.3},{:.3},{:.3},{:.3}",
+                if top { "top" } else { "bottom" }, size[0], size[1], xy[0], xy[1], xy[2], xy[3], uv[0], uv[1], uv[2], uv[3]);
+            if self.drawn.len() < 50_000 && self.drawn.insert(key.clone()) {
+                if let Some(f) = &mut self.draws { let _ = writeln!(f, "{frame},{key},{:.2},{:.2},{:.2},{:.2}", c[0], c[1], c[2], c[3]); }
             }
         }
         pub(super) fn record(&mut self, frame: u64, fresh: bool, layers: &[super::Layer], names: &[String]) {

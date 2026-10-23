@@ -222,18 +222,35 @@ fn capture_ui<M: GpuMemory>(memory:&mut M, draw:&Draw) {
     if let Some(reason)=failed {reject(reason);return;}
     // Text and counters are batches of quads in one draw (October 15 census:
     // single-quad capture dropped every digit). Each quad becomes one layer.
+    let Some(quads)=ui_quads(memory,s,[160.0,120.0]) else {return};
+    // a draw is one piece of interface (a panel's caps and middle, a
+    // counter's digits): it goes to an island whole or not at all
+    let group=quads.iter().fold([f32::INFINITY,f32::INFINITY,f32::NEG_INFINITY,f32::NEG_INFINITY],|b,(_,xy,_)| {
+        let q=crate::kiu_ui::layout::bounds(xy);[b[0].min(q[0]),b[1].min(q[1]),b[2].max(q[2]),b[3].max(q[3])]
+    });
+    for (primary,xy,uv) in quads {
+        match &text {
+            Some(t) => crate::kiu_ui::push(t.hash,t.size[0],t.size[1],&t.texels,draw.registers,primary,xy,uv,group),
+            None => crate::kiu_ui::push(texture.source_hash.unwrap(),texture.width,texture.height,&texture.texels,draw.registers,primary,xy,uv,group),
+        }
+    }
+}
+/// The quads of a 2D layout draw, run through its vertex program on the CPU:
+/// each quad's vertex color, corners in guest screen pixels (half the screen
+/// is `half`: 160x120 below, 200x120 above) and texture coordinates.
+fn ui_quads<M: GpuMemory>(memory:&mut M, s:&Shading, half:[f32;2]) -> Option<Vec<([f32;4],[[f32;2];4],[[f32;2];4])>> {
     let vertices=s.indices.len()/6*4;
     let mut inputs=Vec::with_capacity(vertices);
     for vertex in 0..vertices {
         let input=match s.inputs {
-            Inputs::Decoded(values)=>{let Some(v)=values.get(vertex) else{return}; *v},
+            Inputs::Decoded(values)=>*values.get(vertex)?,
             Inputs::Raw(raw)=>{
                 let mut values=raw.defaults;
                 for (register,field) in raw.fields.iter().enumerate() {
                     if let Some(field)=field {
                         let (addr,_)=raw.arrays[field.array];let size=super::component_size(field.ty);
                         let at=addr+vertex as u32*field.stride+field.offset;
-                        let Some(bytes)=memory.slice(at,(size*field.count) as usize) else{return};
+                        let bytes=memory.slice(at,(size*field.count) as usize)?;
                         let mut value=[0.0,0.0,0.0,1.0];
                         for (i,slot) in value.iter_mut().enumerate().take(field.count as usize) {
                             *slot=super::component(&bytes[i*size as usize..(i+1)*size as usize],field.ty);
@@ -246,23 +263,27 @@ fn capture_ui<M: GpuMemory>(memory:&mut M, draw:&Draw) {
         };inputs.push(input);
     }
     let outputs=crate::shader::run_vertices(s.unit,&inputs);
-    let quads:Vec<_>=outputs.chunks_exact(4).filter_map(|quad| {
+    Some(outputs.chunks_exact(4).filter_map(|quad| {
         let primary=quad[0][1];
         if quad.iter().any(|o|o[1]!=primary || !o[..3].iter().flatten().all(|v|v.is_finite()) || o[0][3].abs()<0.0001) {return None;}
-        let xy:[[f32;2];4]=std::array::from_fn(|i| {let p=quad[i][0];[(1.0-p[1]/p[3])*160.0,(1.0-p[0]/p[3])*120.0]});
+        let xy:[[f32;2];4]=std::array::from_fn(|i| {let p=quad[i][0];[(1.0-p[1]/p[3])*half[0],(1.0-p[0]/p[3])*half[1]]});
         let uv:[[f32;2];4]=std::array::from_fn(|i|[quad[i][2][0],quad[i][2][1]]);
         Some((primary,xy,uv))
-    }).collect();
-    // a draw is one piece of interface (a panel's caps and middle, a
-    // counter's digits): it goes to an island whole or not at all
-    let group=quads.iter().fold([f32::INFINITY,f32::INFINITY,f32::NEG_INFINITY,f32::NEG_INFINITY],|b,(_,xy,_)| {
-        let q=crate::kiu_ui::layout::bounds(xy);[b[0].min(q[0]),b[1].min(q[1]),b[2].max(q[2]),b[3].max(q[3])]
-    });
+    }).collect())
+}
+
+/// Census only (KIU_UI_CENSUS): every 2D layout draw of either screen that
+/// samples a known ROM texture, with where it lands, so menu art (the save
+/// select's HOME button, the battery icon, backgrounds) can be identified.
+fn census_ui<M: GpuMemory>(memory:&mut M, draw:&Draw) {
+    let Geometry::Shaded(s)=draw.geometry else {return};
+    let top=match s.viewport { (0.0,0.0,240.0,320.0)=>false, (0.0,0.0,240.0,400.0)=>true, _=>return };
+    let Some(texture)=draw.textures[0].as_ref() else {return};
+    let Some(hash)=texture.source_hash else {return};
+    if super::kiu_linear_shader_key(s.unit)!=Some(18295097681142006406) || !super::kiu_quad_indices(s.indices) || s.indices.len()>6*MAX_UI_QUADS {return;}
+    let Some(quads)=ui_quads(memory,s,if top {[200.0,120.0]} else {[160.0,120.0]}) else {return};
     for (primary,xy,uv) in quads {
-        match &text {
-            Some(t) => crate::kiu_ui::push(t.hash,t.size[0],t.size[1],&t.texels,draw.registers,primary,xy,uv,group),
-            None => crate::kiu_ui::push(texture.source_hash.unwrap(),texture.width,texture.height,&texture.texels,draw.registers,primary,xy,uv,group),
-        }
+        crate::kiu_ui::census_draw(top,hash,[texture.width,texture.height],crate::kiu_ui::layout::bounds(&xy),crate::kiu_ui::layout::bounds(&uv),primary);
     }
 }
 /// Longest text/counter batch copied from one lower-screen draw.
@@ -741,6 +762,8 @@ struct Texture {
     /// holds the decoded texels the key points at, so the key stays theirs.
     _texels: Arc<[[u8; 4]]>,
     used: u64,
+    /// the PC menu art for it was still being decoded (its ROM identity)
+    pending: Option<u64>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -1320,6 +1343,9 @@ pub struct Hardware {
     surfaces: Vec<Surface>,
     /// by the address of the decoded texels.
     textures: HashMap<usize, Texture>,
+    /// images replaced by their PC menu art, destroyed long after the batch
+    /// that last used them
+    retired: Vec<(u64, Image)>,
     /// textures copied from surfaces, by what they are.
     copies: HashMap<DrawnTexture, Copied>,
     /// host copies of lower-screen text the game draws into a buffer first
@@ -1523,6 +1549,7 @@ impl Hardware {
                 readback: None,
                 surfaces: Vec::new(),
                 textures: HashMap::new(),
+                retired: Vec::new(),
                 copies: HashMap::new(),
                 text_reads: HashMap::new(),
                 tables: None,
@@ -2285,7 +2312,15 @@ impl Hardware {
         let key = Arc::as_ptr(&bound.texels) as *const u8 as usize | hud as usize;
         if let Some(texture) = self.textures.get_mut(&key) {
             texture.used = self.batch;
-            return Ok((texture.image.view, texture.extra_levels));
+            // its PC menu art finished decoding: upload that instead, the
+            // original image goes once the GPU is surely done with it
+            let ready = match texture.pending.map(|hash| crate::replacements::menu(hash, bound.width, bound.height, bound.mip_levels)) {
+                Some(crate::replacements::Menu::Ready(_)) => true,
+                Some(crate::replacements::Menu::Missing) => { texture.pending = None; false }
+                _ => false,
+            };
+            if !ready { return Ok((texture.image.view, texture.extra_levels)); }
+            if let Some(old) = self.textures.remove(&key) { self.retired.push((self.batch, old.image)); }
         }
         // Hash only on upload, never every draw. Include dimensions in pack
         // names; only base-level pixels identify an asset, not its address.
@@ -2295,6 +2330,21 @@ impl Hardware {
         let replacement = if experimental { crate::replacements::load(hash, bound.width, bound.height, bound.mip_levels) }
             else if hud { crate::replacements::load_hud(super::fingerprint(bound.texels[..(bound.width * bound.height) as usize].as_flattened()), bound.width, bound.height, bound.mip_levels) }
             else { None };
+        let replacement = replacement.map(Arc::new);
+        // the PC menu art, by the identity of the ROM texture; while it is
+        // being decoded the original is uploaded and swapped later
+        let mut pending = None;
+        let replacement = match (replacement, bound.source_hash) {
+            (Some(r), _) => Some(r),
+            (None, Some(source)) if crate::replacements::menu_pack_enabled() => {
+                match crate::replacements::menu(source, bound.width, bound.height, bound.mip_levels) {
+                    crate::replacements::Menu::Ready(r) => { crate::replacements::menu_uploaded(source, bound.mip_levels); Some(r) }
+                    crate::replacements::Menu::Pending => { pending = Some(source); None }
+                    crate::replacements::Menu::Missing => None,
+                }
+            }
+            _ => None,
+        };
         let (width, height, levels, extra_levels, texels) = match &replacement {
             Some(image) => (image.width, image.height, image.levels, image.extra_levels, image.texels.as_slice()),
             None => (bound.width, bound.height, bound.mip_levels, 0, bound.texels.as_ref()),
@@ -2349,7 +2399,7 @@ impl Hardware {
         };
         self.uploads = true;
         let view = image.view;
-        self.textures.insert(key, Texture { image, extra_levels, _texels: bound.texels.clone(), used: self.batch });
+        self.textures.insert(key, Texture { image, extra_levels, _texels: bound.texels.clone(), used: self.batch, pending });
         Ok((view, extra_levels))
     }
 
@@ -3038,6 +3088,7 @@ impl Hardware {
         {
             let _profile = crate::profile::scope(crate::profile::Phase::PcInterface);
             capture_ui(memory,draw);
+            if crate::kiu_ui::census_enabled() { census_ui(memory,draw); }
             // which menu screen is up, from the identity of the art either screen samples
             if let Some(hash)=draw.textures[0].as_ref().and_then(|t|t.source_hash) { crate::kiu_ui::note_texture(hash); }
         }
@@ -4353,6 +4404,9 @@ impl Hardware {
                 self.destroy_image(&texture.image);
             }
         }
+        let (old, keep): (Vec<_>, Vec<_>) = std::mem::take(&mut self.retired).into_iter().partition(|(at, _)| batch - at > 600);
+        self.retired = keep;
+        for (_, image) in old { self.destroy_image(&image); }
         let stale: Vec<DrawnTexture> = self.copies.iter().filter(|(_, c)| batch - c.used > 600).map(|(&k, _)| k).collect();
         for key in stale {
             if let Some(copy) = self.copies.remove(&key) {
@@ -4670,6 +4724,9 @@ impl Drop for Hardware {
             self.device.destroy_pipeline_cache(self.pipeline_cache, None);
             for texture in self.textures.values() {
                 self.destroy_image(&texture.image);
+            }
+            for (_, image) in &self.retired {
+                self.destroy_image(image);
             }
             for copy in self.copies.values() {
                 self.destroy_image(&copy.image);
