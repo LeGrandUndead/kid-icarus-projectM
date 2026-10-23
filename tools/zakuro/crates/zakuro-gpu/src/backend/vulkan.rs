@@ -8,7 +8,7 @@ use ash::vk;
 use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
 
 use super::vulkan_overlay::OverlayPainter;
-use super::{backdrop, feather, layout, GpuScreen, Overlay, PresentError, Presenter, ScreenImage, ScreenLayout, Viewport};
+use super::{backdrop, pieces, GpuScreen, Overlay, PresentError, Presenter, ScreenImage, ScreenLayout, Viewport};
 use crate::raster::hardware::{can_render, render_device};
 use crate::SharedDevice;
 
@@ -689,11 +689,9 @@ impl VulkanPresenter {
                 self.pipeline,
             );
 
-            let (top, bottom) = layout(self.extent.width, self.extent.height, self.arrangement);
-            let edges = feather(self.arrangement);
-            for (index, viewport) in [top, bottom].into_iter().enumerate() {
-                let Some(viewport) = viewport else { continue };
-                let (descriptor, crop) = match sources[index] {
+            for piece in pieces(self.extent.width, self.extent.height, self.arrangement) {
+                let index = piece.screen;
+                let (descriptor, image) = match sources[index] {
                     Source::Nothing => continue,
                     Source::Own => (self.screens[index].descriptor, WHOLE),
                     Source::Gpu(gpu) => {
@@ -702,7 +700,18 @@ impl VulkanPresenter {
                         (self.gpu_sets[self.frame][index], [x, y, width, height, left, top, right, bottom])
                     }
                 };
-                set_viewport(device, command_buffer, viewport, self.extent);
+                // the piece's part of the screen, inside the screen's area
+                let size = if index == 0 { super::TOP_SIZE } else { super::BOTTOM_SIZE };
+                let [l, t, r, b] = piece.source;
+                let [ax, ay, aw, ah] = [image[0], image[1], image[2], image[3]];
+                let (half_u, half_v) = (image[4] - ax, image[5] - ay);
+                let (u0, v0) = (ax + l / size[0] * aw, ay + t / size[1] * ah);
+                let (u1, v1) = (ax + r / size[0] * aw, ay + b / size[1] * ah);
+                let crop = [u0, v0, u1 - u0, v1 - v0, u0 + half_u, v0 + half_v, u1 - half_u, v1 - half_v];
+                // an uploaded copy has no coverage, it is drawn opaque
+                let coverage = piece.coverage && matches!(sources[index], Source::Gpu(_));
+                let mode = [if coverage { 1.0 } else { 0.0 }, 0.0, 0.0, 0.0];
+                set_viewport(device, command_buffer, piece.dest, self.extent);
                 device.cmd_bind_descriptor_sets(
                     command_buffer,
                     vk::PipelineBindPoint::GRAPHICS,
@@ -711,8 +720,7 @@ impl VulkanPresenter {
                     &[descriptor],
                     &[],
                 );
-                let edge = if index == 0 { edges.0 } else { edges.1 };
-                let constants: Vec<u8> = crop.iter().chain(&edge).flat_map(|c| c.to_le_bytes()).collect();
+                let constants: Vec<u8> = crop.iter().chain(&piece.feather).chain(&mode).flat_map(|c| c.to_le_bytes()).collect();
                 device.cmd_push_constants(command_buffer, self.pipeline_layout, vk::ShaderStageFlags::FRAGMENT, 0, &constants);
                 device.cmd_draw(command_buffer, 3, 1, 0, 0);
             }
@@ -1044,7 +1052,7 @@ fn create_pipeline(
     // where the screen lies in the image and the bounds its samples keep in
     let constants = [vk::PushConstantRange::default()
         .stage_flags(vk::ShaderStageFlags::FRAGMENT)
-        .size((size_of_val(&WHOLE) + size_of::<[f32; 4]>()) as u32)];
+        .size((size_of_val(&WHOLE) + 2 * size_of::<[f32; 4]>()) as u32)];
     let pipeline_layout = unsafe {
         device.create_pipeline_layout(
             &vk::PipelineLayoutCreateInfo::default()
@@ -1081,10 +1089,12 @@ fn create_pipeline(
     let multisample = vk::PipelineMultisampleStateCreateInfo::default()
         .rasterization_samples(vk::SampleCountFlags::TYPE_1);
     // screens are opaque except where a layout fades their edges into the
-    // window's background (feather); the window keeps its own alpha
+    // window's background (feather) or lays a transparent picture over
+    // another; the shader outputs premultiplied colour. the window keeps its
+    // own alpha
     let blend_attachments = [vk::PipelineColorBlendAttachmentState::default()
         .blend_enable(true)
-        .src_color_blend_factor(vk::BlendFactor::SRC_ALPHA)
+        .src_color_blend_factor(vk::BlendFactor::ONE)
         .dst_color_blend_factor(vk::BlendFactor::ONE_MINUS_SRC_ALPHA)
         .color_blend_op(vk::BlendOp::ADD)
         .src_alpha_blend_factor(vk::BlendFactor::ZERO)

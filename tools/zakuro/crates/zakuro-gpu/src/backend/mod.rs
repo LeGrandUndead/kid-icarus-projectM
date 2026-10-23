@@ -6,6 +6,8 @@ pub mod gl;
 pub mod vulkan;
 #[cfg(feature = "vulkan")]
 mod vulkan_overlay;
+mod pieces;
+pub use pieces::{pieces, touch_at, Piece, Recipe, BOTTOM_SIZE, TOP_SIZE};
 
 /// one screen's pixels, already converted to straight RGBA8, or where they
 /// are on the GPU, for a presenter sharing the renderer's device.
@@ -114,6 +116,10 @@ pub enum ScreenLayout {
     /// melt into a page at their edges. `room`: the upper picture is a 3D
     /// room (shown with the wide view's width), otherwise it is 2D art.
     Menus { wide: bool, room: bool },
+    /// A menu screen recomposed as one PC picture (pieces::Recipe): its
+    /// upper picture is the scene, parts of its lower one (drawn transparent)
+    /// are laid where the recipe puts them.
+    Composed { wide: bool, recipe: Recipe },
 }
 
 impl ScreenLayout {
@@ -127,7 +133,7 @@ impl ScreenLayout {
             ScreenLayout::BottomOnly => (320, 240),
             ScreenLayout::BottomOverlay { wide } => if wide { (1280,720) } else { (400,240) },
             ScreenLayout::StackedWide => (1280,1440),
-            ScreenLayout::Menus { .. } => (1280,720),
+            ScreenLayout::Menus { .. } | ScreenLayout::Composed { .. } => (1280,720),
         }
     }
 }
@@ -135,6 +141,11 @@ impl ScreenLayout {
 /// works out where the screens go inside a window, keeping the 3DS's
 /// aspect ratio and centring them. a screen that does not show has no place.
 pub fn layout(window_width: u32, window_height: u32, arrangement: ScreenLayout) -> (Option<Viewport>, Option<Viewport>) {
+    if let ScreenLayout::Composed { .. } = arrangement {
+        // the scene; the lower picture is only in pieces (pieces::pieces)
+        let scene = pieces(window_width, window_height, arrangement).into_iter().find(|p| p.screen == 0).map(|p| p.dest);
+        return (scene, None);
+    }
     if let ScreenLayout::Menus { wide, room } = arrangement {
         // the console's own arrangement, both pictures at one scale and the
         // lower one centered under the upper one, so the bubble's tail on the
@@ -205,7 +216,7 @@ pub fn layout(window_width: u32, window_height: u32, arrangement: ScreenLayout) 
             height: 240.0 * scale,
         }),
         ScreenLayout::TopOnly | ScreenLayout::TopWide | ScreenLayout::BottomOverlay { .. } | ScreenLayout::StackedWide
-            | ScreenLayout::Menus { .. } => None,
+            | ScreenLayout::Menus { .. } | ScreenLayout::Composed { .. } => None,
         ScreenLayout::BottomOnly => Some(Viewport {
             x: offset_x,
             y: offset_y,
@@ -237,6 +248,8 @@ pub fn backdrop(arrangement: ScreenLayout) -> [f32; 4] {
     match arrangement {
         // the white page of KIU's menu art, or the dark of a 3D room
         ScreenLayout::Menus { room: false, .. } => [0.976, 0.973, 0.965, 1.0],
+        // the save select's paper, a touch warmer than plain white
+        ScreenLayout::Composed { .. } => [0.965, 0.961, 0.945, 1.0],
         ScreenLayout::Menus { room: true, .. } => [0.035, 0.035, 0.05, 1.0],
         _ => [0.0, 0.0, 0.0, 1.0],
     }

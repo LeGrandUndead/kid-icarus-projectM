@@ -797,17 +797,12 @@ impl App {
     fn touch(&mut self) {
         let Some(window) = &self.window else { return };
         let size = window.inner_size();
-        let (_, bottom) = layout(size.width, size.height, self.presentation.layout(self.layout, self.experimental_wide));
-        // with the top screen alone there is nothing to touch
-        let Some(bottom) = bottom else {
-            self.keyboard.touch(None);
-            return;
-        };
-        let x = self.cursor.0 - bottom.x;
-        let y = self.cursor.1 - bottom.y;
-        let inside = x >= 0.0 && y >= 0.0 && x < bottom.width && y < bottom.height;
-        self.keyboard.touch((self.mouse_down && inside).then(|| {
-            ((x / bottom.width * 320.0) as u16, (y / bottom.height * 240.0) as u16)
+        // the lower screen wherever the layout shows it (whole, or in pieces
+        // of a recomposed menu); nothing to touch with the top screen alone
+        let arrangement = self.presentation.layout(self.layout, self.experimental_wide);
+        let at = zakuro_gpu::touch_at(size.width, size.height, arrangement, self.cursor.0, self.cursor.1);
+        self.keyboard.touch(at.filter(|_| self.mouse_down).map(|[x, y]| {
+            (x.clamp(0.0, 319.0) as u16, y.clamp(0.0, 239.0) as u16)
         }));
     }
 
@@ -1305,8 +1300,10 @@ impl App {
             }
             pc_presentation::PanelRequest::Keep => {}
         }
-        // the save select's PC layout leaves out the 3DS HOME button
+        // the save select's PC layout leaves out the 3DS HOME button; a
+        // recomposed menu has its lower screen drawn transparent
         zakuro_gpu::kiu_ui::set_hide_home(self.presentation.automatic() == Some(pc_presentation::AutoPanel::Menus));
+        zakuro_gpu::kiu_ui::compose::set_composing(matches!(self.presentation.layout(self.layout, self.experimental_wide), zakuro_gpu::ScreenLayout::Composed { .. }));
     }
 
     /// the menus, and the actions they asked for, done.

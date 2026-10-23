@@ -241,13 +241,28 @@ fn capture_ui<M: GpuMemory>(memory:&mut M, draw:&Draw) {
 fn ui_quads<M: GpuMemory>(memory:&mut M, s:&Shading, half:[f32;2]) -> Option<Vec<([f32;4],[[f32;2];4],[[f32;2];4])>> {
     let inputs=vertex_inputs(memory,s,s.indices.len()/6*4)?;
     let outputs=crate::shader::run_vertices(s.unit,&inputs);
+    let sem=&s.semantics;
     Some(outputs.chunks_exact(4).filter_map(|quad| {
-        let primary=quad[0][1];
-        if quad.iter().any(|o|o[1]!=primary || !o[..3].iter().flatten().all(|v|v.is_finite()) || o[0][3].abs()<0.0001) {return None;}
-        let xy:[[f32;2];4]=std::array::from_fn(|i| {let p=quad[i][0];[(1.0-p[1]/p[3])*half[0],(1.0-p[0]/p[3])*half[1]]});
-        let uv:[[f32;2];4]=std::array::from_fn(|i|[quad[i][2][0],quad[i][2][1]]);
+        let color=|o:&[[f32;4];16]| [4,5,6,7].map(|i| output(o,sem[i],1.0));
+        let primary=color(&quad[0]);
+        let pos:[[f32;4];4]=std::array::from_fn(|i| position(&quad[i],sem));
+        let uv:[[f32;2];4]=std::array::from_fn(|i| [output(&quad[i],sem[8],0.0),output(&quad[i],sem[9],0.0)]);
+        if quad.iter().any(|o|color(o)!=primary) || !pos.iter().chain(&[primary]).flatten().chain(uv.iter().flatten()).all(|v|v.is_finite())
+            || pos.iter().any(|p|p[3].abs()<0.0001) {return None;}
+        let xy:[[f32;2];4]=pos.map(|p| [(1.0-p[1]/p[3])*half[0],(1.0-p[0]/p[3])*half[1]]);
         Some((primary,xy,uv))
     }).collect())
+}
+
+/// One component of a vertex program's outputs, by its semantic slot
+/// (`Shading::semantics`): a register times four plus a component.
+fn output(o:&[[f32;4];16], semantic:u32, missing:f32) -> f32 {
+    match semantic { MISSING=>missing, ZERO=>0.0, s=>o.get((s/4) as usize).map_or(missing,|r| r[(s%4) as usize]) }
+}
+
+/// A vertex's clip-space position, wherever the program writes it.
+fn position(o:&[[f32;4];16], sem:&[u32;24]) -> [f32;4] {
+    [output(o,sem[0],0.0),output(o,sem[1],0.0),output(o,sem[2],0.0),output(o,sem[3],1.0)]
 }
 
 /// The first `count` vertices' input registers of a shaded draw.
@@ -290,7 +305,7 @@ fn draw_bounds<M: GpuMemory>(memory:&mut M, draw:&Draw, half:[f32;2]) -> Option<
             if count>4096 {return None;}
             let inputs=vertex_inputs(memory,s,count)?;
             for o in crate::shader::run_vertices(s.unit,&inputs) {
-                let p=o[0];
+                let p=position(&o,&s.semantics);
                 if p[3].abs()<0.0001 || !p.iter().all(|v|v.is_finite()) {return None;}
                 add((1.0-p[1]/p[3])*half[0],(1.0-p[0]/p[3])*half[1]);
             }
@@ -298,6 +313,28 @@ fn draw_bounds<M: GpuMemory>(memory:&mut M, draw:&Draw, half:[f32;2]) -> Option<
     }
     b[0].is_finite().then_some(b)
 }
+/// Whether a lower-screen draw is a backdrop (kiu_ui::compose::is_backdrop:
+/// its triangles cover most of the screen), shaded on the CPU. Draws too
+/// large to shade quickly, or that cannot be placed, are kept.
+fn lower_screen_backdrop<M: GpuMemory>(memory:&mut M, draw:&Draw) -> bool {
+    let points:Vec<[f32;2]>=match draw.geometry {
+        Geometry::Placed { vertices, .. } => vertices.iter().map(|v| [320.0-v.y,240.0-v.x]).collect(),
+        Geometry::Shaded(s) => {
+            let count=s.indices.iter().copied().max().map_or(0,|m|m as usize+1);
+            if count==0 || count>2048 {return false;}
+            let Some(inputs)=vertex_inputs(memory,s,count) else {return false};
+            crate::shader::run_vertices(s.unit,&inputs).iter().map(|o| {
+                let p=position(o,&s.semantics);
+                if !p.iter().all(|v|v.is_finite()) || p[3].abs()<0.0001 {[-1e4,-1e4]}
+                else {[(1.0-p[1]/p[3])*160.0,(1.0-p[0]/p[3])*120.0]}
+            }).collect()
+        }
+    };
+    let indices=match draw.geometry { Geometry::Placed { indices, .. } => indices, Geometry::Shaded(s) => s.indices };
+    crate::kiu_ui::compose::is_backdrop(indices.chunks_exact(3)
+        .map(|t| [t[0],t[1],t[2]].map(|i| points.get(i as usize).copied().unwrap_or([-1e4;2]))))
+}
+
 /// Census only (KIU_UI_CENSUS): every textured draw of either screen that
 /// samples a known ROM texture, with where it lands (whole draw bounds, or
 /// each quad of a 2D batch), so menu art (the save select's HOME button, the
@@ -3136,6 +3173,13 @@ impl Hardware {
             if let Some(hash)=draw.textures[0].as_ref().and_then(|t|t.source_hash) { crate::kiu_ui::note_texture(hash,top); }
             if top && draw.depth.is_some() { crate::kiu_ui::note_top_depth(); }
         }
+        // a menu recomposed on one screen (kiu_ui::compose): its lower screen
+        // without backdrops, alpha as coverage, for laying over the upper one
+        let compose_bottom = crate::kiu_ui::compose::composing() && draw.width==240 && draw.height==320;
+        if compose_bottom {
+            crate::kiu_ui::compose::note_bottom_target(draw.target, draw.width * draw.height * Kind::Color(draw.format).bytes());
+            if lower_screen_backdrop(memory, draw) { return Ok(()); }
+        }
         let [left, bottom, right, top] = draw.scissor;
         let (left, bottom) = (left.max(0), bottom.max(0));
         let (right, top) = (right.min(draw.width as i32), top.min(draw.height as i32));
@@ -3298,8 +3342,11 @@ impl Hardware {
         // only the bits compile_pipeline reads, so draws that differ
         // elsewhere share a pipeline
         let blend = (r[REG_COLOR_OPERATION] & 0x100 != 0).then_some(r[REG_BLEND_FUNC] & 0xFFFF_0707);
+        let blend = if compose_bottom { blend.map(crate::kiu_ui::compose::coverage_blend) } else { blend };
         let mut logic_op = LogicOp::read(r);
         let mut color_mask = color_mask;
+        // coverage is written even where the game leaves its alpha alone
+        if compose_bottom && color_mask & 0x7 != 0 { color_mask |= 0x8; }
         if !self.logic_ops {
             // without logic ops, a draw that keeps the colors can still just
             // not write them
@@ -3665,7 +3712,9 @@ impl Hardware {
             t.scale.1 as i32,
             t.flip as i32,
             format_index(t.input_format),
-            format_index(t.output_format),
+            // a recomposed menu's lower picture keeps its coverage on the GPU
+            // for the presenter (kiu_ui::compose); guest memory has no alpha
+            if crate::kiu_ui::compose::keeps_alpha(addr) { format_index(ColorFormat::Rgba8) } else { format_index(t.output_format) },
             row as i32 * n,
             input_size.1 as i32 * n,
         ];

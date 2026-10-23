@@ -15,6 +15,7 @@
 //! which remains reachable with Tab.
 mod bake;
 pub mod camera;
+pub mod compose;
 pub mod config;
 pub mod layout;
 pub mod scene;

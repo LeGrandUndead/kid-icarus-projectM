@@ -24,7 +24,7 @@ pub mod texture;
 
 use format::ColorFormat;
 use registers::*;
-pub use backend::{layout, GpuScreen, Overlay, OverlayMesh, OverlayTexture, OverlayVertex, PresentError, Presenter, ScreenImage, ScreenLayout, Viewport};
+pub use backend::{layout, pieces, touch_at, Piece, Recipe, GpuScreen, Overlay, OverlayMesh, OverlayTexture, OverlayVertex, PresentError, Presenter, ScreenImage, ScreenLayout, Viewport};
 pub use renderer::{DrawCall, Renderer, RendererKind, SoftwareRenderer};
 #[cfg(feature = "vulkan")]
 pub use device::SharedDevice;
@@ -330,7 +330,14 @@ impl Gpu {
         self.fills += 1;
         #[cfg(feature = "vulkan")]
         if let Some(hardware) = self.resources.hardware.as_mut() {
-            if let Err(error) = hardware.filled(address, &buffer) {
+            // a recomposed menu's lower picture starts transparent
+            // (kiu_ui::compose); guest memory keeps what the game wrote
+            let cleared;
+            let gpu: &[u8] = match crate::kiu_ui::compose::transparent_part(address, buffer.len() as u32) {
+                Some(range) => { let mut copy = buffer.clone(); copy[range].fill(0); cleared = copy; &cleared }
+                None => &buffer,
+            };
+            if let Err(error) = hardware.filled(address, gpu) {
                 log::error!("the GPU could not clear a buffer, {error}");
             }
         }
