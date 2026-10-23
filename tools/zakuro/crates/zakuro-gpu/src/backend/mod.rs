@@ -135,18 +135,20 @@ impl ScreenLayout {
 /// aspect ratio and centring them. a screen that does not show has no place.
 pub fn layout(window_width: u32, window_height: u32, arrangement: ScreenLayout) -> (Option<Viewport>, Option<Viewport>) {
     if let ScreenLayout::SaveSelect { wide } = arrangement {
-        // a 16:9 stage, as large as the window allows
+        // the console's own arrangement, both pictures at one scale and the
+        // lower one centered under the upper one, so the bubble's tail on the
+        // lower picture grows out of the bubble's black ground above it.
+        // The bezel gap is gone: the lower picture overlaps the upper one's
+        // foot by SAVE_SELECT_JOIN and fades into it there.
         let (w, h) = (window_width as f32, window_height as f32);
-        let scale = (w / 16.0).min(h / 9.0);
-        let (sw, sh) = (16.0 * scale, 9.0 * scale);
-        let (sx, sy) = ((w - sw) * 0.5, (h - sh) * 0.5);
-        let top_aspect = if wide { 16.0 / 9.0 } else { 5.0 / 3.0 };
-        let top_height = sh * SAVE_SELECT_TOP;
-        let top_width = top_height * top_aspect;
-        let bottom_height = sh * SAVE_SELECT_BOTTOM;
-        let bottom_width = bottom_height * 4.0 / 3.0;
-        return (Some(Viewport { x: sx + (sw - top_width) * 0.5, y: sy, width: top_width, height: top_height }),
-            Some(Viewport { x: sx + (sw - bottom_width) * 0.5, y: sy + sh - bottom_height, width: bottom_width, height: bottom_height }));
+        let top_units = if wide { 240.0 * 16.0 / 9.0 } else { 400.0 };
+        let tall = 480.0 - SAVE_SELECT_JOIN;
+        let unit = (h / tall).min(w / top_units);
+        let y = (h - tall * unit) * 0.5;
+        let top = Viewport { x: (w - top_units * unit) * 0.5, y, width: top_units * unit, height: 240.0 * unit };
+        let bottom = Viewport { x: (w - 320.0 * unit) * 0.5, y: y + (240.0 - SAVE_SELECT_JOIN) * unit,
+            width: 320.0 * unit, height: 240.0 * unit };
+        return (Some(top), Some(bottom));
     }
     if arrangement == ScreenLayout::StackedWide {
         let height=(window_height as f32*0.5).min(window_width as f32*9.0/16.0);
@@ -210,18 +212,16 @@ pub fn layout(window_width: u32, window_height: u32, arrangement: ScreenLayout) 
     (top, bottom)
 }
 
-/// Share of the stage height the save select's upper picture takes; the
-/// lower one takes SAVE_SELECT_BOTTOM and overlaps the upper one's foot,
-/// where the bubble's tail meets the books.
-const SAVE_SELECT_TOP: f32 = 0.72;
-const SAVE_SELECT_BOTTOM: f32 = 0.43;
+/// Console pixels the save select's lower picture overlaps the upper one,
+/// fading in over them (the bottom feather below covers exactly this band).
+const SAVE_SELECT_JOIN: f32 = 12.0;
 
 /// How far in from each edge (left, top, right, bottom, as a share of the
 /// picture) a screen fades into the window's background, for the top and the
 /// bottom screen. Zero everywhere except the save select.
 pub fn feather(arrangement: ScreenLayout) -> ([f32; 4], [f32; 4]) {
     match arrangement {
-        ScreenLayout::SaveSelect { .. } => ([0.07, 0.0, 0.07, 0.10], [0.09, 0.12, 0.09, 0.0]),
+        ScreenLayout::SaveSelect { .. } => ([0.05, 0.0, 0.05, 0.0], [0.06, SAVE_SELECT_JOIN / 240.0, 0.06, 0.0]),
         _ => ([0.0; 4], [0.0; 4]),
     }
 }
@@ -288,22 +288,22 @@ mod tests {
         }
     }
     #[test]
-    fn save_select_puts_the_bubble_above_the_books_inside_any_window() {
+    fn save_select_keeps_the_console_arrangement_so_the_tail_meets_the_bubble() {
         for (w,h) in [(1920,1080),(1280,720),(800,1200),(2560,1080),(640,480)] {
             for wide in [true,false] {
                 let (top,bottom)=layout(w,h,ScreenLayout::SaveSelect { wide });
                 let (t,b)=(top.unwrap(),bottom.unwrap());
                 assert!((t.width/t.height-if wide {16.0/9.0} else {5.0/3.0}).abs()<0.0001);
                 assert!((b.width/b.height-4.0/3.0).abs()<0.0001);
+                assert!((t.height-b.height).abs()<0.001, "one scale for both pictures");
                 for v in [t,b] { assert!(v.x>=-0.001 && v.y>=-0.001 && v.x+v.width<=w as f32+0.001 && v.y+v.height<=h as f32+0.001, "{v:?} {w}x{h}"); }
-                // centered, books below the bubble, overlapping only at the bubble's foot
-                assert!(((t.x+t.width*0.5)-(b.x+b.width*0.5)).abs()<0.01);
-                assert!(b.y>t.y && b.y<t.y+t.height && b.y+b.height>t.y+t.height);
-                assert!(t.y+t.height-b.y < b.height*0.4);
+                assert!(((t.x+t.width*0.5)-(b.x+b.width*0.5)).abs()<0.01, "centered as on the console");
+                let join=t.y+t.height-b.y;
+                assert!((join-t.height*SAVE_SELECT_JOIN/240.0).abs()<0.01, "no bezel gap, a small join");
             }
         }
-        let (_,b)=layout(1920,1080,ScreenLayout::SaveSelect { wide: true });
-        assert!(b.unwrap().height>420.0, "books large enough to read and click at 1080p");
+        let (t,b)=layout(1920,1080,ScreenLayout::SaveSelect { wide: true });
+        assert!((t.unwrap().y).abs()<0.01 && (b.unwrap().y+b.unwrap().height-1080.0).abs()<0.01, "fills the height at 1080p");
     }
     #[test]
     fn only_the_save_select_feathers_and_brightens_the_background() {
