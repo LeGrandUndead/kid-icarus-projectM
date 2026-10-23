@@ -137,6 +137,8 @@ struct State {
     /// textures are baked down to about this density (no mipmaps).
     display: f32,
     fades: HashMap<usize, f32>,
+    /// the save select is shown in its PC layout: leave out its HOME button
+    hide_home: bool,
 }
 
 /// On the 3DS some lower-screen art stays up for minutes: a boss's portrait
@@ -287,6 +289,19 @@ pub fn scene() -> BottomScene {
     state().and_then(|s| s.lock().ok().map(|s| s.scene)).unwrap_or_default()
 }
 
+/// A part of the original lower screen to leave out now (3DS-only art the
+/// PC layout of the current screen shows): the save select's HOME button
+/// while the save select is up.
+pub(crate) fn hidden_lower_screen() -> Option<layout::Rect> {
+    let s = state()?.lock().ok()?;
+    (s.scene.save_select && s.hide_home).then_some(layout::SAVE_SELECT_HOME)
+}
+
+/// Whether the PC layout of the save select is on (the presentation decides).
+pub fn set_hide_home(on: bool) {
+    if let Some(Ok(mut s)) = state().map(Mutex::lock) { s.hide_home = on; }
+}
+
 /// The touch point the game was given this frame, guest bottom-screen pixels.
 pub fn set_touch(touch: Option<(u16, u16)>) {
     if let Some(Ok(mut s)) = state().map(Mutex::lock) { s.touch = touch.map(|(x, y)| [x as f32, y as f32]); }
@@ -318,12 +333,15 @@ pub(crate) fn note_rejected(reason: &'static str, detail: String) {
 
 /// Census only: a 2D layout draw of either screen sampling a known ROM
 /// texture, with the screen rectangle it covers and the part of the texture.
-pub(crate) fn census_draw(top: bool, hash: u64, size: [u32; 2], xy: layout::Rect, uv: layout::Rect, primary: [f32; 4]) {
+/// `program`: the vertex program's identity for 2D batches, 1 for draws
+/// placed on the CPU, 2 for other shaded draws (then `primary[0]` is the
+/// index count and the rectangles are unknown).
+pub(crate) fn census_draw(top: bool, hash: u64, size: [u32; 2], xy: layout::Rect, uv: layout::Rect, primary: [f32; 4], program: u64) {
     let Some(Ok(mut s)) = state().map(Mutex::lock) else { return };
     let s = &mut *s;
     let name = s.catalog.get(&hash).map_or_else(|| format!("{hash:016X}"), |source| source.name.clone());
     let frame = s.frame;
-    if let Some(census) = &mut s.census { census.draw(frame, top, &name, hash, size, xy, uv, primary); }
+    if let Some(census) = &mut s.census { census.draw(frame, top, &name, hash, size, xy, uv, primary, program); }
 }
 
 /// A 2D draw reached the guest bottom screen (any texture).
@@ -654,7 +672,7 @@ mod census {
             let mut rejected = std::fs::File::create(path.with_file_name("lower-screen-rejected.csv")).ok();
             if let Some(f) = &mut rejected { let _ = writeln!(f, "first_frame,reason,detail"); }
             let mut draws = std::fs::File::create(path.with_file_name("screen-draws.csv")).ok();
-            if let Some(f) = &mut draws { let _ = writeln!(f, "first_frame,screen,name,hash,size,x0,y0,x1,y1,u0,v0,u1,v1,r,g,b,a"); }
+            if let Some(f) = &mut draws { let _ = writeln!(f, "first_frame,screen,name,hash,size,x0,y0,x1,y1,u0,v0,u1,v1,program,r,g,b,a"); }
             Some(Census { file, last: Vec::new(), rejected, seen: Default::default(), draws, drawn: Default::default() })
         }
         pub(super) fn rejected(&mut self, frame: u64, reason: &str, detail: String) {
@@ -666,8 +684,8 @@ mod census {
         /// one row per distinct texture, place and part of it (whole pixels)
         #[allow(clippy::too_many_arguments)]
         pub(super) fn draw(&mut self, frame: u64, top: bool, name: &str, hash: u64, size: [u32; 2],
-            xy: [f32; 4], uv: [f32; 4], c: [f32; 4]) {
-            let key = format!("{},{name},{hash:016X},{}x{},{:.0},{:.0},{:.0},{:.0},{:.3},{:.3},{:.3},{:.3}",
+            xy: [f32; 4], uv: [f32; 4], c: [f32; 4], program: u64) {
+            let key = format!("{},{name},{hash:016X},{}x{},{:.0},{:.0},{:.0},{:.0},{:.3},{:.3},{:.3},{:.3},{program:X}",
                 if top { "top" } else { "bottom" }, size[0], size[1], xy[0], xy[1], xy[2], xy[3], uv[0], uv[1], uv[2], uv[3]);
             if self.drawn.len() < 50_000 && self.drawn.insert(key.clone()) {
                 if let Some(f) = &mut self.draws { let _ = writeln!(f, "{frame},{key},{:.2},{:.2},{:.2},{:.2}", c[0], c[1], c[2], c[3]); }

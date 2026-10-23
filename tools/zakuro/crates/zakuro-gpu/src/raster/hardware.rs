@@ -239,9 +239,21 @@ fn capture_ui<M: GpuMemory>(memory:&mut M, draw:&Draw) {
 /// each quad's vertex color, corners in guest screen pixels (half the screen
 /// is `half`: 160x120 below, 200x120 above) and texture coordinates.
 fn ui_quads<M: GpuMemory>(memory:&mut M, s:&Shading, half:[f32;2]) -> Option<Vec<([f32;4],[[f32;2];4],[[f32;2];4])>> {
-    let vertices=s.indices.len()/6*4;
-    let mut inputs=Vec::with_capacity(vertices);
-    for vertex in 0..vertices {
+    let inputs=vertex_inputs(memory,s,s.indices.len()/6*4)?;
+    let outputs=crate::shader::run_vertices(s.unit,&inputs);
+    Some(outputs.chunks_exact(4).filter_map(|quad| {
+        let primary=quad[0][1];
+        if quad.iter().any(|o|o[1]!=primary || !o[..3].iter().flatten().all(|v|v.is_finite()) || o[0][3].abs()<0.0001) {return None;}
+        let xy:[[f32;2];4]=std::array::from_fn(|i| {let p=quad[i][0];[(1.0-p[1]/p[3])*half[0],(1.0-p[0]/p[3])*half[1]]});
+        let uv:[[f32;2];4]=std::array::from_fn(|i|[quad[i][2][0],quad[i][2][1]]);
+        Some((primary,xy,uv))
+    }).collect())
+}
+
+/// The first `count` vertices' input registers of a shaded draw.
+fn vertex_inputs<M: GpuMemory>(memory:&mut M, s:&Shading, count:usize) -> Option<Vec<[[f32;4];16]>> {
+    let mut inputs=Vec::with_capacity(count);
+    for vertex in 0..count {
         let input=match s.inputs {
             Inputs::Decoded(values)=>*values.get(vertex)?,
             Inputs::Raw(raw)=>{
@@ -262,28 +274,51 @@ fn ui_quads<M: GpuMemory>(memory:&mut M, s:&Shading, half:[f32;2]) -> Option<Vec
             }
         };inputs.push(input);
     }
-    let outputs=crate::shader::run_vertices(s.unit,&inputs);
-    Some(outputs.chunks_exact(4).filter_map(|quad| {
-        let primary=quad[0][1];
-        if quad.iter().any(|o|o[1]!=primary || !o[..3].iter().flatten().all(|v|v.is_finite()) || o[0][3].abs()<0.0001) {return None;}
-        let xy:[[f32;2];4]=std::array::from_fn(|i| {let p=quad[i][0];[(1.0-p[1]/p[3])*half[0],(1.0-p[0]/p[3])*half[1]]});
-        let uv:[[f32;2];4]=std::array::from_fn(|i|[quad[i][2][0],quad[i][2][1]]);
-        Some((primary,xy,uv))
-    }).collect())
+    Some(inputs)
 }
 
-/// Census only (KIU_UI_CENSUS): every 2D layout draw of either screen that
-/// samples a known ROM texture, with where it lands, so menu art (the save
-/// select's HOME button, the battery icon, backgrounds) can be identified.
+/// Where a draw lands on its screen, in guest screen pixels (`half`: half
+/// the screen's size), from its placed vertices or by running its vertex
+/// program over every vertex it uses. None for large or odd draws.
+fn draw_bounds<M: GpuMemory>(memory:&mut M, draw:&Draw, half:[f32;2]) -> Option<[f32;4]> {
+    let mut b=[f32::INFINITY,f32::INFINITY,f32::NEG_INFINITY,f32::NEG_INFINITY];
+    let mut add=|x:f32,y:f32| { b=[b[0].min(x),b[1].min(y),b[2].max(x),b[3].max(y)]; };
+    match draw.geometry {
+        Geometry::Placed { vertices, .. } => for v in vertices { add(half[0]*2.0-v.y,half[1]*2.0-v.x) },
+        Geometry::Shaded(s) => {
+            let count=*s.indices.iter().max()? as usize+1;
+            if count>4096 {return None;}
+            let inputs=vertex_inputs(memory,s,count)?;
+            for o in crate::shader::run_vertices(s.unit,&inputs) {
+                let p=o[0];
+                if p[3].abs()<0.0001 || !p.iter().all(|v|v.is_finite()) {return None;}
+                add((1.0-p[1]/p[3])*half[0],(1.0-p[0]/p[3])*half[1]);
+            }
+        }
+    }
+    b[0].is_finite().then_some(b)
+}
+/// Census only (KIU_UI_CENSUS): every textured draw of either screen that
+/// samples a known ROM texture, with where it lands (whole draw bounds, or
+/// each quad of a 2D batch), so menu art (the save select's HOME button, the
+/// battery icon, backgrounds) can be identified from evidence.
 fn census_ui<M: GpuMemory>(memory:&mut M, draw:&Draw) {
-    let Geometry::Shaded(s)=draw.geometry else {return};
-    let top=match s.viewport { (0.0,0.0,240.0,320.0)=>false, (0.0,0.0,240.0,400.0)=>true, _=>return };
-    let Some(texture)=draw.textures[0].as_ref() else {return};
-    let Some(hash)=texture.source_hash else {return};
-    if super::kiu_linear_shader_key(s.unit)!=Some(18295097681142006406) || !super::kiu_quad_indices(s.indices) || s.indices.len()>6*MAX_UI_QUADS {return;}
-    let Some(quads)=ui_quads(memory,s,if top {[200.0,120.0]} else {[160.0,120.0]}) else {return};
-    for (primary,xy,uv) in quads {
-        crate::kiu_ui::census_draw(top,hash,[texture.width,texture.height],crate::kiu_ui::layout::bounds(&xy),crate::kiu_ui::layout::bounds(&uv),primary);
+    let top=match (draw.width,draw.height) { (240,400)=>true, (240,320)=>false, _=>return };
+    let half=if top {[200.0,120.0]} else {[160.0,120.0]};
+    let texture=draw.textures[0].as_ref();
+    let (hash,size)=match texture { Some(t)=>(t.source_hash.unwrap_or(0),[t.width,t.height]), None=>(0,[0,0]) };
+    if texture.is_some() && hash==0 {return;}
+    let program=match draw.geometry { Geometry::Shaded(s)=>super::kiu_linear_shader_key(s.unit).unwrap_or(2), Geometry::Placed{..}=>1 };
+    if let Some(b)=draw_bounds(memory,draw,half) {
+        crate::kiu_ui::census_draw(top,hash,size,b,[f32::NAN;4],[0.0;4],program);
+    }
+    // each quad of a 2D batch: which part of the texture goes where
+    if let (Geometry::Shaded(s),true)=(draw.geometry,hash!=0) {
+        if super::kiu_quad_indices(s.indices) && s.indices.len()<=6*MAX_UI_QUADS {
+            for (primary,xy,uv) in ui_quads(memory,s,half).unwrap_or_default() {
+                crate::kiu_ui::census_draw(top,hash,size,crate::kiu_ui::layout::bounds(&xy),crate::kiu_ui::layout::bounds(&uv),primary,program);
+            }
+        }
     }
 }
 /// Longest text/counter batch copied from one lower-screen draw.
@@ -3089,6 +3124,13 @@ impl Hardware {
             let _profile = crate::profile::scope(crate::profile::Phase::PcInterface);
             capture_ui(memory,draw);
             if crate::kiu_ui::census_enabled() { census_ui(memory,draw); }
+            // 3DS-only parts of the game's own lower screen (the HOME button
+            // of the save select) are left out where the PC layout shows it
+            if draw.width==240 && draw.height==320 {
+                if let Some(hide)=crate::kiu_ui::hidden_lower_screen() {
+                    if draw_bounds(memory,draw,[160.0,120.0]).is_some_and(|b| crate::kiu_ui::layout::contains(hide,b)) { return Ok(()); }
+                }
+            }
             // which menu screen is up, from the identity of the art either screen samples
             if let Some(hash)=draw.textures[0].as_ref().and_then(|t|t.source_hash) { crate::kiu_ui::note_texture(hash); }
         }

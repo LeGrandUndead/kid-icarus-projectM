@@ -25,6 +25,7 @@ Needs: pip install potracer opencv-python pillow numpy
 """
 import argparse
 import json
+import os
 import shutil
 import sys
 from concurrent.futures import ProcessPoolExecutor
@@ -152,6 +153,7 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument('--romfs', type=Path, default=ROOT / 'ROM/gameFiles/RomFS')
     ap.add_argument('--output', type=Path, default=ROOT / 'build/texture-work/menu-pc')
+    ap.add_argument('--workers', type=int, default=1, help='parallel processes (each needs a few hundred MB)')
     ap.add_argument('--only', help='only menus whose label contains this (e.g. menu020), for trials')
     args = ap.parse_args()
     if not (args.romfs / 'us/menu').is_dir():
@@ -172,13 +174,22 @@ def main():
     shutil.rmtree(work, ignore_errors=True)
     work.mkdir(parents=True)
     manifest, written = {}, 0
-    with ProcessPoolExecutor() as pool:
-        for (key, _), info in zip(jobs, pool.map(build_one, [j for _, j in jobs], chunksize=4)):
-            png = info.pop('png', None)
-            if png is not None:
-                png.save(work / key, optimize=False, compress_level=6)
-                written += 1
-            manifest[key] = info
+    # one process by default: worker processes each load numpy and OpenCV
+    # (October 23: one per core ran out of paging file on a busy PC, and the
+    # spawned workers did not find OpenCV where the main process did)
+    workers = max(1, min(args.workers, os.cpu_count() or 1))
+    pool = ProcessPoolExecutor(max_workers=workers) if workers > 1 else None
+    results = pool.map(build_one, [j for _, j in jobs], chunksize=8) if pool else map(build_one, [j for _, j in jobs])
+    for (key, _), info in zip(jobs, results):
+        png = info.pop('png', None)
+        if png is not None:
+            png.save(work / key, optimize=False, compress_level=6)
+            written += 1
+        manifest[key] = info
+        if len(manifest) % 200 == 0:
+            print(f'{len(manifest)} / {len(jobs)}', flush=True)
+    if pool:
+        pool.shutdown()
     (work / 'menu_manifest.json').write_text(json.dumps(manifest, indent=1, default=float), encoding='utf-8')
     changed = [k for k, v in manifest.items() if v.get('changes')]
     print(f'{written} textures written, {len(changed)} changed for PC: ' +

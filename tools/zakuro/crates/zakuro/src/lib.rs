@@ -1281,7 +1281,8 @@ impl App {
         let allowed = zakuro_gpu::kiu_ui::config::get().auto_pause_panel
             && !self.menus.menu_open && !self.menus.settings_open
             && !self.gui.as_ref().is_some_and(Gui::wants_keyboard);
-        match self.presentation.observe(scene, allowed) {
+        let request = self.presentation.observe(scene, allowed);
+        match request {
             pc_presentation::PanelRequest::Open => {
                 self.open_screen_access();
                 if self.presentation.automatic() == Some(pc_presentation::AutoPanel::SaveSelect) {
@@ -1297,6 +1298,8 @@ impl App {
             }
             pc_presentation::PanelRequest::Keep => {}
         }
+        // the save select's PC layout leaves out the 3DS HOME button
+        zakuro_gpu::kiu_ui::set_hide_home(self.presentation.automatic() == Some(pc_presentation::AutoPanel::SaveSelect));
     }
 
     /// the menus, and the actions they asked for, done.

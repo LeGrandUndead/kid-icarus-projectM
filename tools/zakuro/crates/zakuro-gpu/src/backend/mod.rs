@@ -141,7 +141,11 @@ pub fn layout(window_width: u32, window_height: u32, arrangement: ScreenLayout) 
         // The bezel gap is gone: the lower picture overlaps the upper one's
         // foot by SAVE_SELECT_JOIN and fades into it there.
         let (w, h) = (window_width as f32, window_height as f32);
-        let top_units = if wide { 240.0 * 16.0 / 9.0 } else { 400.0 };
+        // the save select's upper picture is 2D layout art the wide view
+        // stretches to 16:9 (only the HUD's own program is widened): shown
+        // at the console's 5:3 it has its own proportions again
+        let _ = wide;
+        let top_units = 400.0;
         let tall = 480.0 - SAVE_SELECT_JOIN;
         let unit = (h / tall).min(w / top_units);
         let y = (h - tall * unit) * 0.5;
@@ -293,7 +297,7 @@ mod tests {
             for wide in [true,false] {
                 let (top,bottom)=layout(w,h,ScreenLayout::SaveSelect { wide });
                 let (t,b)=(top.unwrap(),bottom.unwrap());
-                assert!((t.width/t.height-if wide {16.0/9.0} else {5.0/3.0}).abs()<0.0001);
+                assert!((t.width/t.height-5.0/3.0).abs()<0.0001, "the console's proportions in either view");
                 assert!((b.width/b.height-4.0/3.0).abs()<0.0001);
                 assert!((t.height-b.height).abs()<0.001, "one scale for both pictures");
                 for v in [t,b] { assert!(v.x>=-0.001 && v.y>=-0.001 && v.x+v.width<=w as f32+0.001 && v.y+v.height<=h as f32+0.001, "{v:?} {w}x{h}"); }
