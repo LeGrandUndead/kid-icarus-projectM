@@ -1,4 +1,4 @@
-# PC single-screen status — October 16, 2026
+# PC single-screen status — October 24, 2026
 
 Current reality of the single-screen work. Read with
 [PC_SINGLE_SCREEN_AUDIT.md](PC_SINGLE_SCREEN_AUDIT.md) (what the two screens
@@ -24,6 +24,47 @@ profiles under `build/user-data` were not touched. `--ui-census` and
 No other executable, launcher or save was replaced. The game's save format is
 untouched; PC options live in the profile's `roaming/zakuro/kiu-interface.txt`
 and `pc-interface-camera.txt`.
+
+## Menus on one screen (October 23-24)
+
+Every out-of-stage menu (title, save select, main menu, Solo, chapter select,
+Gear, Vault, Options, results...) is shown on the one PC screen automatically,
+arranged as on the console: the upper picture above, the lower one centered
+under it at the same scale, without the bezel gap, so the two pictures the game
+designed together stay together (the save select's black speech bubble now runs
+straight into its tail pointing at the chosen book). The lower picture is
+clickable; Tab shows the plain gameplay view.
+
+- **Evidence**: a lower-screen draw of menu art (catalog role `screen`: the
+  2002 textures of `us/menu/*/menu/bind.arc`, from
+  `prepare_native_ui_sources.py`), never beside gameplay HUD or the pause
+  menu. Leaves 15 frames after the art is gone. A pause panel that leads into
+  the menus becomes the menus' layout.
+- **Proportions**: menu art is drawn by layout programs the wide view does not
+  widen, so the 16:9 render stretches it; the layout shows 2D menu art at the
+  console's 5:3 again. When the upper screen draws a 3D room (depth-tested
+  draws in the last 30 frames) it keeps the wide view's width.
+- **Page**: the pictures fade into the menus' white page (a dark one behind
+  3D rooms) at their sides; the lower one fades into the upper one over the
+  6-pixel join (presenter feathering, `backend::feather`).
+- **3DS-only parts removed**: the battery and wireless icons (system atlas
+  `imsg`, cleared in the menu art pack) and the save select's HOME button
+  (its draws are skipped while the layout shows the save select:
+  `layout::SAVE_SELECT_HOME`, bounds from the vertex program).
+- **Menu art pack** (`build/texture-work/menu-pc`, local only, never
+  committed): `tools/recomp/build_menu_pc_pack.py` reads every menu texture
+  from the ROM (`pica_texture.py` decoder, exact against the runtime's texels)
+  and reconstructs the art with a shape or a luminance mask at 4x with the HUD
+  method (1160 textures, ~3 minutes); painted art is kept as it is.
+  `menu_pc_changes.json` lists the PC changes. The runtime replaces those
+  textures by the fingerprint of their ROM bytes (`KIU_MENU_PACK`), decoding
+  off the drawing thread. `--menu-art original` compares.
+- **Census**: `--ui-census` also writes `screen-draws.csv` (every draw of
+  either screen with its texture name, bounds and program).
+
+Still to do: the HOME button of the other menus (position per menu, from a
+census), keyboard/controller selection where the game only takes touch, a
+check of every menu by eye.
 
 ## HUD fixes from the October 21 trace
 
@@ -110,9 +151,8 @@ touch-aim range widened in game code — the postponed widescreen task.
 
 | Area | Current PC path | Why |
 |---|---|---|
-| Title, save select, main menu, Solo hub, chapter select, Fiend's Cauldron, Gear, Power Board, Arms Altar, Vault, Options, Together | Tab panel (original lower screen; mouse drag works, e.g. the Cauldron) | Menu bodies not yet correlated with live draws |
 | Retreat confirmation | Untraced; if it has no pause label or option bar the panel may close (Tab reopens) | Census needed |
-| Failure/continue, rewards, Treasure Hunt, Idol Toss | Tab panel | Not traced |
+| Failure/continue, rewards, Treasure Hunt, Idol Toss | Menus layout if they draw menu art, otherwise Tab panel | Not traced |
 | Carried items, vehicle actions | Original screen | Not yet seen in a census |
 | Inserts in other chapters (`CI_*` 71, `SP_*` 45, boss/rival cards `BL/BR` 59) | Catalogued, relocated by the same rule | Only Chapter 1's verified by eye |
 | Tutorials (`gc_01` control diagrams) | Original screen | Classified decor |
