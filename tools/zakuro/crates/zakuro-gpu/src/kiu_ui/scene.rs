@@ -54,6 +54,11 @@ pub struct BottomScene {
     /// The game's save select is up (its speech bubble or books were drawn
     /// this frame, on either screen).
     pub save_select: bool,
+    /// The lower screen drew art of the out-of-stage menus this frame (title,
+    /// save select, main menu, Solo, chapter select...).
+    pub menu_screen: bool,
+    /// The upper screen drew a 3D scene this frame (depth-tested draws).
+    pub top_3d: bool,
     /// The land Power Palette is on screen (power icons from atlas `mr` in
     /// the action island). Air special orbs come from `gc_00` instead.
     pub palette: bool,

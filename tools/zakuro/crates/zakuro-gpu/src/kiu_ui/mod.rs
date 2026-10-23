@@ -199,17 +199,32 @@ const SAVE_SELECT_ART: [&str; 4] = ["menu020/MenSelfileUp0011", "menu020/MenSelf
 static SAVE_SELECT_HASHES: OnceLock<HashSet<u64>> = OnceLock::new();
 /// Draws of save-select art since the last end_frame.
 static SAVE_SELECT_DRAWS: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+/// Every menu screen's art (Role::Screen), fixed once the catalog is read.
+static MENU_ART_HASHES: OnceLock<HashSet<u64>> = OnceLock::new();
+/// Lower-screen draws of menu art, and upper-screen draws with a depth
+/// buffer (a 3D room), since the last end_frame.
+static MENU_ART_DRAWS: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+static TOP_DEPTH_DRAWS: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
 
 fn save_select_hashes(catalog: &HashMap<u64, Source>) -> HashSet<u64> {
     catalog.iter().filter(|(_, s)| s.role == Role::Screen && SAVE_SELECT_ART.contains(&s.name.as_str()))
         .map(|(&hash, _)| hash).collect()
 }
 
-/// A draw on either screen sampled this original texture.
-pub(crate) fn note_texture(hash: u64) {
+/// A draw on the upper (`top`) or lower screen sampled this original texture.
+pub(crate) fn note_texture(hash: u64, top: bool) {
+    use std::sync::atomic::Ordering::Relaxed;
     if SAVE_SELECT_HASHES.get().is_some_and(|set| set.contains(&hash)) {
-        SAVE_SELECT_DRAWS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        SAVE_SELECT_DRAWS.fetch_add(1, Relaxed);
     }
+    if !top && MENU_ART_HASHES.get().is_some_and(|set| set.contains(&hash)) {
+        MENU_ART_DRAWS.fetch_add(1, Relaxed);
+    }
+}
+
+/// The upper screen drew with a depth buffer: a 3D scene, not only 2D art.
+pub(crate) fn note_top_depth() {
+    TOP_DEPTH_DRAWS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 }
 
 fn state() -> Option<&'static Mutex<State>> {
@@ -227,6 +242,7 @@ fn state() -> Option<&'static Mutex<State>> {
             log::warn!("The UI catalog has no save-select art: the save select stays a Tab panel (run tools/recomp/prepare_native_ui_sources.py)");
         }
         let _ = SAVE_SELECT_HASHES.set(save_select);
+        let _ = MENU_ART_HASHES.set(catalog.iter().filter(|(_, s)| s.role == Role::Screen).map(|(&h, _)| h).collect());
         let (jobs, done) = std::sync::mpsc::channel();
         crate::replacements::hud_pack_enabled(); // starts decoding the HD HUD atlases
         Some(Mutex::new(State { catalog, names, next: 1u64 << 61, census: census::Census::from_environment(),
@@ -278,7 +294,12 @@ pub fn end_frame() -> BottomScene {
     s.scene = scene::classify(s.frame, fresh, s.shown.iter().map(|l| scene::Evidence {
         role: l.role, atlas: &names[l.name], uv: l.uv, island: l.island.is_some(),
     }));
-    s.scene.save_select = SAVE_SELECT_DRAWS.swap(0, std::sync::atomic::Ordering::Relaxed) > 0;
+    {
+        use std::sync::atomic::Ordering::Relaxed;
+        s.scene.save_select = SAVE_SELECT_DRAWS.swap(0, Relaxed) > 0;
+        s.scene.menu_screen = MENU_ART_DRAWS.swap(0, Relaxed) > 0;
+        s.scene.top_3d = TOP_DEPTH_DRAWS.swap(0, Relaxed) > 0;
+    }
     if let Some(census) = &mut s.census { census.record(s.frame, fresh, &s.shown, names); }
     evict(s);
     s.scene

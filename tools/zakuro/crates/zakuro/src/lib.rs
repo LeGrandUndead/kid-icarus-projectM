@@ -1285,21 +1285,28 @@ impl App {
         match request {
             pc_presentation::PanelRequest::Open => {
                 self.open_screen_access();
-                if self.presentation.automatic() == Some(pc_presentation::AutoPanel::SaveSelect) {
-                    log::info!("Save select: bubble and books on one screen, click a book (Tab shows the plain view)");
+                if self.presentation.automatic() == Some(pc_presentation::AutoPanel::Menus) {
+                    log::info!("Game menu: both pictures on one screen as on the console, the lower one clickable (Tab shows the plain view)");
                 } else {
                     log::info!("Game pause menu shown: opening the lower-screen panel (Tab or Esc returns)");
                 }
             }
+            pc_presentation::PanelRequest::Relayout => {
+                let room = matches!(self.presentation.layout(self.layout, self.experimental_wide), zakuro_gpu::ScreenLayout::Menus { room: true, .. });
+                log::info!("Game menu: {}", if room { "a 3D room above" } else { "2D art above" });
+                self.show_layout(self.layout);
+            }
             pc_presentation::PanelRequest::Close => {
-                let save_select = self.presentation.automatic() == Some(pc_presentation::AutoPanel::SaveSelect);
-                log::info!("{}", if save_select { "Save select left: back to the usual view" } else { "Gameplay resumed: closing the pause panel" });
+                let menus = self.presentation.automatic() == Some(pc_presentation::AutoPanel::Menus);
+                log::info!("{}", if menus { "Menus left: back to the gameplay view" } else { "Gameplay resumed: closing the pause panel" });
                 self.close_screen_access_by(true, false);
+                // leaving the menus for a stage: aim with the mouse again
+                if menus { self.set_mouse_capture(true); }
             }
             pc_presentation::PanelRequest::Keep => {}
         }
         // the save select's PC layout leaves out the 3DS HOME button
-        zakuro_gpu::kiu_ui::set_hide_home(self.presentation.automatic() == Some(pc_presentation::AutoPanel::SaveSelect));
+        zakuro_gpu::kiu_ui::set_hide_home(self.presentation.automatic() == Some(pc_presentation::AutoPanel::Menus));
     }
 
     /// the menus, and the actions they asked for, done.

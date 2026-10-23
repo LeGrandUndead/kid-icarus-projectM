@@ -3132,7 +3132,9 @@ impl Hardware {
                 }
             }
             // which menu screen is up, from the identity of the art either screen samples
-            if let Some(hash)=draw.textures[0].as_ref().and_then(|t|t.source_hash) { crate::kiu_ui::note_texture(hash); }
+            let top=draw.width==240 && draw.height==400;
+            if let Some(hash)=draw.textures[0].as_ref().and_then(|t|t.source_hash) { crate::kiu_ui::note_texture(hash,top); }
+            if top && draw.depth.is_some() { crate::kiu_ui::note_top_depth(); }
         }
         let [left, bottom, right, top] = draw.scissor;
         let (left, bottom) = (left.max(0), bottom.max(0));

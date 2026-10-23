@@ -107,12 +107,13 @@ pub enum ScreenLayout {
     BottomOverlay { wide: bool },
     /// Legacy two-screen composition retaining the already-selected wide view.
     StackedWide,
-    /// The game's save select on one PC screen: its upper picture (the black
-    /// speech bubble with the file's details) across the top of the window,
-    /// and its lower picture (the three books, the bubble's tail pointing at
-    /// the chosen one, Back and How to Play) below it, clickable. Both melt
-    /// into the game's white page at their edges so they read as one scene.
-    SaveSelect { wide: bool },
+    /// The game's out-of-stage menus (save select, main menu, Solo, chapter
+    /// select...) on one PC screen, arranged as on the console: the upper
+    /// picture above, the lower one centered under it without the bezel gap
+    /// (so the save select's speech bubble meets its tail), clickable. Both
+    /// melt into a page at their edges. `room`: the upper picture is a 3D
+    /// room (shown with the wide view's width), otherwise it is 2D art.
+    Menus { wide: bool, room: bool },
 }
 
 impl ScreenLayout {
@@ -126,7 +127,7 @@ impl ScreenLayout {
             ScreenLayout::BottomOnly => (320, 240),
             ScreenLayout::BottomOverlay { wide } => if wide { (1280,720) } else { (400,240) },
             ScreenLayout::StackedWide => (1280,1440),
-            ScreenLayout::SaveSelect { .. } => (1280,720),
+            ScreenLayout::Menus { .. } => (1280,720),
         }
     }
 }
@@ -134,23 +135,22 @@ impl ScreenLayout {
 /// works out where the screens go inside a window, keeping the 3DS's
 /// aspect ratio and centring them. a screen that does not show has no place.
 pub fn layout(window_width: u32, window_height: u32, arrangement: ScreenLayout) -> (Option<Viewport>, Option<Viewport>) {
-    if let ScreenLayout::SaveSelect { wide } = arrangement {
+    if let ScreenLayout::Menus { wide, room } = arrangement {
         // the console's own arrangement, both pictures at one scale and the
         // lower one centered under the upper one, so the bubble's tail on the
         // lower picture grows out of the bubble's black ground above it.
         // The bezel gap is gone: the lower picture overlaps the upper one's
-        // foot by SAVE_SELECT_JOIN and fades into it there.
+        // foot by MENU_JOIN and fades into it there.
         let (w, h) = (window_width as f32, window_height as f32);
-        // the save select's upper picture is 2D layout art the wide view
-        // stretches to 16:9 (only the HUD's own program is widened): shown
-        // at the console's 5:3 it has its own proportions again
-        let _ = wide;
-        let top_units = 400.0;
-        let tall = 480.0 - SAVE_SELECT_JOIN;
+        // menu art is 2D layout the wide view stretches to 16:9 (only the
+        // HUD's own program is widened): at the console's 5:3 it has its own
+        // proportions again. A 3D room keeps the wide view's width.
+        let top_units = if room && wide { 240.0 * 16.0 / 9.0 } else { 400.0 };
+        let tall = 480.0 - MENU_JOIN;
         let unit = (h / tall).min(w / top_units);
         let y = (h - tall * unit) * 0.5;
         let top = Viewport { x: (w - top_units * unit) * 0.5, y, width: top_units * unit, height: 240.0 * unit };
-        let bottom = Viewport { x: (w - 320.0 * unit) * 0.5, y: y + (240.0 - SAVE_SELECT_JOIN) * unit,
+        let bottom = Viewport { x: (w - 320.0 * unit) * 0.5, y: y + (240.0 - MENU_JOIN) * unit,
             width: 320.0 * unit, height: 240.0 * unit };
         return (Some(top), Some(bottom));
     }
@@ -205,7 +205,7 @@ pub fn layout(window_width: u32, window_height: u32, arrangement: ScreenLayout) 
             height: 240.0 * scale,
         }),
         ScreenLayout::TopOnly | ScreenLayout::TopWide | ScreenLayout::BottomOverlay { .. } | ScreenLayout::StackedWide
-            | ScreenLayout::SaveSelect { .. } => None,
+            | ScreenLayout::Menus { .. } => None,
         ScreenLayout::BottomOnly => Some(Viewport {
             x: offset_x,
             y: offset_y,
@@ -216,25 +216,28 @@ pub fn layout(window_width: u32, window_height: u32, arrangement: ScreenLayout) 
     (top, bottom)
 }
 
-/// Console pixels the save select's lower picture overlaps the upper one,
-/// fading in over them (the bottom feather below covers exactly this band).
-const SAVE_SELECT_JOIN: f32 = 12.0;
+/// Console pixels the menus' lower picture overlaps the upper one, fading in
+/// over them (the bottom feather covers exactly this band). Small: the main
+/// menu writes its descriptions at the very foot of the upper picture.
+const MENU_JOIN: f32 = 6.0;
 
 /// How far in from each edge (left, top, right, bottom, as a share of the
 /// picture) a screen fades into the window's background, for the top and the
-/// bottom screen. Zero everywhere except the save select.
+/// bottom screen. Zero everywhere except the menus.
 pub fn feather(arrangement: ScreenLayout) -> ([f32; 4], [f32; 4]) {
     match arrangement {
-        ScreenLayout::SaveSelect { .. } => ([0.05, 0.0, 0.05, 0.0], [0.06, SAVE_SELECT_JOIN / 240.0, 0.06, 0.0]),
+        ScreenLayout::Menus { .. } => ([0.03, 0.0, 0.03, 0.0], [0.04, MENU_JOIN / 240.0, 0.04, 0.0]),
         _ => ([0.0; 4], [0.0; 4]),
     }
 }
 
-/// The window's background: black, or for the save select the game's white
-/// page the pictures fade into.
+/// The window's background: black, or for the menus the page the pictures
+/// fade into.
 pub fn backdrop(arrangement: ScreenLayout) -> [f32; 4] {
     match arrangement {
-        ScreenLayout::SaveSelect { .. } => [0.976, 0.973, 0.965, 1.0],
+        // the white page of KIU's menu art, or the dark of a 3D room
+        ScreenLayout::Menus { room: false, .. } => [0.976, 0.973, 0.965, 1.0],
+        ScreenLayout::Menus { room: true, .. } => [0.035, 0.035, 0.05, 1.0],
         _ => [0.0, 0.0, 0.0, 1.0],
     }
 }
@@ -292,28 +295,30 @@ mod tests {
         }
     }
     #[test]
-    fn save_select_keeps_the_console_arrangement_so_the_tail_meets_the_bubble() {
+    fn menus_keep_the_console_arrangement_so_the_tail_meets_the_bubble() {
         for (w,h) in [(1920,1080),(1280,720),(800,1200),(2560,1080),(640,480)] {
-            for wide in [true,false] {
-                let (top,bottom)=layout(w,h,ScreenLayout::SaveSelect { wide });
+            for (wide,room) in [(true,false),(false,false),(true,true),(false,true)] {
+                let (top,bottom)=layout(w,h,ScreenLayout::Menus { wide, room });
                 let (t,b)=(top.unwrap(),bottom.unwrap());
-                assert!((t.width/t.height-5.0/3.0).abs()<0.0001, "the console's proportions in either view");
+                let aspect=if room && wide {16.0/9.0} else {5.0/3.0};
+                assert!((t.width/t.height-aspect).abs()<0.0001, "2D art at the console's 5:3, a room as wide as it is drawn");
                 assert!((b.width/b.height-4.0/3.0).abs()<0.0001);
                 assert!((t.height-b.height).abs()<0.001, "one scale for both pictures");
                 for v in [t,b] { assert!(v.x>=-0.001 && v.y>=-0.001 && v.x+v.width<=w as f32+0.001 && v.y+v.height<=h as f32+0.001, "{v:?} {w}x{h}"); }
                 assert!(((t.x+t.width*0.5)-(b.x+b.width*0.5)).abs()<0.01, "centered as on the console");
                 let join=t.y+t.height-b.y;
-                assert!((join-t.height*SAVE_SELECT_JOIN/240.0).abs()<0.01, "no bezel gap, a small join");
+                assert!((join-t.height*MENU_JOIN/240.0).abs()<0.01, "no bezel gap, a small join");
             }
         }
-        let (t,b)=layout(1920,1080,ScreenLayout::SaveSelect { wide: true });
+        let (t,b)=layout(1920,1080,ScreenLayout::Menus { wide: true, room: false });
         assert!((t.unwrap().y).abs()<0.01 && (b.unwrap().y+b.unwrap().height-1080.0).abs()<0.01, "fills the height at 1080p");
     }
     #[test]
-    fn only_the_save_select_feathers_and_brightens_the_background() {
+    fn only_the_menus_feather_and_get_a_page() {
         assert_eq!(feather(ScreenLayout::TopWide), ([0.0; 4], [0.0; 4]));
         assert_eq!(backdrop(ScreenLayout::BottomOverlay { wide: true }), [0.0, 0.0, 0.0, 1.0]);
-        let (top, bottom) = feather(ScreenLayout::SaveSelect { wide: true });
+        assert_ne!(backdrop(ScreenLayout::Menus { wide: true, room: false }), backdrop(ScreenLayout::Menus { wide: true, room: true }));
+        let (top, bottom) = feather(ScreenLayout::Menus { wide: true, room: false });
         assert_eq!(feather_alpha([0.5, 0.5], top), 1.0);
         assert_eq!(feather_alpha([0.0, 0.5], top), 0.0);
         assert_eq!(feather_alpha([0.5, 0.0], top), 1.0, "the bubble's top is not faded");

@@ -21,9 +21,10 @@ pub enum PresentationMode {
     LowerScreenPanel { automatic: bool },
     /// Development/regression comparison: both original screens.
     LegacyDualScreen,
-    /// The game's save select on one screen: its bubble above its books,
-    /// the books clickable (ScreenLayout::SaveSelect), while the game shows it.
-    SaveSelect,
+    /// The game's out-of-stage menus on one screen, arranged as on the
+    /// console (ScreenLayout::Menus), the lower picture clickable, while the
+    /// game shows a menu screen.
+    Menus,
 }
 
 /// Why the lower screen was opened without the player asking.
@@ -31,20 +32,24 @@ pub enum PresentationMode {
 pub enum AutoPanel {
     /// the in-game pause menu: a panel over the frozen gameplay view
     Pause,
-    /// the save select, composed as one scene
-    SaveSelect,
+    /// an out-of-stage menu screen (save select, main menu, Solo...),
+    /// both pictures composed as one scene
+    Menus,
 }
 
 /// Change the panel because of what the game is showing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum PanelRequest { Keep, Open, Close }
+pub enum PanelRequest { Keep, Open, Close, Relayout }
 
 /// Consecutive frames of gameplay HUD without any menu art before an
 /// automatically opened pause panel closes again (a third of a second).
 const CLOSE_AFTER: u32 = 20;
-/// Frames without the save select's art before its layout ends (a quarter of
-/// a second: frames the game skips or fades through do not flicker it).
-const SAVE_SELECT_GONE: u32 = 15;
+/// Frames without menu art before the menus' layout ends (a quarter of a
+/// second: frames the game skips or fades through do not flicker it).
+const MENUS_GONE: u32 = 15;
+/// Frames a 3D upper picture counts for: rooms keep their layout through
+/// a frame or two drawn without 3D.
+const ROOM_FRAMES: u32 = 30;
 
 #[derive(Default)]
 pub struct PcPresentation {
@@ -60,8 +65,12 @@ pub struct PcPresentation {
     /// The player closed an automatic panel; wait until that menu is gone.
     suppressed: bool,
     gameplay_frames: u32,
-    /// Consecutive frames without save-select art.
+    /// Consecutive frames without menu art.
     away_frames: u32,
+    /// Frames a 3D upper picture still counts for (ROOM_FRAMES after one).
+    room_frames: u32,
+    /// The menus' upper picture is a 3D room (decided from room_frames).
+    room: bool,
 }
 
 impl PcPresentation {
@@ -69,7 +78,7 @@ impl PcPresentation {
     pub fn layout(&self, original: Screens, wide: bool) -> ScreenLayout {
         if self.enabled {
             if self.access.is_some() {
-                return if self.automatic == Some(AutoPanel::SaveSelect) { ScreenLayout::SaveSelect { wide } }
+                return if self.automatic == Some(AutoPanel::Menus) { ScreenLayout::Menus { wide, room: self.room } }
                     else { ScreenLayout::BottomOverlay { wide } };
             }
             if self.legacy { return if wide { ScreenLayout::StackedWide } else { ScreenLayout::Stacked }; }
@@ -81,7 +90,7 @@ impl PcPresentation {
 
     pub fn mode(&self) -> PresentationMode {
         if !self.enabled { PresentationMode::Original }
-        else if self.access.is_some() && self.automatic == Some(AutoPanel::SaveSelect) { PresentationMode::SaveSelect }
+        else if self.access.is_some() && self.automatic == Some(AutoPanel::Menus) { PresentationMode::Menus }
         else if self.access.is_some() { PresentationMode::LowerScreenPanel { automatic: self.automatic.is_some() } }
         else if self.legacy { PresentationMode::LegacyDualScreen }
         else { PresentationMode::Gameplay }
@@ -95,25 +104,41 @@ impl PcPresentation {
     /// The automatic panel kind, if the panel is open because of the game.
     pub fn automatic(&self) -> Option<AutoPanel> { self.automatic.filter(|_| self.access.is_some()) }
 
-    /// Follows the game's own pause menu and its save select. `allowed` is
-    /// false while a runtime menu/modal owns input or the option is off.
+    /// Follows the game's own pause menu and its out-of-stage menus.
+    /// `allowed` is false while a runtime menu/modal owns input or the option
+    /// is off. Menus are known by their own art on the lower screen, never
+    /// beside gameplay HUD or the pause menu.
     pub fn observe(&mut self, scene: BottomScene, allowed: bool) -> PanelRequest {
         if !self.enabled || self.legacy { return PanelRequest::Keep; }
-        if scene.save_select { self.away_frames = 0; } else { self.away_frames = self.away_frames.saturating_add(1); }
-        // the save select owns its own layout, opened and closed by its art
-        if self.automatic() == Some(AutoPanel::SaveSelect) {
-            if self.away_frames >= SAVE_SELECT_GONE {
-                self.automatic = None;
-                return PanelRequest::Close;
-            }
-            return PanelRequest::Keep;
-        }
-        if scene.save_select {
-            if self.access.is_none() {
-                if allowed && !self.suppressed {
-                    self.automatic = Some(AutoPanel::SaveSelect);
-                    return PanelRequest::Open;
+        let menus = (scene.menu_screen || scene.save_select) && scene.hud == 0 && !scene.pause_menu;
+        if menus { self.away_frames = 0; } else { self.away_frames = self.away_frames.saturating_add(1); }
+        self.room_frames = if scene.top_3d { ROOM_FRAMES } else { self.room_frames.saturating_sub(1) };
+        let room = self.room_frames > 0;
+        match self.automatic() {
+            Some(AutoPanel::Menus) => {
+                if self.away_frames >= MENUS_GONE {
+                    self.automatic = None;
+                    return PanelRequest::Close;
                 }
+                if room != self.room {
+                    self.room = room;
+                    return PanelRequest::Relayout;
+                }
+                return PanelRequest::Keep;
+            }
+            // retreating from a stage: its pause panel leads into the menus
+            Some(AutoPanel::Pause) if menus => {
+                self.automatic = Some(AutoPanel::Menus);
+                self.room = room;
+                return PanelRequest::Relayout;
+            }
+            _ => {}
+        }
+        if menus {
+            if self.access.is_none() && allowed && !self.suppressed {
+                self.automatic = Some(AutoPanel::Menus);
+                self.room = room;
+                return PanelRequest::Open;
             }
             return PanelRequest::Keep;
         }
@@ -125,7 +150,7 @@ impl PcPresentation {
             }
             return PanelRequest::Keep;
         }
-        if !scene.menu { self.suppressed = false; }
+        if !scene.menu && !scene.menu_screen && !scene.save_select { self.suppressed = false; }
         if self.automatic() != Some(AutoPanel::Pause) { return PanelRequest::Keep; }
         // Closing needs positive evidence of gameplay, not just a missing
         // label: option sub-panels may draw other art.
@@ -143,7 +168,7 @@ impl PcPresentation {
     /// The panel closed for any reason. A player closing an automatic panel
     /// over a still-visible pause menu is respected until that menu ends.
     pub fn panel_closed(&mut self, by_player: bool, scene: BottomScene) {
-        if self.automatic.is_some() && by_player && (scene.pause_menu || scene.menu || scene.save_select) { self.suppressed = true; }
+        if self.automatic.is_some() && by_player && (scene.pause_menu || scene.menu || scene.menu_screen || scene.save_select) { self.suppressed = true; }
         self.automatic = None;
         self.gameplay_frames = 0;
     }
@@ -217,19 +242,19 @@ mod tests {
     }
 
     #[test]
-    fn the_save_select_gets_its_own_layout_while_its_art_is_drawn() {
-        let select = BottomScene { fresh: true, save_select: true, ..BottomScene::default() };
+    fn menus_get_the_console_arrangement_while_their_art_is_drawn() {
+        let select = BottomScene { fresh: true, save_select: true, menu_screen: true, ..BottomScene::default() };
         let other = BottomScene { fresh: true, ..BottomScene::default() };
         let mut p = PcPresentation::new(true);
         assert_eq!(p.observe(select, true), PanelRequest::Open);
         p.access = Some((Screens::TopOnly, None));
-        assert_eq!(p.mode(), PresentationMode::SaveSelect);
-        assert_eq!(p.layout(Screens::TopOnly, true), ScreenLayout::SaveSelect { wide: true });
+        assert_eq!(p.mode(), PresentationMode::Menus);
+        assert_eq!(p.layout(Screens::TopOnly, true), ScreenLayout::Menus { wide: true, room: false });
         assert_eq!(p.context(false, false), InputContext::PointerMenu);
         // a few frames without its art (skipped frames, fades) keep it
-        for _ in 0..SAVE_SELECT_GONE - 1 { assert_eq!(p.observe(other, true), PanelRequest::Keep); }
+        for _ in 0..MENUS_GONE - 1 { assert_eq!(p.observe(other, true), PanelRequest::Keep); }
         assert_eq!(p.observe(select, true), PanelRequest::Keep);
-        for _ in 0..SAVE_SELECT_GONE - 1 { assert_eq!(p.observe(other, true), PanelRequest::Keep); }
+        for _ in 0..MENUS_GONE - 1 { assert_eq!(p.observe(other, true), PanelRequest::Keep); }
         assert_eq!(p.observe(other, true), PanelRequest::Close);
         p.access = None;
         p.panel_closed(false, other);
@@ -245,12 +270,31 @@ mod tests {
         // not while the runtime's own menus own the input
         let mut q = PcPresentation::new(true);
         assert_eq!(q.observe(select, false), PanelRequest::Keep);
-        // a pause panel is never turned into the save select layout
+        // menu art beside gameplay HUD is not a menu screen
+        let mut h = PcPresentation::new(true);
+        assert_eq!(h.observe(BottomScene { fresh: true, menu_screen: true, hud: 3, ..BottomScene::default() }, true), PanelRequest::Keep);
+        // retreating from a stage: the pause panel becomes the menus' layout
         let mut r = PcPresentation::new(true);
         assert_eq!(r.observe(scene(true, true, 0), true), PanelRequest::Open);
         r.access = Some((Screens::TopOnly, None));
-        assert_eq!(r.observe(select, true), PanelRequest::Keep);
-        assert_eq!(r.mode(), PresentationMode::LowerScreenPanel { automatic: true });
+        let main = BottomScene { fresh: true, menu_screen: true, ..BottomScene::default() };
+        assert_eq!(r.observe(main, true), PanelRequest::Relayout);
+        assert_eq!(r.mode(), PresentationMode::Menus);
+    }
+
+    #[test]
+    fn a_3d_room_above_the_menu_keeps_the_wide_view() {
+        let room = BottomScene { fresh: true, menu_screen: true, top_3d: true, ..BottomScene::default() };
+        let flat = BottomScene { fresh: true, menu_screen: true, ..BottomScene::default() };
+        let mut p = PcPresentation::new(true);
+        assert_eq!(p.observe(room, true), PanelRequest::Open);
+        p.access = Some((Screens::TopOnly, None));
+        assert_eq!(p.layout(Screens::TopOnly, true), ScreenLayout::Menus { wide: true, room: true });
+        // a frame or two without 3D do not change it, a flat menu does
+        for _ in 0..ROOM_FRAMES - 1 { assert_eq!(p.observe(flat, true), PanelRequest::Keep); }
+        assert_eq!(p.observe(flat, true), PanelRequest::Relayout);
+        assert_eq!(p.layout(Screens::TopOnly, true), ScreenLayout::Menus { wide: true, room: false });
+        assert_eq!(p.observe(room, true), PanelRequest::Relayout);
     }
 
     #[test]
