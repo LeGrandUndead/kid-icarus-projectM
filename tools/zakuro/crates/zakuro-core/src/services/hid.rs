@@ -266,9 +266,11 @@ pub fn update(system: &mut System, input: InputState) {
     // the buttons held now, past the header
     put32(system, base + PAD_BASE + 0x1C, buttons.bits());
 
-    // circle pad range is roughly +-150 on hardware.
-    let circle_x = (input.circle_x.clamp(-1.0, 1.0) * 150.0) as i16;
-    let circle_y = (input.circle_y.clamp(-1.0, 1.0) * 150.0) as i16;
+    // a full throw of the circle pad reads about 0x9C (156) on hardware,
+    // as Citra and its successors report it
+    const CIRCLE_MAX: f32 = 156.0;
+    let circle_x = (input.circle_x.clamp(-1.0, 1.0) * CIRCLE_MAX) as i16;
+    let circle_y = (input.circle_y.clamp(-1.0, 1.0) * CIRCLE_MAX) as i16;
 
     let entry = base + PAD_BASE + SECTION_ENTRIES + next * 0x10;
     put32(system, entry, buttons.bits());

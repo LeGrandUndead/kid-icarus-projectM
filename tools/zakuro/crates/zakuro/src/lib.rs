@@ -1209,6 +1209,7 @@ impl App {
         const LAND_GRACE: u64 = 20;
         let on_land = self.land_seen.is_some_and(|seen| game.frame.saturating_sub(seen) <= LAND_GRACE);
         self.keyboard.set_wheel_allowed(self.settings.kiu_wheel_powers && on_land);
+        self.keyboard.set_on_land(on_land);
         let mut input = match &mut game.replay {
             Some(replay) => replay.input(game.frame),
             None => {

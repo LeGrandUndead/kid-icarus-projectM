@@ -39,6 +39,11 @@ pub struct Keyboard {
     pc_dash_armed: bool,
     pc_walk_strength: f32,
     pc_run_ramp: u8,
+    /// Land gameplay was seen lately: the dash protection applies (a key
+    /// press must not look like a stick flick). In flight keys are instant.
+    pc_on_land: bool,
+    /// The stick position sent last, for turning smoothly on land.
+    pc_stick: [f32; 2],
     pc_last_direction: [f32; 2],
     /// Shift creates an explicit synthetic stick flick. Phase 2 emits one
     /// neutral HID sample, phase 1 emits the full-stick direction.
@@ -78,6 +83,9 @@ impl Keyboard {
         self.release();
     }
 
+    /// Whether land gameplay is on (the dash protection is for land only).
+    pub fn set_on_land(&mut self, on: bool) { self.pc_on_land = on; }
+
     pub fn set_keys(&mut self, keys: Keys) {
         self.keys = keys;
         self.release();
@@ -95,6 +103,7 @@ impl Keyboard {
         self.pc_action_pending = [false; 3];
         self.clear_wheel();
         self.pc_run_ramp = 0;
+        self.pc_stick = [0.0; 2];
         self.pc_last_direction = [0.0; 2];
         self.pc_dash_phase = 0;
         self.pc_dash_direction = [0.0; 2];
@@ -219,9 +228,8 @@ impl Keyboard {
         if let Some(index) = index {
             if self.pc_circle[index] != pressed {
                 self.pc_circle[index] = pressed;
-                // Every direction change restarts the short run ramp. This is
-                // what prevents ordinary WASD turns from becoming KIU dashes.
-                self.pc_run_ramp = 0;
+                // the run ramp restarts from a standstill or a reversal
+                // (pc_circle_state), not on every turn: turns keep their speed
                 let direction = self.pc_direction();
                 if direction != [0.0, 0.0] {
                     self.pc_last_direction = direction;
@@ -369,22 +377,41 @@ impl Keyboard {
         let [x, y] = self.pc_direction();
         if x == 0.0 && y == 0.0 {
             self.pc_run_ramp = 0;
+            self.pc_stick = [0.0; 2];
             return (0.0, 0.0);
         }
         self.pc_last_direction = [x, y];
 
         if self.pc_walk {
-            return (x * self.pc_walk_strength, y * self.pc_walk_strength);
+            self.pc_stick = [x * self.pc_walk_strength, y * self.pc_walk_strength];
+            return (self.pc_stick[0], self.pc_stick[1]);
         }
 
-        // Normal movement should be running. The first ~80 ms ramps from the
-        // known-safe partial throw to 1.0 so the game does not interpret the
-        // keyboard's digital edge as a stylus-era analog flick/dash.
+        // In flight a key is the full stick at once, as on an emulator.
+        if !self.pc_on_land {
+            self.pc_stick = [x, y];
+            return (x, y);
+        }
+
+        // On land a flick of the stick is a dash. From a standstill (or a
+        // reversal) the throw grows from the known-safe partial value to 1.0
+        // over ~80 ms, so a key press is not read as a flick. Once moving,
+        // turns keep their speed and swing over a couple of samples instead
+        // of jumping.
+        let [cx, cy] = self.pc_stick;
+        if cx * x + cy * y < 0.0 { self.pc_run_ramp = 0; }
         const RAMP_FRAMES: u8 = 5;
         let t = (self.pc_run_ramp.min(RAMP_FRAMES) as f32) / RAMP_FRAMES as f32;
         let strength = self.pc_walk_strength + (1.0 - self.pc_walk_strength) * t;
         self.pc_run_ramp = self.pc_run_ramp.saturating_add(1).min(RAMP_FRAMES);
-        (x * strength, y * strength)
+        let target = [x * strength, y * strength];
+        let moving = cx != 0.0 || cy != 0.0;
+        const TURN_STEP: f32 = 0.75;
+        let (dx, dy) = (target[0] - cx, target[1] - cy);
+        let distance = dx.hypot(dy);
+        self.pc_stick = if !moving || distance <= TURN_STEP || cx * x + cy * y < 0.0 { target }
+            else { [cx + dx / distance * TURN_STEP, cy + dy / distance * TURN_STEP] };
+        (self.pc_stick[0], self.pc_stick[1])
     }
 
     fn pc_touch_state(&mut self, sensitivity: f32) -> Option<(u16, u16)> {
@@ -605,6 +632,7 @@ mod tests {
     fn pc_wasd_ramps_to_running_and_alt_walks() {
         let mut keyboard = Keyboard::new(Keys::default());
         keyboard.set_pc_mode(true, 0.60);
+        keyboard.set_on_land(true);
         assert!(keyboard.pc_key(PhysicalKey::Code(KeyCode::KeyD), true));
         assert!((state(&mut keyboard).circle_x - 0.60).abs() < 0.001);
         for _ in 0..5 {
@@ -613,6 +641,38 @@ mod tests {
         assert!((state(&mut keyboard).circle_x - 1.0).abs() < 0.001);
         assert!(keyboard.pc_key(PhysicalKey::Code(KeyCode::AltLeft), true));
         assert!((state(&mut keyboard).circle_x - 0.60).abs() < 0.001);
+    }
+
+    #[test]
+    fn flight_keys_are_the_full_stick_at_once() {
+        let mut keyboard = Keyboard::new(Keys::default());
+        keyboard.set_pc_mode(true, 0.60);
+        keyboard.pc_key(PhysicalKey::Code(KeyCode::KeyD), true);
+        assert_eq!(state(&mut keyboard).circle_x, 1.0);
+        keyboard.pc_key(PhysicalKey::Code(KeyCode::KeyW), true);
+        let s = state(&mut keyboard);
+        assert!((s.circle_x - std::f32::consts::FRAC_1_SQRT_2).abs() < 0.001 && (s.circle_y - std::f32::consts::FRAC_1_SQRT_2).abs() < 0.001);
+    }
+
+    #[test]
+    fn land_turns_keep_their_speed_and_reversals_ramp_again() {
+        let mut keyboard = Keyboard::new(Keys::default());
+        keyboard.set_pc_mode(true, 0.60);
+        keyboard.set_on_land(true);
+        keyboard.pc_key(PhysicalKey::Code(KeyCode::KeyD), true);
+        for _ in 0..6 { state(&mut keyboard); }
+        assert!((state(&mut keyboard).circle_x - 1.0).abs() < 0.001);
+        // a turn (D to W) swings at speed: never back down to the start value
+        keyboard.pc_key(PhysicalKey::Code(KeyCode::KeyD), false);
+        keyboard.pc_key(PhysicalKey::Code(KeyCode::KeyW), true);
+        let mut speeds = Vec::new();
+        for _ in 0..4 { let s = state(&mut keyboard); speeds.push(s.circle_x.hypot(s.circle_y)); }
+        assert!(speeds.iter().all(|&v| v > 0.7), "{speeds:?}");
+        assert!((speeds[3] - 1.0).abs() < 0.001);
+        // a reversal (W to S) starts again from the safe partial throw
+        keyboard.pc_key(PhysicalKey::Code(KeyCode::KeyW), false);
+        keyboard.pc_key(PhysicalKey::Code(KeyCode::KeyS), true);
+        assert!((state(&mut keyboard).circle_y + 0.60).abs() < 0.001);
     }
 
     #[test]
