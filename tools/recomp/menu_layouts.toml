@@ -65,3 +65,278 @@ hide = [[56, 186, 190, 240]]
   anchor = "bottom-right"
   at = [-4.8, -4.8]
   scale = 0.603
+
+# Title: the attract scene fills the window, the game's logo and "Touch!"
+# (click anywhere on it) in the lower right.
+[[screen]]
+name = "title"
+when = ["000"]
+page = "#000000"
+compose = true
+
+  [[screen.piece]]
+  from = "upper"
+  fill = "cover"
+
+  [[screen.piece]]
+  from = "lower"
+  anchor = "bottom-right"
+  at = [-8, -6]
+  scale = 0.6
+
+# Main menu: the section's own art (it changes with the highlighted button)
+# fills the height; the game's buttons stand in two groups at its sides,
+# leaving its title and line visible. StreetPass and AR (3DS only) left out.
+[[screen]]
+name = "main_menu"
+when = ["040"]
+page = "#F3EEE6"
+compose = true
+hide = [[205, 4, 320, 74], [226, 192, 268, 234]]
+
+  [[screen.piece]]
+  from = "upper"
+  fill = "height"
+  feather = [0.04, 0, 0.04, 0]
+
+  [[screen.piece]]
+  from = "lower"
+  src = [2, 4, 212, 97]
+  anchor = "left"
+  at = [14, -44]
+  scale = 0.56
+
+  [[screen.piece]]
+  from = "lower"
+  src = [2, 101, 127, 181]
+  anchor = "left"
+  at = [14, 28]
+  scale = 0.56
+
+  [[screen.piece]]
+  from = "lower"
+  src = [130, 86, 320, 176]
+  anchor = "right"
+  at = [-14, -44]
+  scale = 0.56
+
+  [[screen.piece]]
+  from = "lower"
+  src = [54, 181, 230, 240]
+  anchor = "right"
+  at = [-14, 28]
+  scale = 0.56
+
+  [[screen.piece]]
+  from = "lower"
+  src = [2, 197, 55, 240]
+  anchor = "bottom-left"
+  at = [6, -6]
+  scale = 0.7
+
+  [[screen.piece]]
+  from = "lower"
+  src = [266, 193, 320, 234]
+  anchor = "bottom-right"
+  at = [-6, -6]
+  scale = 0.7
+
+# Solo: Palutena's temple fills the window and the game's own signposts stand
+# around it, Move Out on the stairs. Arrow keys still turn the game's camera
+# from place to place; a click on a signpost does what a touch did.
+[[screen]]
+name = "solo_hall"
+when = ["030"]
+page = "#000000"
+compose = true
+
+  [[screen.piece]]
+  from = "upper"
+  fill = "cover"
+
+  [[screen.piece]]
+  from = "lower"
+  src = [64, 0, 206, 162]
+  anchor = "center"
+  at = [0, -14]
+  scale = 0.72
+
+  [[screen.piece]]
+  from = "lower"
+  src = [0, 100, 88, 204]
+  anchor = "left"
+  at = [12, -14]
+  scale = 0.78
+
+  [[screen.piece]]
+  from = "lower"
+  src = [184, 166, 320, 240]
+  anchor = "left"
+  at = [12, 62]
+  scale = 0.62
+
+  [[screen.piece]]
+  from = "lower"
+  src = [0, 202, 46, 238]
+  anchor = "bottom-left"
+  at = [6, -6]
+  scale = 0.75
+
+  [[screen.piece]]
+  from = "lower"
+  src = [226, 0, 320, 58]
+  anchor = "top-right"
+  at = [-12, 10]
+  scale = 0.78
+
+  [[screen.piece]]
+  from = "lower"
+  src = [198, 76, 320, 154]
+  anchor = "right"
+  at = [-12, -14]
+  scale = 0.78
+
+  [[screen.piece]]
+  from = "lower"
+  src = [88, 174, 178, 238]
+  anchor = "bottom"
+  at = [0, -26]
+  scale = 0.65
+
+# Chapter select: the chapters (the game's scrolling tiles, Gear and Back) on
+# the left, the chosen chapter's banner, painting and records on the right,
+# on one page.
+[[screen]]
+name = "chapters"
+when = ["010", "011"]
+page = "#F1ECE2"
+compose = true
+
+  [[screen.piece]]
+  from = "lower"
+  src = [0, 8, 320, 240]
+  anchor = "left"
+  at = [8, 0]
+  scale = 0.56
+
+  [[screen.piece]]
+  from = "upper"
+  src = [10, 15, 390, 235]
+  anchor = "right"
+  at = [-8, 0]
+  scale = 0.58
+  feather = [0.04, 0.04, 0.04, 0.04]
+
+# Fiend's Cauldron: the cauldron is the centrepiece, the intensity scale over
+# it, the heart bank on its left, the intensity card on its right, Move Out
+# under it. The game's own drag, sounds and rules.
+[[screen]]
+name = "cauldron"
+when = ["050"]
+page = "#120B07"
+compose = true
+
+  [[screen.piece]]
+  from = "upper"
+  src = [10, 0, 390, 30]
+  anchor = "top"
+  at = [0, 4]
+  scale = 0.7
+
+  [[screen.piece]]
+  from = "lower"
+  src = [6, 0, 318, 40]
+  anchor = "top"
+  at = [0, 26]
+  scale = 1.0
+
+  [[screen.piece]]
+  from = "lower"
+  src = [56, 36, 320, 192]
+  anchor = "center"
+  at = [0, 22]
+  scale = 0.85
+
+  [[screen.piece]]
+  from = "upper"
+  src = [150, 40, 255, 110]
+  anchor = "left"
+  at = [16, -10]
+  scale = 1.1
+  feather = [0.08, 0.08, 0.08, 0.08]
+
+  [[screen.piece]]
+  from = "upper"
+  src = [185, 150, 295, 215]
+  anchor = "right"
+  at = [-16, -10]
+  scale = 1.1
+  feather = [0.06, 0.06, 0.06, 0.06]
+
+  [[screen.piece]]
+  from = "lower"
+  src = [48, 188, 282, 240]
+  anchor = "bottom"
+  at = [0, -2]
+  scale = 0.8
+
+  [[screen.piece]]
+  from = "lower"
+  src = [0, 200, 40, 240]
+  anchor = "bottom-left"
+  at = [6, -6]
+  scale = 0.9
+
+# Practice Range: the mode's art fills the height, the game's Air Battle /
+# Land Battle / Gear buttons on its right.
+[[screen]]
+name = "practice_menu"
+when = ["100", "101"]
+page = "#EFE9DF"
+compose = true
+
+  [[screen.piece]]
+  from = "upper"
+  fill = "height"
+  feather = [0.04, 0, 0.04, 0]
+
+  [[screen.piece]]
+  from = "lower"
+  src = [48, 0, 320, 240]
+  anchor = "bottom-right"
+  at = [-8, -8]
+  scale = 0.58
+
+  [[screen.piece]]
+  from = "lower"
+  src = [0, 196, 48, 240]
+  anchor = "bottom-left"
+  at = [6, -6]
+  scale = 0.8
+
+# In-game pause: the frozen game dimmed behind, its PAUSED plate where it
+# was, the game's pause menu over the middle. Remove Display (3DS only) left
+# out.
+[[screen]]
+name = "pause"
+when = ["pause"]
+page = "#000000"
+compose = true
+hide = [[170, 185, 340, 260]]
+
+  [[screen.piece]]
+  from = "upper"
+  fill = "cover"
+  opacity = 0.38
+
+  [[screen.piece]]
+  from = "upper"
+  src = [0, 0, 104, 36]
+  anchor = "top-left"
+  scale = 1.0
+
+  [[screen.piece]]
+  from = "lower"
+  anchor = "center"
+  at = [0, 10]
+  scale = 0.82
