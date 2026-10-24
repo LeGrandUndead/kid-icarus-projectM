@@ -1,4 +1,4 @@
-# PC single-screen status — October 24, 2026 (afternoon)
+# PC single-screen status — October 24, 2026 (top-screen menus)
 
 Current reality of the single-screen work. Read with
 [PC_SINGLE_SCREEN_AUDIT.md](PC_SINGLE_SCREEN_AUDIT.md) (what the two screens
@@ -25,38 +25,34 @@ No other executable, launcher or save was replaced. The game's save format is
 untouched; PC options live in the profile's `roaming/zakuro/kiu-interface.txt`
 and `pc-interface-camera.txt`.
 
-## Menus on one screen (October 24, layouts as data)
+## Menus answered from the top screen (October 24 experiment)
 
-Each of the game's screens can have its own PC layout in
-`tools/recomp/menu_layouts.toml` (launcher `--menu-layouts`, on by default).
-The game reads the file again whenever it changes, so layouts are tuned while
-it runs. A screen without a layout keeps the console arrangement (upper
-picture above the lower one, one scale, clickable).
+The user chose to go back to the build before the single-screen menu work
+(menus show the upper screen alone; Tab shows the lower screen as a panel;
+the in-game pause opens it by itself) and try menus driven from the top
+screen instead of pieces of the lower one. The pieces work (save select
+composition, `menu_layouts.toml`, menu art pack support in the runtime) is in
+history and in the tag `archive/2026-10-24-menus-in-pieces`; the menu art
+tools stay in `tools/recomp`.
 
-- **Recognition**: a screen is known by the menu archive (`us/menu/NNN`) whose
-  own art its lower screen draws. `prepare_native_ui_sources.py` lists every
-  archive holding each texture (`menus=010,011,030`); only art unique to one
-  archive counts. `"pause"` matches the in-game pause menu.
-- **Layout**: pieces of either picture placed in window units (240 tall) from
-  an anchor, with scale or fill, feather, opacity and touch. `compose = true`
-  draws the lower screen transparent without its full-screen backdrops, so its
-  buttons lie straight on the scene. `hide` leaves out 3DS-only parts (HOME,
-  StreetPass, AR, Remove Display). Layout changes crossfade in 0.18 s.
-- **Done and checked live (October 24)**: title, save select, main menu, Solo
-  hall, chapter select, Fiend's Cauldron, Practice Range menu, pause.
-- **Still the console arrangement**: Gear, Power Board, Arms Altar (buy,
-  fusion), Idol Toss, Treasure Hunt, Vault pages, Options, results, continue.
-  The plan's rebuilt screens (chapter strip, weapon comparison, new fusion,
-  pause mission board) need game-state research first (doc/PC_INTERFACE_PLAN.md).
-- **Captures**: `--menu-capture` saves both pictures of each new menu screen
-  at console resolution to `build/menu-captures/<time>` (F12 any time), the
-  measurements for new layouts. Local only.
-- **Menu art pack** (`build/texture-work/menu-pc`, local only):
-  `build_menu_pc_pack.py` rebuilds the menu textures from the ROM at 4x
-  (`--menu-art original` compares); the battery/wireless icons are removed.
-- Keyboard: arrows move the game's own selection (in the Solo hall they turn
-  its camera), X confirms, Z backs out. Short taps can be missed; the game
-  reads keys once a frame.
+- **How**: while the game shows one of its out-of-stage menus, PC buttons
+  are drawn over the upper picture (`crates/zakuro/src/top_menus.rs`, egui).
+  A click does what touching the 3DS lower screen did there: a touch at the
+  game's own button, held five frames. The game keeps its selection, sounds,
+  animation and rules; its keyboard and controller controls keep working.
+- **Recognition**: a screen is known by the menu archive (`us/menu/NNN`)
+  whose own art its lower screen draws. The UI catalog lists every archive
+  holding each texture (`menus=010,011,030`); art found in one only counts
+  (`BottomScene::shows_menu`).
+- **So far**: save select (Book I / II / III in the books' colours, Back:
+  the first click chooses a book, the second opens it) and the main menu
+  (Solo, Together, Vault, Options, Back; StreetPass and AR left out).
+  Checked on the PC: choosing and opening a book, Solo into the Solo hall.
+- **Mouse**: let go while such a menu is up, taken back once the game's HUD
+  is up.
+- **Next**: the game's own art on the buttons, the keyboard/controller
+  selection shown on them, the save's details on the books, then the Solo
+  hall (arrows that turn the game's camera) and the other menus.
 
 ## HUD fixes from the October 21 trace
 
