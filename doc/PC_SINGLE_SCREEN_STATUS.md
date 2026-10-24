@@ -1,4 +1,4 @@
-# PC single-screen status — October 24, 2026
+# PC single-screen status — October 24, 2026 (afternoon)
 
 Current reality of the single-screen work. Read with
 [PC_SINGLE_SCREEN_AUDIT.md](PC_SINGLE_SCREEN_AUDIT.md) (what the two screens
@@ -25,46 +25,38 @@ No other executable, launcher or save was replaced. The game's save format is
 untouched; PC options live in the profile's `roaming/zakuro/kiu-interface.txt`
 and `pc-interface-camera.txt`.
 
-## Menus on one screen (October 23-24)
+## Menus on one screen (October 24, layouts as data)
 
-Every out-of-stage menu (title, save select, main menu, Solo, chapter select,
-Gear, Vault, Options, results...) is shown on the one PC screen automatically,
-arranged as on the console: the upper picture above, the lower one centered
-under it at the same scale, without the bezel gap, so the two pictures the game
-designed together stay together (the save select's black speech bubble now runs
-straight into its tail pointing at the chosen book). The lower picture is
-clickable; Tab shows the plain gameplay view.
+Each of the game's screens can have its own PC layout in
+`tools/recomp/menu_layouts.toml` (launcher `--menu-layouts`, on by default).
+The game reads the file again whenever it changes, so layouts are tuned while
+it runs. A screen without a layout keeps the console arrangement (upper
+picture above the lower one, one scale, clickable).
 
-- **Evidence**: a lower-screen draw of menu art (catalog role `screen`: the
-  2002 textures of `us/menu/*/menu/bind.arc`, from
-  `prepare_native_ui_sources.py`), never beside gameplay HUD or the pause
-  menu. Leaves 15 frames after the art is gone. A pause panel that leads into
-  the menus becomes the menus' layout.
-- **Proportions**: menu art is drawn by layout programs the wide view does not
-  widen, so the 16:9 render stretches it; the layout shows 2D menu art at the
-  console's 5:3 again. When the upper screen draws a 3D room (depth-tested
-  draws in the last 30 frames) it keeps the wide view's width.
-- **Page**: the pictures fade into the menus' white page (a dark one behind
-  3D rooms) at their sides; the lower one fades into the upper one over the
-  6-pixel join (presenter feathering, `backend::feather`).
-- **3DS-only parts removed**: the battery and wireless icons (system atlas
-  `imsg`, cleared in the menu art pack) and the save select's HOME button
-  (its draws are skipped while the layout shows the save select:
-  `layout::SAVE_SELECT_HOME`, bounds from the vertex program).
-- **Menu art pack** (`build/texture-work/menu-pc`, local only, never
-  committed): `tools/recomp/build_menu_pc_pack.py` reads every menu texture
-  from the ROM (`pica_texture.py` decoder, exact against the runtime's texels)
-  and reconstructs the art with a shape or a luminance mask at 4x with the HUD
-  method (1160 textures, ~3 minutes); painted art is kept as it is.
-  `menu_pc_changes.json` lists the PC changes. The runtime replaces those
-  textures by the fingerprint of their ROM bytes (`KIU_MENU_PACK`), decoding
-  off the drawing thread. `--menu-art original` compares.
-- **Census**: `--ui-census` also writes `screen-draws.csv` (every draw of
-  either screen with its texture name, bounds and program).
-
-Still to do: the HOME button of the other menus (position per menu, from a
-census), keyboard/controller selection where the game only takes touch, a
-check of every menu by eye.
+- **Recognition**: a screen is known by the menu archive (`us/menu/NNN`) whose
+  own art its lower screen draws. `prepare_native_ui_sources.py` lists every
+  archive holding each texture (`menus=010,011,030`); only art unique to one
+  archive counts. `"pause"` matches the in-game pause menu.
+- **Layout**: pieces of either picture placed in window units (240 tall) from
+  an anchor, with scale or fill, feather, opacity and touch. `compose = true`
+  draws the lower screen transparent without its full-screen backdrops, so its
+  buttons lie straight on the scene. `hide` leaves out 3DS-only parts (HOME,
+  StreetPass, AR, Remove Display). Layout changes crossfade in 0.18 s.
+- **Done and checked live (October 24)**: title, save select, main menu, Solo
+  hall, chapter select, Fiend's Cauldron, Practice Range menu, pause.
+- **Still the console arrangement**: Gear, Power Board, Arms Altar (buy,
+  fusion), Idol Toss, Treasure Hunt, Vault pages, Options, results, continue.
+  The plan's rebuilt screens (chapter strip, weapon comparison, new fusion,
+  pause mission board) need game-state research first (doc/PC_INTERFACE_PLAN.md).
+- **Captures**: `--menu-capture` saves both pictures of each new menu screen
+  at console resolution to `build/menu-captures/<time>` (F12 any time), the
+  measurements for new layouts. Local only.
+- **Menu art pack** (`build/texture-work/menu-pc`, local only):
+  `build_menu_pc_pack.py` rebuilds the menu textures from the ROM at 4x
+  (`--menu-art original` compares); the battery/wireless icons are removed.
+- Keyboard: arrows move the game's own selection (in the Solo hall they turn
+  its camera), X confirms, Z backs out. Short taps can be missed; the game
+  reads keys once a frame.
 
 ## HUD fixes from the October 21 trace
 
