@@ -4,7 +4,7 @@ use std::collections::HashMap;
 
 use glow::HasContext;
 
-use super::{backdrop, pieces, Overlay, OverlayVertex, PresentError, Presenter, ScreenImage, ScreenLayout};
+use super::{layout, Overlay, OverlayVertex, PresentError, Presenter, ScreenImage, ScreenLayout, Viewport};
 
 const VERTEX_SHADER: &str = r#"#version 330 core
 // a single oversized triangle covers the viewport with no vertex buffer.
@@ -22,41 +22,22 @@ const FRAGMENT_SHADER: &str = r#"#version 330 core
 in vec2 uv;
 out vec4 color;
 uniform sampler2D screen;
-// how far in from the left, top, right and bottom edges the screen fades
-// into the window's background (zero: solid, the usual case)
-uniform vec4 feather;
-// the part of the screen drawn, corner and size as texture coordinates, and
-// whether its alpha is coverage (premultiplied); the output is premultiplied
-uniform vec4 area;
-uniform float coverage;
-// how much of the piece shows (menu layouts fading out)
-uniform float opacity;
-float ramp(float d, float width) { return width <= 0.0 ? 1.0 : smoothstep(0.0, width, d); }
-float fade() {
-    return ramp(uv.x, feather.x) * ramp(uv.y, feather.y) * ramp(1.0 - uv.x, feather.z) * ramp(1.0 - uv.y, feather.w);
-}
-vec4 finish(vec4 texel) {
-    float f = fade();
-    f *= opacity;
-    return coverage > 0.5 ? texel * f : vec4(texel.rgb * f, f);
-}
 void main() {
-    vec2 at = area.xy + uv * area.zw;
     vec2 size = vec2(textureSize(screen, 0));
-    vec2 covered = fwidth(at) * size;
+    vec2 covered = fwidth(uv) * size;
     if (max(covered.x, covered.y) <= 1.0) {
-        color = finish(texture(screen, at));
+        color = vec4(texture(screen, uv).rgb, 1.0);
         return;
     }
     ivec2 taps = ivec2(clamp(ceil(covered), 1.0, 4.0));
-    vec4 sum = vec4(0.0);
+    vec3 sum = vec3(0.0);
     for (int y = 0; y < taps.y; y++) {
         for (int x = 0; x < taps.x; x++) {
             vec2 offset = ((vec2(x, y) + 0.5) / vec2(taps) - 0.5) * covered / size;
-            sum += texture(screen, at + offset);
+            sum += texture(screen, uv + offset).rgb;
         }
     }
-    color = finish(sum / float(taps.x * taps.y));
+    color = vec4(sum / float(taps.x * taps.y), 1.0);
 }
 "#;
 
@@ -206,25 +187,9 @@ impl GlPresenter {
         }
     }
 
-    fn draw_screen(&self, piece: &crate::backend::Piece) {
+    fn draw_screen(&self, index: usize, viewport: Viewport) {
         let gl = &self.gl;
-        let (index, viewport, edges) = (piece.screen, piece.dest, piece.feather);
-        let size = if index == 0 { crate::backend::TOP_SIZE } else { crate::backend::BOTTOM_SIZE };
-        let [l, t, r, b] = piece.source;
         unsafe {
-            if let Some(location) = gl.get_uniform_location(self.program, "feather") {
-                gl.uniform_4_f32(Some(&location), edges[0], edges[1], edges[2], edges[3]);
-            }
-            if let Some(location) = gl.get_uniform_location(self.program, "area") {
-                gl.uniform_4_f32(Some(&location), l / size[0], t / size[1], (r - l) / size[0], (b - t) / size[1]);
-            }
-            // uploaded pictures carry no coverage: drawn opaque
-            if let Some(location) = gl.get_uniform_location(self.program, "opacity") {
-                gl.uniform_1_f32(Some(&location), piece.opacity);
-            }
-            if let Some(location) = gl.get_uniform_location(self.program, "coverage") {
-                gl.uniform_1_f32(Some(&location), 0.0);
-            }
             // OpenGL's origin is the bottom left, so the y coordinate flips.
             let y = self.window.1 as f32 - viewport.y - viewport.height;
             gl.viewport(
@@ -261,13 +226,8 @@ impl Presenter for GlPresenter {
         let gl = &self.gl;
         unsafe {
             gl.viewport(0, 0, self.window.0 as i32, self.window.1 as i32);
-            let [r, g, b, a] = backdrop(self.arrangement);
-            gl.clear_color(r, g, b, a);
+            gl.clear_color(0.0, 0.0, 0.0, 1.0);
             gl.clear(glow::COLOR_BUFFER_BIT);
-            // screens are opaque except where a layout fades their edges
-            gl.enable(glow::BLEND);
-            gl.blend_equation(glow::FUNC_ADD);
-            gl.blend_func_separate(glow::ONE, glow::ONE_MINUS_SRC_ALPHA, glow::ZERO, glow::ONE);
             gl.use_program(Some(self.program));
             gl.bind_vertex_array(Some(self.vertex_array));
             if let Some(location) = gl.get_uniform_location(self.program, "screen") {
@@ -275,11 +235,12 @@ impl Presenter for GlPresenter {
             }
         }
 
-        for piece in pieces(self.window.0, self.window.1, self.arrangement) {
-            let empty = if piece.screen == 0 { top.is_empty() } else { bottom.is_empty() };
-            if !empty {
-                self.draw_screen(&piece);
-            }
+        let (top_viewport, bottom_viewport) = layout(self.window.0, self.window.1, self.arrangement);
+        if let Some(viewport) = top_viewport.filter(|_| !top.is_empty()) {
+            self.draw_screen(0, viewport);
+        }
+        if let Some(viewport) = bottom_viewport.filter(|_| !bottom.is_empty()) {
+            self.draw_screen(1, viewport);
         }
 
         unsafe {

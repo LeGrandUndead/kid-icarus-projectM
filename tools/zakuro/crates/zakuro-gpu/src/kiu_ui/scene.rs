@@ -51,17 +51,6 @@ pub struct BottomScene {
     /// A pause-menu label or an option bar is drawn: the player is in the
     /// pause menu or one of its sub-screens (Options).
     pub menu: bool,
-    /// The game's save select is up (its speech bubble or books were drawn
-    /// this frame, on either screen).
-    pub save_select: bool,
-    /// The lower screen drew art of the out-of-stage menus this frame (title,
-    /// save select, main menu, Solo, chapter select...).
-    pub menu_screen: bool,
-    /// The upper screen drew a 3D scene this frame (depth-tested draws).
-    pub top_3d: bool,
-    /// The menu archives whose own art the lower screen drew this frame
-    /// (recipes::MenuSet): which menu screen it is.
-    pub lower_menus: crate::backend::recipes::MenuSet,
     /// The land Power Palette is on screen (power icons from atlas `mr` in
     /// the action island). Air special orbs come from `gc_00` instead.
     pub palette: bool,
@@ -113,7 +102,7 @@ pub fn classify<'a>(frame: u64, fresh: bool, layers: impl Iterator<Item = Eviden
             }
             Role::Menu => {}
             Role::Insert => scene.inserts = scene.inserts.saturating_add(1),
-            Role::Hud | Role::Decor | Role::Unlisted | Role::Screen => {}
+            Role::Hud | Role::Decor | Role::Unlisted => {}
         }
         if layer.island {
             scene.hud = scene.hud.saturating_add(1);

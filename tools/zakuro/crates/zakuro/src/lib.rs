@@ -14,8 +14,6 @@ mod present;
 mod pc_presentation;
 mod ram_snapshot;
 mod kiu_jump;
-mod menu_capture;
-mod menu_layouts;
 mod recompile;
 mod report;
 mod settings;
@@ -121,8 +119,6 @@ pub fn run(linked: Option<Linked>) {
         land_publications: 0,
         land_seen: None,
         space_jump: kiu_jump::SpaceJump::default(),
-        menu_layouts: menu_layouts::MenuLayouts::from_environment(),
-        menu_capture: menu_capture::MenuCapture::from_environment(),
     };
 
     if let Some(frames) = app.options.headless {
@@ -388,10 +384,6 @@ struct App {
     land_seen: Option<u64>,
     /// KIU: Space uses the equipped Sky Jump (kiu_jump.rs).
     space_jump: kiu_jump::SpaceJump,
-    /// the PC layouts of the game's screens (tools/recomp/menu_layouts.toml)
-    menu_layouts: menu_layouts::MenuLayouts,
-    /// research: saves each menu screen's two pictures (--menu-capture)
-    menu_capture: menu_capture::MenuCapture,
 }
 
 /// how long each step of the loop took, its mean and its longest.
@@ -757,10 +749,6 @@ impl App {
                     self.apply_layout();
                 }
                 KeyCode::F11 => self.toggle_fullscreen(),
-                KeyCode::F12 if self.menu_capture.enabled() => {
-                    if let Some(game) = &mut self.game { self.menu_capture.save_now(&mut game.system); }
-                    return;
-                }
                 _ => {}
             }
         }
@@ -809,12 +797,17 @@ impl App {
     fn touch(&mut self) {
         let Some(window) = &self.window else { return };
         let size = window.inner_size();
-        // the lower screen wherever the layout shows it (whole, or in pieces
-        // of a recomposed menu); nothing to touch with the top screen alone
-        let arrangement = self.presentation.layout(self.layout, self.experimental_wide);
-        let at = zakuro_gpu::touch_at(size.width, size.height, arrangement, self.cursor.0, self.cursor.1);
-        self.keyboard.touch(at.filter(|_| self.mouse_down).map(|[x, y]| {
-            (x.clamp(0.0, 319.0) as u16, y.clamp(0.0, 239.0) as u16)
+        let (_, bottom) = layout(size.width, size.height, self.presentation.layout(self.layout, self.experimental_wide));
+        // with the top screen alone there is nothing to touch
+        let Some(bottom) = bottom else {
+            self.keyboard.touch(None);
+            return;
+        };
+        let x = self.cursor.0 - bottom.x;
+        let y = self.cursor.1 - bottom.y;
+        let inside = x >= 0.0 && y >= 0.0 && x < bottom.width && y < bottom.height;
+        self.keyboard.touch((self.mouse_down && inside).then(|| {
+            ((x / bottom.width * 320.0) as u16, (y / bottom.height * 240.0) as u16)
         }));
     }
 
@@ -1250,8 +1243,6 @@ impl App {
         zakuro_gpu::diagnostic_frame(game.frame);
         let outcome = game.system.run_frame();
         let scene = zakuro_gpu::kiu_ui::end_frame();
-        self.menu_layouts.poll();
-        self.menu_capture.frame(&mut game.system, &scene);
         let land = game.system.memory.kiu_land_publications();
         if land != self.land_publications || scene.palette {
             self.land_publications = land;
@@ -1290,39 +1281,17 @@ impl App {
         let allowed = zakuro_gpu::kiu_ui::config::get().auto_pause_panel
             && !self.menus.menu_open && !self.menus.settings_open
             && !self.gui.as_ref().is_some_and(Gui::wants_keyboard);
-        let request = self.presentation.observe(scene, allowed);
-        match request {
+        match self.presentation.observe(scene, allowed) {
             pc_presentation::PanelRequest::Open => {
+                log::info!("Game pause menu shown: opening the lower-screen panel (Tab or Esc returns)");
                 self.open_screen_access();
-                if self.presentation.automatic() == Some(pc_presentation::AutoPanel::Menus) {
-                    log::info!("Game menu: both pictures on one screen as on the console, the lower one clickable (Tab shows the plain view)");
-                } else {
-                    log::info!("Game pause menu shown: opening the lower-screen panel (Tab or Esc returns)");
-                }
-            }
-            pc_presentation::PanelRequest::Relayout => {
-                let room = matches!(self.presentation.layout(self.layout, self.experimental_wide), zakuro_gpu::ScreenLayout::Menus { room: true, .. });
-                log::info!("Game menu: {}", if room { "a 3D room above" } else { "2D art above" });
-                self.show_layout(self.layout);
             }
             pc_presentation::PanelRequest::Close => {
-                let menus = self.presentation.automatic() == Some(pc_presentation::AutoPanel::Menus);
-                log::info!("{}", if menus { "Menus left: back to the gameplay view" } else { "Gameplay resumed: closing the pause panel" });
+                log::info!("Gameplay resumed: closing the pause panel");
                 self.close_screen_access_by(true, false);
-                // leaving the menus for a stage: aim with the mouse again
-                if menus { self.set_mouse_capture(true); }
             }
             pc_presentation::PanelRequest::Keep => {}
         }
-        // a recomposed screen leaves out its 3DS-only parts (HOME buttons)
-        // and, when its recipe composes, has its lower screen drawn
-        // transparent for laying over the scene
-        let recipe = match self.presentation.layout(self.layout, self.experimental_wide) {
-            zakuro_gpu::ScreenLayout::Composed { recipe, .. } => zakuro_gpu::recipes::recipe(recipe),
-            _ => None,
-        };
-        zakuro_gpu::kiu_ui::set_hidden_lower(recipe.as_ref().map_or(&[][..], |r| &r.hide[..]));
-        zakuro_gpu::kiu_ui::compose::set_composing(recipe.is_some_and(|r| r.compose));
     }
 
     /// the menus, and the actions they asked for, done.

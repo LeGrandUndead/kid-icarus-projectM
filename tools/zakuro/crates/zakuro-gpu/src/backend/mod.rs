@@ -6,9 +6,6 @@ pub mod gl;
 pub mod vulkan;
 #[cfg(feature = "vulkan")]
 mod vulkan_overlay;
-mod pieces;
-pub mod recipes;
-pub use pieces::{composed, pieces, touch_at, Piece, BOTTOM_SIZE, TOP_SIZE};
 
 /// one screen's pixels, already converted to straight RGBA8, or where they
 /// are on the GPU, for a presenter sharing the renderer's device.
@@ -110,18 +107,6 @@ pub enum ScreenLayout {
     BottomOverlay { wide: bool },
     /// Legacy two-screen composition retaining the already-selected wide view.
     StackedWide,
-    /// The game's out-of-stage menus (save select, main menu, Solo, chapter
-    /// select...) on one PC screen, arranged as on the console: the upper
-    /// picture above, the lower one centered under it without the bezel gap
-    /// (so the save select's speech bubble meets its tail), clickable. Both
-    /// melt into a page at their edges. `room`: the upper picture is a 3D
-    /// room (shown with the wide view's width), otherwise it is 2D art.
-    Menus { wide: bool, room: bool },
-    /// A screen recomposed as one PC picture by recipe `recipe` of the
-    /// layout table (recipes): parts of its pictures (the lower one drawn
-    /// transparent when the recipe composes) laid where the recipe puts
-    /// them. `room`: the upper picture is a 3D room.
-    Composed { wide: bool, recipe: u16, room: bool },
 }
 
 impl ScreenLayout {
@@ -135,7 +120,6 @@ impl ScreenLayout {
             ScreenLayout::BottomOnly => (320, 240),
             ScreenLayout::BottomOverlay { wide } => if wide { (1280,720) } else { (400,240) },
             ScreenLayout::StackedWide => (1280,1440),
-            ScreenLayout::Menus { .. } | ScreenLayout::Composed { .. } => (1280,720),
         }
     }
 }
@@ -143,30 +127,6 @@ impl ScreenLayout {
 /// works out where the screens go inside a window, keeping the 3DS's
 /// aspect ratio and centring them. a screen that does not show has no place.
 pub fn layout(window_width: u32, window_height: u32, arrangement: ScreenLayout) -> (Option<Viewport>, Option<Viewport>) {
-    if let ScreenLayout::Composed { .. } = arrangement {
-        // the scene; the lower picture is only in pieces (pieces::pieces)
-        let scene = pieces(window_width, window_height, arrangement).into_iter().find(|p| p.screen == 0).map(|p| p.dest);
-        return (scene, None);
-    }
-    if let ScreenLayout::Menus { wide, room } = arrangement {
-        // the console's own arrangement, both pictures at one scale and the
-        // lower one centered under the upper one, so the bubble's tail on the
-        // lower picture grows out of the bubble's black ground above it.
-        // The bezel gap is gone: the lower picture overlaps the upper one's
-        // foot by MENU_JOIN and fades into it there.
-        let (w, h) = (window_width as f32, window_height as f32);
-        // menu art is 2D layout the wide view stretches to 16:9 (only the
-        // HUD's own program is widened): at the console's 5:3 it has its own
-        // proportions again. A 3D room keeps the wide view's width.
-        let top_units = if room && wide { 240.0 * 16.0 / 9.0 } else { 400.0 };
-        let tall = 480.0 - MENU_JOIN;
-        let unit = (h / tall).min(w / top_units);
-        let y = (h - tall * unit) * 0.5;
-        let top = Viewport { x: (w - top_units * unit) * 0.5, y, width: top_units * unit, height: 240.0 * unit };
-        let bottom = Viewport { x: (w - 320.0 * unit) * 0.5, y: y + (240.0 - MENU_JOIN) * unit,
-            width: 320.0 * unit, height: 240.0 * unit };
-        return (Some(top), Some(bottom));
-    }
     if arrangement == ScreenLayout::StackedWide {
         let height=(window_height as f32*0.5).min(window_width as f32*9.0/16.0);
         let y=(window_height as f32-2.0*height)*0.5;
@@ -217,8 +177,7 @@ pub fn layout(window_width: u32, window_height: u32, arrangement: ScreenLayout) 
             width: 320.0 * scale,
             height: 240.0 * scale,
         }),
-        ScreenLayout::TopOnly | ScreenLayout::TopWide | ScreenLayout::BottomOverlay { .. } | ScreenLayout::StackedWide
-            | ScreenLayout::Menus { .. } | ScreenLayout::Composed { .. } => None,
+        ScreenLayout::TopOnly | ScreenLayout::TopWide | ScreenLayout::BottomOverlay { .. } | ScreenLayout::StackedWide => None,
         ScreenLayout::BottomOnly => Some(Viewport {
             x: offset_x,
             y: offset_y,
@@ -227,40 +186,6 @@ pub fn layout(window_width: u32, window_height: u32, arrangement: ScreenLayout) 
         }),
     };
     (top, bottom)
-}
-
-/// Console pixels the menus' lower picture overlaps the upper one, fading in
-/// over them (the bottom feather covers exactly this band). Small: the main
-/// menu writes its descriptions at the very foot of the upper picture.
-const MENU_JOIN: f32 = 6.0;
-
-/// How far in from each edge (left, top, right, bottom, as a share of the
-/// picture) a screen fades into the window's background, for the top and the
-/// bottom screen. Zero everywhere except the menus.
-pub fn feather(arrangement: ScreenLayout) -> ([f32; 4], [f32; 4]) {
-    match arrangement {
-        ScreenLayout::Menus { .. } => ([0.03, 0.0, 0.03, 0.0], [0.04, MENU_JOIN / 240.0, 0.04, 0.0]),
-        _ => ([0.0; 4], [0.0; 4]),
-    }
-}
-
-/// The window's background: black, or for the menus the page the pictures
-/// fade into.
-pub fn backdrop(arrangement: ScreenLayout) -> [f32; 4] {
-    match arrangement {
-        // the white page of KIU's menu art, or the dark of a 3D room
-        ScreenLayout::Menus { room: false, .. } => [0.976, 0.973, 0.965, 1.0],
-        // the recipe's own page
-        ScreenLayout::Composed { recipe, .. } => recipes::recipe(recipe).map_or([0.0, 0.0, 0.0, 1.0], |r| r.page),
-        ScreenLayout::Menus { room: true, .. } => [0.035, 0.035, 0.05, 1.0],
-        _ => [0.0, 0.0, 0.0, 1.0],
-    }
-}
-
-/// The fade factor a feathered picture has at `uv` (0..1 across it).
-pub fn feather_alpha(uv: [f32; 2], edges: [f32; 4]) -> f32 {
-    let ramp = |d: f32, width: f32| if width <= 0.0 { 1.0 } else { let t = (d / width).clamp(0.0, 1.0); t * t * (3.0 - 2.0 * t) };
-    ramp(uv[0], edges[0]) * ramp(uv[1], edges[1]) * ramp(1.0 - uv[0], edges[2]) * ramp(1.0 - uv[1], edges[3])
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -308,38 +233,6 @@ mod tests {
                 assert!((x-160.0).abs()<0.001 && (y-120.0).abs()<0.001);
             }
         }
-    }
-    #[test]
-    fn menus_keep_the_console_arrangement_so_the_tail_meets_the_bubble() {
-        for (w,h) in [(1920,1080),(1280,720),(800,1200),(2560,1080),(640,480)] {
-            for (wide,room) in [(true,false),(false,false),(true,true),(false,true)] {
-                let (top,bottom)=layout(w,h,ScreenLayout::Menus { wide, room });
-                let (t,b)=(top.unwrap(),bottom.unwrap());
-                let aspect=if room && wide {16.0/9.0} else {5.0/3.0};
-                assert!((t.width/t.height-aspect).abs()<0.0001, "2D art at the console's 5:3, a room as wide as it is drawn");
-                assert!((b.width/b.height-4.0/3.0).abs()<0.0001);
-                assert!((t.height-b.height).abs()<0.001, "one scale for both pictures");
-                for v in [t,b] { assert!(v.x>=-0.001 && v.y>=-0.001 && v.x+v.width<=w as f32+0.001 && v.y+v.height<=h as f32+0.001, "{v:?} {w}x{h}"); }
-                assert!(((t.x+t.width*0.5)-(b.x+b.width*0.5)).abs()<0.01, "centered as on the console");
-                let join=t.y+t.height-b.y;
-                assert!((join-t.height*MENU_JOIN/240.0).abs()<0.01, "no bezel gap, a small join");
-            }
-        }
-        let (t,b)=layout(1920,1080,ScreenLayout::Menus { wide: true, room: false });
-        assert!((t.unwrap().y).abs()<0.01 && (b.unwrap().y+b.unwrap().height-1080.0).abs()<0.01, "fills the height at 1080p");
-    }
-    #[test]
-    fn only_the_menus_feather_and_get_a_page() {
-        assert_eq!(feather(ScreenLayout::TopWide), ([0.0; 4], [0.0; 4]));
-        assert_eq!(backdrop(ScreenLayout::BottomOverlay { wide: true }), [0.0, 0.0, 0.0, 1.0]);
-        assert_ne!(backdrop(ScreenLayout::Menus { wide: true, room: false }), backdrop(ScreenLayout::Menus { wide: true, room: true }));
-        let (top, bottom) = feather(ScreenLayout::Menus { wide: true, room: false });
-        assert_eq!(feather_alpha([0.5, 0.5], top), 1.0);
-        assert_eq!(feather_alpha([0.0, 0.5], top), 0.0);
-        assert_eq!(feather_alpha([0.5, 0.0], top), 1.0, "the bubble's top is not faded");
-        assert_eq!(feather_alpha([0.5, 1.0], bottom), 1.0, "Back and How to Play stay solid");
-        assert_eq!(feather_alpha([0.5, 0.0], bottom), 0.0);
-        assert_eq!(feather_alpha([0.3, 0.7], [0.0; 4]), 1.0);
     }
     #[test]
     fn legacy_composition_does_not_squeeze_an_existing_wide_camera() {

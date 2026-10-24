@@ -77,65 +77,6 @@ pub(crate) fn load_hud(hash: u64, width: u32, height: u32, levels: u8) -> Option
 
 pub(crate) fn hud_pack_enabled() -> bool { hud_pack().is_some() }
 
-/// The PC menu art pack (KIU_MENU_PACK, tools/recomp/build_menu_pc_pack.py):
-/// the menu screens' textures reconstructed from the user's ROM, named by
-/// the fingerprint of their encoded ROM bytes (the UI catalog's identity),
-/// `<w>x<h>-<fingerprint>.png`. Used for every draw of those textures.
-fn menu_pack() -> Option<&'static Pack> {
-    static PACK: OnceLock<Option<Pack>> = OnceLock::new();
-    PACK.get_or_init(|| {
-        let pack = open("KIU_MENU_PACK")?;
-        log::info!("PC menu art: {} textures in {}", pack.names.len(), pack.root.display());
-        Some(pack)
-    }).as_ref()
-}
-
-pub(crate) fn menu_pack_enabled() -> bool { menu_pack().is_some() }
-
-/// Where a menu texture's PC version is.
-pub(crate) enum Menu {
-    /// not in the pack: the original is used
-    Missing,
-    /// being decoded off the drawing thread: show the original meanwhile
-    Pending,
-    Ready(std::sync::Arc<Replacement>),
-}
-
-type MenuSlot = Option<std::sync::Arc<Replacement>>;
-
-fn menu_cache() -> &'static std::sync::Mutex<std::collections::HashMap<(u64, u8), Option<MenuSlot>>> {
-    static CACHE: OnceLock<std::sync::Mutex<std::collections::HashMap<(u64, u8), Option<MenuSlot>>>> = OnceLock::new();
-    CACHE.get_or_init(Default::default)
-}
-
-/// The PC version of a menu texture. The first request starts decoding it in
-/// the background (PNG decoding on the drawing thread made menus hitch).
-pub(crate) fn menu(hash: u64, width: u32, height: u32, levels: u8) -> Menu {
-    let Some(pack) = menu_pack() else { return Menu::Missing };
-    if !pack.names.contains(&format!("{width}x{height}-{hash:016X}.png")) { return Menu::Missing; }
-    let Ok(mut cache) = menu_cache().lock() else { return Menu::Missing };
-    match cache.get(&(hash, levels)) {
-        Some(Some(Some(image))) => return Menu::Ready(image.clone()),
-        Some(Some(None)) => return Menu::Missing,
-        Some(None) => return Menu::Pending,
-        None => {}
-    }
-    cache.insert((hash, levels), None);
-    std::thread::spawn(move || {
-        let image = menu_pack().and_then(|pack| decode(pack, hash, width, height, levels)).map(std::sync::Arc::new);
-        if let Ok(mut cache) = menu_cache().lock() { cache.insert((hash, levels), Some(image)); }
-    });
-    Menu::Pending
-}
-
-/// The GPU has its copy: the decoded pixels are not kept (a later upload
-/// decodes them again).
-pub(crate) fn menu_uploaded(hash: u64, levels: u8) {
-    if let Ok(mut cache) = menu_cache().lock() {
-        if matches!(cache.get(&(hash, levels)), Some(Some(Some(_)))) { cache.remove(&(hash, levels)); }
-    }
-}
-
 fn load_from(pack: &Pack, hash: u64, width: u32, height: u32, levels: u8) -> Option<Replacement> {
     decode(pack, hash, width, height, levels)
 }

@@ -15,7 +15,6 @@
 //! which remains reachable with Tab.
 mod bake;
 pub mod camera;
-pub mod compose;
 pub mod config;
 pub mod layout;
 pub mod scene;
@@ -40,9 +39,6 @@ pub enum Role {
     Insert,
     /// Known but decorative bottom-screen art (backgrounds, chapter titles).
     Decor,
-    /// Art of the out-of-stage menus (`us/menu/*/menu/bind.arc`): evidence
-    /// of which menu screen is up, on either screen. Never relocated.
-    Screen,
     /// Not in the catalog, typically system-font text (power names). Only
     /// relocated when it lies inside a HUD island, as part of that layout.
     Unlisted,
@@ -56,20 +52,12 @@ impl Role {
             "menu" => Role::Menu,
             "decor" => Role::Decor,
             "insert" => Role::Insert,
-            "screen" => Role::Screen,
             _ => return None,
         })
     }
 }
 
-struct Source {
-    role: Role,
-    name: String,
-    /// menu archives holding this exact texture (role `screen`): from the
-    /// catalog's source column (`menus=010,011`), else the name's
-    /// `menuNNN/` prefix.
-    menus: Vec<u16>,
-}
+struct Source { role: Role, name: String }
 
 /// One relocated original draw.
 struct Layer {
@@ -90,8 +78,6 @@ struct Layer {
     /// text written on a picture panel, the panel's.
     fade_key: usize,
 }
-
-use crate::backend::recipes::MENU_WORDS;
 
 const MAX_LAYERS: usize = 256;
 const CACHE_LIMIT: usize = 128;
@@ -190,69 +176,10 @@ fn parse_catalog(text: &str) -> (HashMap<u64, Source>, Vec<String>) {
             },
             None => (Role::Portrait, String::new()),
         };
-        let menus = if role == Role::Screen { menus_of(&name, fields.next().unwrap_or("")) } else { Vec::new() };
-        catalog.insert(hash, Source { role, name, menus });
+        catalog.insert(hash, Source { role, name });
     }
     for source in catalog.values() { if !names.contains(&source.name) { names.push(source.name.clone()); } }
     (catalog, names)
-}
-
-/// The menu archives a `screen` texture belongs to: the catalog's
-/// `menus=010,011,030` source column, else its name's `menuNNN/` prefix.
-fn menus_of(name: &str, source: &str) -> Vec<u16> {
-    if let Some(list) = source.trim().strip_prefix("menus=") {
-        return list.split(',').filter_map(|id| id.trim().parse().ok()).collect();
-    }
-    name.strip_prefix("menu").and_then(|rest| rest.split('/').next()).and_then(|id| id.parse().ok()).into_iter().collect()
-}
-
-/// Textures that belong to exactly one menu archive: drawing one says which
-/// menu screen is up. Shared art (Back buttons, frames) says nothing.
-static MENU_OF: OnceLock<HashMap<u64, u16>> = OnceLock::new();
-/// The menu archives whose own art the lower screen drew since the last
-/// end_frame, one bit each (recipes::MenuSet).
-static LOWER_MENUS: [std::sync::atomic::AtomicU64; MENU_WORDS] = [const { std::sync::atomic::AtomicU64::new(0) }; MENU_WORDS];
-
-/// The save select's own art (menu 020): the speech bubble atlas on the
-/// upper screen and the three books on the lower one. Any of it drawn means
-/// the save select is up.
-const SAVE_SELECT_ART: [&str; 4] = ["menu020/MenSelfileUp0011", "menu020/MenSelfileBook0001",
-    "menu020/MenSelfileBook0002", "menu020/MenSelfileBook0003"];
-
-/// Hashes of SAVE_SELECT_ART, fixed once the catalog is read, so every draw
-/// of either screen can be checked without a lock.
-static SAVE_SELECT_HASHES: OnceLock<HashSet<u64>> = OnceLock::new();
-/// Draws of save-select art since the last end_frame.
-static SAVE_SELECT_DRAWS: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
-/// Every menu screen's art (Role::Screen), fixed once the catalog is read.
-static MENU_ART_HASHES: OnceLock<HashSet<u64>> = OnceLock::new();
-/// Lower-screen draws of menu art, and upper-screen draws with a depth
-/// buffer (a 3D room), since the last end_frame.
-static MENU_ART_DRAWS: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
-static TOP_DEPTH_DRAWS: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
-
-fn save_select_hashes(catalog: &HashMap<u64, Source>) -> HashSet<u64> {
-    catalog.iter().filter(|(_, s)| s.role == Role::Screen && SAVE_SELECT_ART.contains(&s.name.as_str()))
-        .map(|(&hash, _)| hash).collect()
-}
-
-/// A draw on the upper (`top`) or lower screen sampled this original texture.
-pub(crate) fn note_texture(hash: u64, top: bool) {
-    use std::sync::atomic::Ordering::Relaxed;
-    if SAVE_SELECT_HASHES.get().is_some_and(|set| set.contains(&hash)) {
-        SAVE_SELECT_DRAWS.fetch_add(1, Relaxed);
-    }
-    if !top && MENU_ART_HASHES.get().is_some_and(|set| set.contains(&hash)) {
-        MENU_ART_DRAWS.fetch_add(1, Relaxed);
-        if let Some(&id) = MENU_OF.get().and_then(|m| m.get(&hash)) {
-            if (id as usize) < MENU_WORDS * 64 { LOWER_MENUS[id as usize / 64].fetch_or(1 << (id % 64), Relaxed); }
-        }
-    }
-}
-
-/// The upper screen drew with a depth buffer: a 3D scene, not only 2D art.
-pub(crate) fn note_top_depth() {
-    TOP_DEPTH_DRAWS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 }
 
 fn state() -> Option<&'static Mutex<State>> {
@@ -263,15 +190,8 @@ fn state() -> Option<&'static Mutex<State>> {
         let (catalog, names) = parse_catalog(&text);
         if catalog.is_empty() { return None; }
         let count = |role| catalog.values().filter(|s| s.role == role).count();
-        log::info!("Original PC interface layers: {} portrait, {} insert, {} HUD, {} menu, {} decor, {} menu-screen textures",
-            count(Role::Portrait), count(Role::Insert), count(Role::Hud), count(Role::Menu), count(Role::Decor), count(Role::Screen));
-        let save_select = save_select_hashes(&catalog);
-        if save_select.is_empty() {
-            log::warn!("The UI catalog has no save-select art: the save select stays a Tab panel (run tools/recomp/prepare_native_ui_sources.py)");
-        }
-        let _ = SAVE_SELECT_HASHES.set(save_select);
-        let _ = MENU_ART_HASHES.set(catalog.iter().filter(|(_, s)| s.role == Role::Screen).map(|(&h, _)| h).collect());
-        let _ = MENU_OF.set(catalog.iter().filter(|(_, s)| s.role == Role::Screen && s.menus.len() == 1).map(|(&h, s)| (h, s.menus[0])).collect());
+        log::info!("Original PC interface layers: {} portrait, {} insert, {} HUD, {} menu, {} decor textures",
+            count(Role::Portrait), count(Role::Insert), count(Role::Hud), count(Role::Menu), count(Role::Decor));
         let (jobs, done) = std::sync::mpsc::channel();
         crate::replacements::hud_pack_enabled(); // starts decoding the HD HUD atlases
         Some(Mutex::new(State { catalog, names, next: 1u64 << 61, census: census::Census::from_environment(),
@@ -323,13 +243,6 @@ pub fn end_frame() -> BottomScene {
     s.scene = scene::classify(s.frame, fresh, s.shown.iter().map(|l| scene::Evidence {
         role: l.role, atlas: &names[l.name], uv: l.uv, island: l.island.is_some(),
     }));
-    {
-        use std::sync::atomic::Ordering::Relaxed;
-        s.scene.save_select = SAVE_SELECT_DRAWS.swap(0, Relaxed) > 0;
-        s.scene.menu_screen = MENU_ART_DRAWS.swap(0, Relaxed) > 0;
-        s.scene.top_3d = TOP_DEPTH_DRAWS.swap(0, Relaxed) > 0;
-        s.scene.lower_menus = std::array::from_fn(|i| LOWER_MENUS[i].swap(0, Relaxed));
-    }
     if let Some(census) = &mut s.census { census.record(s.frame, fresh, &s.shown, names); }
     evict(s);
     s.scene
@@ -338,25 +251,6 @@ pub fn end_frame() -> BottomScene {
 /// The last classified bottom screen.
 pub fn scene() -> BottomScene {
     state().and_then(|s| s.lock().ok().map(|s| s.scene)).unwrap_or_default()
-}
-
-/// Parts of the original lower screen left out now (3DS-only art, the HOME
-/// buttons), from the recipe of the screen the PC layout shows.
-static HIDDEN: Mutex<Vec<layout::Rect>> = Mutex::new(Vec::new());
-
-/// Whether a lower-screen draw covering `bounds` is one to leave out.
-pub(crate) fn hidden_lower_screen(bounds: layout::Rect) -> bool {
-    HIDDEN.lock().is_ok_and(|hidden| hidden.iter().any(|&h| layout::contains(h, bounds)))
-}
-
-/// Whether there is anything to leave out (saves shading draws for nothing).
-pub(crate) fn hiding() -> bool { HIDDEN.lock().is_ok_and(|h| !h.is_empty()) }
-
-/// The parts of the lower screen the current layout leaves out.
-pub fn set_hidden_lower(parts: &[[f32; 4]]) {
-    if let Ok(mut hidden) = HIDDEN.lock() {
-        if hidden.as_slice() != parts { *hidden = parts.to_vec(); }
-    }
 }
 
 /// The touch point the game was given this frame, guest bottom-screen pixels.
@@ -386,19 +280,6 @@ pub(crate) fn note_rejected(reason: &'static str, detail: String) {
         let frame = s.frame;
         if let Some(census) = &mut s.census { census.rejected(frame, reason, detail); }
     }
-}
-
-/// Census only: a 2D layout draw of either screen sampling a known ROM
-/// texture, with the screen rectangle it covers and the part of the texture.
-/// `program`: the vertex program's identity for 2D batches, 1 for draws
-/// placed on the CPU, 2 for other shaded draws (then `primary[0]` is the
-/// index count and the rectangles are unknown).
-pub(crate) fn census_draw(top: bool, hash: u64, size: [u32; 2], xy: layout::Rect, uv: layout::Rect, primary: [f32; 4], program: u64) {
-    let Some(Ok(mut s)) = state().map(Mutex::lock) else { return };
-    let s = &mut *s;
-    let name = s.catalog.get(&hash).map_or_else(|| format!("{hash:016X}"), |source| source.name.clone());
-    let frame = s.frame;
-    if let Some(census) = &mut s.census { census.draw(frame, top, &name, hash, size, xy, uv, primary, program); }
 }
 
 /// A 2D draw reached the guest bottom screen (any texture).
@@ -718,8 +599,6 @@ mod census {
         last: Vec<String>,
         rejected: Option<std::fs::File>,
         seen: std::collections::HashSet<String>,
-        draws: Option<std::fs::File>,
-        drawn: std::collections::HashSet<String>,
     }
     impl Census {
         pub fn from_environment() -> Option<Census> {
@@ -728,24 +607,12 @@ mod census {
             let _ = writeln!(file, "frame,fresh,role,atlas,x0,y0,x1,y1,u0,v0,u1,v1,alpha,island,draw");
             let mut rejected = std::fs::File::create(path.with_file_name("lower-screen-rejected.csv")).ok();
             if let Some(f) = &mut rejected { let _ = writeln!(f, "first_frame,reason,detail"); }
-            let mut draws = std::fs::File::create(path.with_file_name("screen-draws.csv")).ok();
-            if let Some(f) = &mut draws { let _ = writeln!(f, "first_frame,screen,name,hash,size,x0,y0,x1,y1,u0,v0,u1,v1,program,r,g,b,a"); }
-            Some(Census { file, last: Vec::new(), rejected, seen: Default::default(), draws, drawn: Default::default() })
+            Some(Census { file, last: Vec::new(), rejected, seen: Default::default() })
         }
         pub(super) fn rejected(&mut self, frame: u64, reason: &str, detail: String) {
             let key = format!("{reason},{detail}");
             if self.seen.len() < 4096 && self.seen.insert(key.clone()) {
                 if let Some(f) = &mut self.rejected { let _ = writeln!(f, "{frame},{key}"); }
-            }
-        }
-        /// one row per distinct texture, place and part of it (whole pixels)
-        #[allow(clippy::too_many_arguments)]
-        pub(super) fn draw(&mut self, frame: u64, top: bool, name: &str, hash: u64, size: [u32; 2],
-            xy: [f32; 4], uv: [f32; 4], c: [f32; 4], program: u64) {
-            let key = format!("{},{name},{hash:016X},{}x{},{:.0},{:.0},{:.0},{:.0},{:.3},{:.3},{:.3},{:.3},{program:X}",
-                if top { "top" } else { "bottom" }, size[0], size[1], xy[0], xy[1], xy[2], xy[3], uv[0], uv[1], uv[2], uv[3]);
-            if self.drawn.len() < 50_000 && self.drawn.insert(key.clone()) {
-                if let Some(f) = &mut self.draws { let _ = writeln!(f, "{frame},{key},{:.2},{:.2},{:.2},{:.2}", c[0], c[1], c[2], c[3]); }
             }
         }
         pub(super) fn record(&mut self, frame: u64, fresh: bool, layers: &[super::Layer], names: &[String]) {
@@ -776,13 +643,6 @@ mod tests {
         assert_eq!(c[&0xEF].name, "gm_01");
         assert!(!c.contains_key(&0x12));
         assert!(names.contains(&"gc_00".to_owned()));
-    }
-    #[test]
-    fn save_select_art_is_known_by_name_and_role() {
-        let (c, _) = parse_catalog("A1\tscreen\tmenu020/MenSelfileUp0011\tmenu/020\nA2\tscreen\tmenu020/MenSelfileBook0002\tx\n\
-            A3\tscreen\tmenu040/MenSelfileUp0011\tx\nA4\tdecor\tmenu020/MenSelfileBook0001\tx\nA5\tscreen\tmenu020/MenCmnBack0002\tx\n");
-        let set = save_select_hashes(&c);
-        assert_eq!(set, [0xA1, 0xA2].into_iter().collect());
     }
     #[test]
     fn original_portrait_uv_uses_top_down_host_texture_rows() {
