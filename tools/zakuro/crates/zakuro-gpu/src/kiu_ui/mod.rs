@@ -62,7 +62,14 @@ impl Role {
     }
 }
 
-struct Source { role: Role, name: String }
+struct Source {
+    role: Role,
+    name: String,
+    /// menu archives holding this exact texture (role `screen`): from the
+    /// catalog's source column (`menus=010,011`), else the name's
+    /// `menuNNN/` prefix.
+    menus: Vec<u16>,
+}
 
 /// One relocated original draw.
 struct Layer {
@@ -83,6 +90,8 @@ struct Layer {
     /// text written on a picture panel, the panel's.
     fade_key: usize,
 }
+
+use crate::backend::recipes::MENU_WORDS;
 
 const MAX_LAYERS: usize = 256;
 const CACHE_LIMIT: usize = 128;
@@ -138,8 +147,6 @@ struct State {
     /// textures are baked down to about this density (no mipmaps).
     display: f32,
     fades: HashMap<usize, f32>,
-    /// the save select is shown in its PC layout: leave out its HOME button
-    hide_home: bool,
 }
 
 /// On the 3DS some lower-screen art stays up for minutes: a boss's portrait
@@ -183,11 +190,28 @@ fn parse_catalog(text: &str) -> (HashMap<u64, Source>, Vec<String>) {
             },
             None => (Role::Portrait, String::new()),
         };
-        catalog.insert(hash, Source { role, name });
+        let menus = if role == Role::Screen { menus_of(&name, fields.next().unwrap_or("")) } else { Vec::new() };
+        catalog.insert(hash, Source { role, name, menus });
     }
     for source in catalog.values() { if !names.contains(&source.name) { names.push(source.name.clone()); } }
     (catalog, names)
 }
+
+/// The menu archives a `screen` texture belongs to: the catalog's
+/// `menus=010,011,030` source column, else its name's `menuNNN/` prefix.
+fn menus_of(name: &str, source: &str) -> Vec<u16> {
+    if let Some(list) = source.trim().strip_prefix("menus=") {
+        return list.split(',').filter_map(|id| id.trim().parse().ok()).collect();
+    }
+    name.strip_prefix("menu").and_then(|rest| rest.split('/').next()).and_then(|id| id.parse().ok()).into_iter().collect()
+}
+
+/// Textures that belong to exactly one menu archive: drawing one says which
+/// menu screen is up. Shared art (Back buttons, frames) says nothing.
+static MENU_OF: OnceLock<HashMap<u64, u16>> = OnceLock::new();
+/// The menu archives whose own art the lower screen drew since the last
+/// end_frame, one bit each (recipes::MenuSet).
+static LOWER_MENUS: [std::sync::atomic::AtomicU64; MENU_WORDS] = [const { std::sync::atomic::AtomicU64::new(0) }; MENU_WORDS];
 
 /// The save select's own art (menu 020): the speech bubble atlas on the
 /// upper screen and the three books on the lower one. Any of it drawn means
@@ -220,6 +244,9 @@ pub(crate) fn note_texture(hash: u64, top: bool) {
     }
     if !top && MENU_ART_HASHES.get().is_some_and(|set| set.contains(&hash)) {
         MENU_ART_DRAWS.fetch_add(1, Relaxed);
+        if let Some(&id) = MENU_OF.get().and_then(|m| m.get(&hash)) {
+            if (id as usize) < MENU_WORDS * 64 { LOWER_MENUS[id as usize / 64].fetch_or(1 << (id % 64), Relaxed); }
+        }
     }
 }
 
@@ -244,6 +271,7 @@ fn state() -> Option<&'static Mutex<State>> {
         }
         let _ = SAVE_SELECT_HASHES.set(save_select);
         let _ = MENU_ART_HASHES.set(catalog.iter().filter(|(_, s)| s.role == Role::Screen).map(|(&h, _)| h).collect());
+        let _ = MENU_OF.set(catalog.iter().filter(|(_, s)| s.role == Role::Screen && s.menus.len() == 1).map(|(&h, s)| (h, s.menus[0])).collect());
         let (jobs, done) = std::sync::mpsc::channel();
         crate::replacements::hud_pack_enabled(); // starts decoding the HD HUD atlases
         Some(Mutex::new(State { catalog, names, next: 1u64 << 61, census: census::Census::from_environment(),
@@ -300,6 +328,7 @@ pub fn end_frame() -> BottomScene {
         s.scene.save_select = SAVE_SELECT_DRAWS.swap(0, Relaxed) > 0;
         s.scene.menu_screen = MENU_ART_DRAWS.swap(0, Relaxed) > 0;
         s.scene.top_3d = TOP_DEPTH_DRAWS.swap(0, Relaxed) > 0;
+        s.scene.lower_menus = std::array::from_fn(|i| LOWER_MENUS[i].swap(0, Relaxed));
     }
     if let Some(census) = &mut s.census { census.record(s.frame, fresh, &s.shown, names); }
     evict(s);
@@ -311,17 +340,23 @@ pub fn scene() -> BottomScene {
     state().and_then(|s| s.lock().ok().map(|s| s.scene)).unwrap_or_default()
 }
 
-/// A part of the original lower screen to leave out now (3DS-only art the
-/// PC layout of the current screen shows): the save select's HOME button
-/// while the save select is up.
-pub(crate) fn hidden_lower_screen() -> Option<layout::Rect> {
-    let s = state()?.lock().ok()?;
-    (s.scene.save_select && s.hide_home).then_some(layout::SAVE_SELECT_HOME)
+/// Parts of the original lower screen left out now (3DS-only art, the HOME
+/// buttons), from the recipe of the screen the PC layout shows.
+static HIDDEN: Mutex<Vec<layout::Rect>> = Mutex::new(Vec::new());
+
+/// Whether a lower-screen draw covering `bounds` is one to leave out.
+pub(crate) fn hidden_lower_screen(bounds: layout::Rect) -> bool {
+    HIDDEN.lock().is_ok_and(|hidden| hidden.iter().any(|&h| layout::contains(h, bounds)))
 }
 
-/// Whether the PC layout of the save select is on (the presentation decides).
-pub fn set_hide_home(on: bool) {
-    if let Some(Ok(mut s)) = state().map(Mutex::lock) { s.hide_home = on; }
+/// Whether there is anything to leave out (saves shading draws for nothing).
+pub(crate) fn hiding() -> bool { HIDDEN.lock().is_ok_and(|h| !h.is_empty()) }
+
+/// The parts of the lower screen the current layout leaves out.
+pub fn set_hidden_lower(parts: &[[f32; 4]]) {
+    if let Ok(mut hidden) = HIDDEN.lock() {
+        if hidden.as_slice() != parts { *hidden = parts.to_vec(); }
+    }
 }
 
 /// The touch point the game was given this frame, guest bottom-screen pixels.

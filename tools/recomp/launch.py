@@ -47,6 +47,9 @@ def main() -> int:
     ap.add_argument("--pc-interface", action="store_true", help="gameplay preview + original specials/powers/counters HUD and automatic pause panel (separate executable, preview profile)")
     ap.add_argument("--no-native-hud", action="store_true", help="PC interface: keep only the portraits, for comparison")
     ap.add_argument("--ui-census", action="store_true", help="PC interface: record catalogued lower-screen draws to a CSV for tracing")
+    ap.add_argument("--menu-layouts", default=str(ROOT / "tools/recomp/menu_layouts.toml"),
+                    help="PC interface: the PC layouts of the game's screens (read again when the file changes); 'none' = the console arrangement")
+    ap.add_argument("--menu-capture", action="store_true", help="PC interface research: save both pictures of every menu screen to build/menu-captures/<time> (F12: now)")
     ap.add_argument("--ram-snapshots", action="store_true", help="research: F7 saves game memory to build/ram-snapshots/<time> (the comparison script is archived)")
     ap.add_argument("--camera-scale", type=float, help="override saved preview lens scale, 0.75 to 1.0; 1 keeps the previous view")
     ap.add_argument("--original-aspect", action="store_true", help="experimental build: disable wider projection")
@@ -132,7 +135,7 @@ def main() -> int:
     env.pop("KIU_SINGLE_SCREEN", None)
     env.pop("KIU_NATIVE_DIALOGUE", None)
     env.pop("KIU_GAMEPLAY_CAMERA_SCALE", None)
-    for name in ("KIU_NATIVE_UI", "KIU_NATIVE_HUD", "KIU_UI_CENSUS", "KIU_RAM_SNAPSHOT", "KIU_HUD_PACK", "KIU_MENU_PACK"):
+    for name in ("KIU_NATIVE_UI", "KIU_NATIVE_HUD", "KIU_UI_CENSUS", "KIU_RAM_SNAPSHOT", "KIU_HUD_PACK", "KIU_MENU_PACK", "KIU_MENU_LAYOUTS", "KIU_MENU_CAPTURE"):
         env.pop(name, None)
     if args.pc_interface:
         sources = ROOT / "build/native-ui/ui-sources.tsv"
@@ -153,6 +156,19 @@ def main() -> int:
         if args.menu_art == "pc" and menu_pack.is_dir():
             env["KIU_MENU_PACK"] = str(menu_pack.resolve())
             print("Menu art: menu-pc, reconstructed from your ROM (--menu-art original to compare).", flush=True)
+        # the PC layouts of the menus and the pause screen (a tuning file:
+        # the game reads it again whenever it changes)
+        if args.menu_layouts != "none":
+            layouts = Path(args.menu_layouts)
+            if layouts.is_file():
+                env["KIU_MENU_LAYOUTS"] = str(layouts.resolve())
+                print(f"Screen layouts: {layouts.name} (edits apply while the game runs).", flush=True)
+        if args.menu_capture:
+            from datetime import datetime
+            capture_dir = ROOT / "build/menu-captures" / datetime.now().strftime("%Y%m%d-%H%M%S")
+            capture_dir.mkdir(parents=True)
+            env["KIU_MENU_CAPTURE"] = str(capture_dir)
+            print(f"Menu captures (each menu screen once, F12 any time): {capture_dir}", flush=True)
         if camera_override or args.original_aspect: env["KIU_GAMEPLAY_CAMERA_SCALE"] = str(args.camera_scale)
     elif args.dialogue_preview:
         sources = ROOT / "build/native-ui/dialogue-sources/portrait-hashes.txt"

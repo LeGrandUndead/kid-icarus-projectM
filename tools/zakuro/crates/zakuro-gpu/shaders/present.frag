@@ -9,6 +9,7 @@ layout(set = 0, binding = 0) uniform sampler2D screen;
 // the window's background (zero: a solid edge, the usual case).
 // mode.x: the picture carries coverage in its alpha, premultiplied (a menu's
 // lower screen drawn for laying over the upper one); otherwise it is opaque.
+// mode.y: how much of it shows (1; less while a menu layout fades out).
 // the output is premultiplied either way, blended ONE, ONE_MINUS_SRC_ALPHA.
 layout(push_constant) uniform Crop {
     vec4 area;
@@ -24,7 +25,7 @@ float fade() {
         * ramp(1.0 - uv.x, crop.feather.z) * ramp(1.0 - uv.y, crop.feather.w);
 }
 vec4 finish(vec4 texel) {
-    float f = fade();
+    float f = fade() * crop.mode.y;
     return crop.mode.x > 0.5 ? texel * f : vec4(texel.rgb * f, f);
 }
 // a screen drawn bigger than the window shows it is averaged over every

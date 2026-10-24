@@ -59,6 +59,9 @@ pub struct BottomScene {
     pub menu_screen: bool,
     /// The upper screen drew a 3D scene this frame (depth-tested draws).
     pub top_3d: bool,
+    /// The menu archives whose own art the lower screen drew this frame
+    /// (recipes::MenuSet): which menu screen it is.
+    pub lower_menus: crate::backend::recipes::MenuSet,
     /// The land Power Palette is on screen (power icons from atlas `mr` in
     /// the action island). Air special orbs come from `gc_00` instead.
     pub palette: bool,

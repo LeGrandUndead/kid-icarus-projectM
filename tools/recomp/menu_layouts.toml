@@ -1,0 +1,67 @@
+# PC layouts of Kid Icarus: Uprising's screens, one [[screen]] each.
+#
+# Read by the PC interface (launcher --menu-layouts, on by default) and read
+# again whenever this file changes: edit, save, and the running game follows.
+# A screen without a layout here keeps the console arrangement (upper picture
+# above the lower one). Only coordinates live here, no game art.
+#
+# when    menu archives (us/menu/NNN) whose own art the lower screen draws;
+#         "pause" = the in-game pause menu. The first matching screen wins.
+# unless  archives that, drawn at the same time, mean another screen.
+# page    the window's background, #RRGGBB.
+# compose the lower screen is drawn transparent, its full-screen backdrops
+#         left out, so its pieces can lie over the scene.
+# hide    lower-screen parts left out (3DS-only art), console pixels
+#         [left, top, right, bottom]; a draw entirely inside one is skipped.
+#
+# [[screen.piece]], drawn in order (later ones on top):
+# from    "upper" or "lower"
+# src     the part of that picture, console pixels (upper 400x240, lower
+#         320x240); default: all of it
+# anchor  the window point it hangs from, by the same point of itself:
+#         top-left, top, top-right, left, center, right, bottom-left, bottom,
+#         bottom-right, or [x, y] from 0 to 1
+# at      offset from there in units: the window is 240 units tall (426.7
+#         wide at 16:9), so a console pixel at scale 1 is one unit
+# scale   units per console pixel; fill = "height" / "cover" / "contain"
+#         sizes it to the window instead
+# feather fade into the page from the left, top, right, bottom edge (share)
+# opacity 0 to 1
+# touch   clicks on it touch the lower screen there (default for lower pieces)
+
+# Save select: the speech bubble scene above, the three books under it so the
+# bubble's tail meets them, Back and How to Play in the window's corners, the
+# 3DS HOME button left out.
+[[screen]]
+name = "save_select"
+when = ["020"]
+page = "#F6F5F1"
+compose = true
+hide = [[56, 186, 190, 240]]
+
+  [[screen.piece]]
+  from = "upper"
+  anchor = "top"
+  scale = 0.603
+  feather = [0.03, 0.02, 0.03, 0.125]
+
+  [[screen.piece]]
+  from = "lower"
+  src = [0, 0, 320, 188]
+  anchor = "top"
+  at = [0, 126.6]
+  scale = 0.603
+
+  [[screen.piece]]
+  from = "lower"
+  src = [0, 188, 64, 240]
+  anchor = "bottom-left"
+  at = [4.8, -4.8]
+  scale = 0.603
+
+  [[screen.piece]]
+  from = "lower"
+  src = [176, 184, 320, 240]
+  anchor = "bottom-right"
+  at = [-4.8, -4.8]
+  scale = 0.603

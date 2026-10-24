@@ -29,12 +29,15 @@ uniform vec4 feather;
 // whether its alpha is coverage (premultiplied); the output is premultiplied
 uniform vec4 area;
 uniform float coverage;
+// how much of the piece shows (menu layouts fading out)
+uniform float opacity;
 float ramp(float d, float width) { return width <= 0.0 ? 1.0 : smoothstep(0.0, width, d); }
 float fade() {
     return ramp(uv.x, feather.x) * ramp(uv.y, feather.y) * ramp(1.0 - uv.x, feather.z) * ramp(1.0 - uv.y, feather.w);
 }
 vec4 finish(vec4 texel) {
     float f = fade();
+    f *= opacity;
     return coverage > 0.5 ? texel * f : vec4(texel.rgb * f, f);
 }
 void main() {
@@ -216,6 +219,9 @@ impl GlPresenter {
                 gl.uniform_4_f32(Some(&location), l / size[0], t / size[1], (r - l) / size[0], (b - t) / size[1]);
             }
             // uploaded pictures carry no coverage: drawn opaque
+            if let Some(location) = gl.get_uniform_location(self.program, "opacity") {
+                gl.uniform_1_f32(Some(&location), piece.opacity);
+            }
             if let Some(location) = gl.get_uniform_location(self.program, "coverage") {
                 gl.uniform_1_f32(Some(&location), 0.0);
             }

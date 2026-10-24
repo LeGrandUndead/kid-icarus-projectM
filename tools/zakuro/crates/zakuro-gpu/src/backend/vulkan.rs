@@ -13,6 +13,9 @@ use crate::raster::hardware::{can_render, render_device};
 use crate::SharedDevice;
 
 const VERTEX_SPIRV: &[u8] = include_bytes!("../../shaders/present.vert.spv");
+/// How long the pieces of a menu layout take to fade out when another one
+/// replaces it.
+const FADE_SECONDS: f32 = 0.18;
 const FRAGMENT_SPIRV: &[u8] = include_bytes!("../../shaders/present.frag.spv");
 
 /// how many frames may be recorded before waiting on the oldest.
@@ -104,6 +107,9 @@ pub struct VulkanPresenter {
     overlay: Option<OverlayPainter>,
     window: (u32, u32),
     arrangement: ScreenLayout,
+    /// the arrangement shown before a change between two menu layouts, and
+    /// when the change came: its pieces fade out over the new ones.
+    leaving: Option<(ScreenLayout, std::time::Instant)>,
     /// set when the swapchain no longer matches the window.
     stale: bool,
 }
@@ -358,6 +364,7 @@ impl VulkanPresenter {
             overlay: Some(overlay),
             window: size,
             arrangement: ScreenLayout::default(),
+            leaving: None,
             stale: false,
         };
 
@@ -689,7 +696,16 @@ impl VulkanPresenter {
                 self.pipeline,
             );
 
-            for piece in pieces(self.extent.width, self.extent.height, self.arrangement) {
+            // a change between two menu layouts crossfades: the new pieces,
+            // then the old ones over them fading out (FADE_SECONDS)
+            let mut drawn = pieces(self.extent.width, self.extent.height, self.arrangement);
+            if let Some((old, since)) = self.leaving {
+                let t = since.elapsed().as_secs_f32() / FADE_SECONDS;
+                if t < 1.0 {
+                    drawn.extend(pieces(self.extent.width, self.extent.height, old).into_iter().map(|mut p| { p.opacity *= 1.0 - t; p.touch = false; p }));
+                }
+            }
+            for piece in drawn {
                 let index = piece.screen;
                 let (descriptor, image) = match sources[index] {
                     Source::Nothing => continue,
@@ -710,7 +726,7 @@ impl VulkanPresenter {
                 let crop = [u0, v0, u1 - u0, v1 - v0, u0 + half_u, v0 + half_v, u1 - half_u, v1 - half_v];
                 // an uploaded copy has no coverage, it is drawn opaque
                 let coverage = piece.coverage && matches!(sources[index], Source::Gpu(_));
-                let mode = [if coverage { 1.0 } else { 0.0 }, 0.0, 0.0, 0.0];
+                let mode = [if coverage { 1.0 } else { 0.0 }, piece.opacity, 0.0, 0.0];
                 set_viewport(device, command_buffer, piece.dest, self.extent);
                 device.cmd_bind_descriptor_sets(
                     command_buffer,
@@ -862,6 +878,10 @@ impl Presenter for VulkanPresenter {
     }
 
     fn set_layout(&mut self, arrangement: ScreenLayout) {
+        let menu = |a: ScreenLayout| matches!(a, ScreenLayout::Menus { .. } | ScreenLayout::Composed { .. });
+        if arrangement != self.arrangement && menu(arrangement) && menu(self.arrangement) {
+            self.leaving = Some((self.arrangement, std::time::Instant::now()));
+        }
         self.arrangement = arrangement;
     }
 }

@@ -67,7 +67,11 @@ def build(romfs: Path, legacy_portraits: Path | None):
             key = f'{fingerprint(raw):016X}'
             # a texture shared by several chapters keeps its first, most specific role
             rows.setdefault(key, (role, name, f'{folder}/info/00.bcres'))
-    # out-of-stage menus: each menu's art is one CGFX inside its bind archive
+    # out-of-stage menus: each menu's art is one CGFX inside its bind archive.
+    # The source column lists every archive holding the exact texture
+    # (`menus=010,011,030`): art found in one archive only tells the runtime
+    # which menu screen is up (zakuro_gpu::recipes).
+    menus: dict[str, list[str]] = {}
     for arc in sorted((romfs / 'us/menu').glob('*/menu/bind.arc')):
         data = arc.read_bytes()
         folder = arc.parent.parent.name
@@ -76,7 +80,14 @@ def build(romfs: Path, legacy_portraits: Path | None):
                 continue
             for name, width, height, fmt, mips, raw in textures(data[entry.data_offset:entry.data_offset + entry.size]):
                 if raw is not None:
-                    rows.setdefault(f'{fingerprint(raw):016X}', ('screen', f'menu{folder}/{name}', f'menu/{folder}/menu/bind.arc'))
+                    key = f'{fingerprint(raw):016X}'
+                    if key not in rows:
+                        rows[key] = ('screen', f'menu{folder}/{name}', '')
+                    if rows[key][0] == 'screen' and folder not in menus.setdefault(key, []):
+                        menus[key].append(folder)
+    for key, folders in menus.items():
+        role, name, _ = rows[key]
+        rows[key] = (role, name, 'menus=' + ','.join(folders))
     if legacy_portraits and legacy_portraits.is_file():
         for line in legacy_portraits.read_text().split():
             rows.setdefault(line.strip().upper(), ('portrait', '', 'portrait-hashes.txt'))

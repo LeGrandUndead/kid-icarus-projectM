@@ -7,7 +7,8 @@ pub mod vulkan;
 #[cfg(feature = "vulkan")]
 mod vulkan_overlay;
 mod pieces;
-pub use pieces::{pieces, touch_at, Piece, Recipe, BOTTOM_SIZE, TOP_SIZE};
+pub mod recipes;
+pub use pieces::{composed, pieces, touch_at, Piece, BOTTOM_SIZE, TOP_SIZE};
 
 /// one screen's pixels, already converted to straight RGBA8, or where they
 /// are on the GPU, for a presenter sharing the renderer's device.
@@ -116,10 +117,11 @@ pub enum ScreenLayout {
     /// melt into a page at their edges. `room`: the upper picture is a 3D
     /// room (shown with the wide view's width), otherwise it is 2D art.
     Menus { wide: bool, room: bool },
-    /// A menu screen recomposed as one PC picture (pieces::Recipe): its
-    /// upper picture is the scene, parts of its lower one (drawn transparent)
-    /// are laid where the recipe puts them.
-    Composed { wide: bool, recipe: Recipe },
+    /// A screen recomposed as one PC picture by recipe `recipe` of the
+    /// layout table (recipes): parts of its pictures (the lower one drawn
+    /// transparent when the recipe composes) laid where the recipe puts
+    /// them. `room`: the upper picture is a 3D room.
+    Composed { wide: bool, recipe: u16, room: bool },
 }
 
 impl ScreenLayout {
@@ -248,8 +250,8 @@ pub fn backdrop(arrangement: ScreenLayout) -> [f32; 4] {
     match arrangement {
         // the white page of KIU's menu art, or the dark of a 3D room
         ScreenLayout::Menus { room: false, .. } => [0.976, 0.973, 0.965, 1.0],
-        // the save select's paper, a touch warmer than plain white
-        ScreenLayout::Composed { .. } => [0.965, 0.961, 0.945, 1.0],
+        // the recipe's own page
+        ScreenLayout::Composed { recipe, .. } => recipes::recipe(recipe).map_or([0.0, 0.0, 0.0, 1.0], |r| r.page),
         ScreenLayout::Menus { room: true, .. } => [0.035, 0.035, 0.05, 1.0],
         _ => [0.0, 0.0, 0.0, 1.0],
     }

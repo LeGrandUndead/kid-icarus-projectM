@@ -3,7 +3,7 @@
 //! original ROM texture identity); it is never guessed from pixels.
 use crate::settings::Screens;
 use zakuro_gpu::kiu_ui::BottomScene;
-use zakuro_gpu::{Recipe, ScreenLayout};
+use zakuro_gpu::{recipes, ScreenLayout};
 use zakuro_core::services::hid::{InputState, PadState};
 
 #[derive(Debug, PartialEq, Eq)]
@@ -71,8 +71,9 @@ pub struct PcPresentation {
     room_frames: u32,
     /// The menus' upper picture is a 3D room (decided from room_frames).
     room: bool,
-    /// The menu shown has its own one-screen composition.
-    recipe: Option<Recipe>,
+    /// The screen shown has its own one-screen composition: its recipe in
+    /// the layout table (zakuro_gpu::recipes, tools/recomp/menu_layouts.toml).
+    recipe: Option<u16>,
 }
 
 impl PcPresentation {
@@ -80,13 +81,11 @@ impl PcPresentation {
     pub fn layout(&self, original: Screens, wide: bool) -> ScreenLayout {
         if self.enabled {
             if self.access.is_some() {
-                return if self.automatic == Some(AutoPanel::Menus) {
-                    match self.recipe {
-                        Some(recipe) => ScreenLayout::Composed { wide, recipe },
-                        None => ScreenLayout::Menus { wide, room: self.room },
-                    }
-                }
-                    else { ScreenLayout::BottomOverlay { wide } };
+                return match (self.automatic, self.recipe) {
+                    (Some(AutoPanel::Menus | AutoPanel::Pause), Some(recipe)) => ScreenLayout::Composed { wide, recipe, room: self.room },
+                    (Some(AutoPanel::Menus), None) => ScreenLayout::Menus { wide, room: self.room },
+                    _ => ScreenLayout::BottomOverlay { wide },
+                };
             }
             if self.legacy { return if wide { ScreenLayout::StackedWide } else { ScreenLayout::Stacked }; }
             return if wide { ScreenLayout::TopWide } else { ScreenLayout::TopOnly };
@@ -121,8 +120,8 @@ impl PcPresentation {
         if menus { self.away_frames = 0; } else { self.away_frames = self.away_frames.saturating_add(1); }
         self.room_frames = if scene.top_3d { ROOM_FRAMES } else { self.room_frames.saturating_sub(1) };
         let room = self.room_frames > 0;
-        // menus recomposed as one picture so far: the save select
-        let recipe = scene.save_select.then_some(Recipe::SaveSelect);
+        // the screen's own one-screen composition, when the layout table has one
+        let recipe = recipes::find(&scene.lower_menus, false);
         match self.automatic() {
             Some(AutoPanel::Menus) => {
                 if self.away_frames >= MENUS_GONE {
@@ -160,6 +159,7 @@ impl PcPresentation {
             self.gameplay_frames = 0;
             if allowed && self.access.is_none() && !self.suppressed {
                 self.automatic = Some(AutoPanel::Pause);
+                self.recipe = recipes::find(&scene.lower_menus, true);
                 return PanelRequest::Open;
             }
             return PanelRequest::Keep;
@@ -257,13 +257,16 @@ mod tests {
 
     #[test]
     fn menus_get_the_console_arrangement_while_their_art_is_drawn() {
-        let select = BottomScene { fresh: true, save_select: true, menu_screen: true, ..BottomScene::default() };
+        recipes::set_recipes(vec![recipes::ScreenRecipe { name: "save_select".into(), when: vec!["020".into()], ..Default::default() }]);
+        let mut lower_menus = [0u64; recipes::MENU_WORDS];
+        lower_menus[0] |= 1 << 20;
+        let select = BottomScene { fresh: true, save_select: true, menu_screen: true, lower_menus, ..BottomScene::default() };
         let other = BottomScene { fresh: true, ..BottomScene::default() };
         let mut p = PcPresentation::new(true);
         assert_eq!(p.observe(select, true), PanelRequest::Open);
         p.access = Some((Screens::TopOnly, None));
         assert_eq!(p.mode(), PresentationMode::Menus);
-        assert_eq!(p.layout(Screens::TopOnly, true), ScreenLayout::Composed { wide: true, recipe: Recipe::SaveSelect });
+        assert_eq!(p.layout(Screens::TopOnly, true), ScreenLayout::Composed { wide: true, recipe: 0, room: false });
         assert_eq!(p.context(false, false), InputContext::PointerMenu);
         // leaving the save select for the main menu: the console arrangement
         let main = BottomScene { fresh: true, menu_screen: true, ..BottomScene::default() };
@@ -272,7 +275,7 @@ mod tests {
         assert_eq!(p.observe(select, true), PanelRequest::Relayout);
         // a skipped frame does not lose the save select's composition
         assert_eq!(p.observe(other, true), PanelRequest::Keep);
-        assert_eq!(p.layout(Screens::TopOnly, true), ScreenLayout::Composed { wide: true, recipe: Recipe::SaveSelect });
+        assert_eq!(p.layout(Screens::TopOnly, true), ScreenLayout::Composed { wide: true, recipe: 0, room: false });
         assert_eq!(p.observe(select, true), PanelRequest::Keep);
         // a few frames without its art (skipped frames, fades) keep it
         for _ in 0..MENUS_GONE - 1 { assert_eq!(p.observe(other, true), PanelRequest::Keep); }

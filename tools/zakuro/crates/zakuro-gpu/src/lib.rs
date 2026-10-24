@@ -24,7 +24,7 @@ pub mod texture;
 
 use format::ColorFormat;
 use registers::*;
-pub use backend::{layout, pieces, touch_at, Piece, Recipe, GpuScreen, Overlay, OverlayMesh, OverlayTexture, OverlayVertex, PresentError, Presenter, ScreenImage, ScreenLayout, Viewport};
+pub use backend::{composed, layout, pieces, recipes, touch_at, Piece, GpuScreen, Overlay, OverlayMesh, OverlayTexture, OverlayVertex, PresentError, Presenter, ScreenImage, ScreenLayout, Viewport};
 pub use renderer::{DrawCall, Renderer, RendererKind, SoftwareRenderer};
 #[cfg(feature = "vulkan")]
 pub use device::SharedDevice;

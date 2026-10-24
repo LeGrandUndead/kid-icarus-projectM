@@ -3164,9 +3164,7 @@ impl Hardware {
             // 3DS-only parts of the game's own lower screen (the HOME button
             // of the save select) are left out where the PC layout shows it
             if draw.width==240 && draw.height==320 {
-                if let Some(hide)=crate::kiu_ui::hidden_lower_screen() {
-                    if draw_bounds(memory,draw,[160.0,120.0]).is_some_and(|b| crate::kiu_ui::layout::contains(hide,b)) { return Ok(()); }
-                }
+                if crate::kiu_ui::hiding() && draw_bounds(memory,draw,[160.0,120.0]).is_some_and(crate::kiu_ui::hidden_lower_screen) { return Ok(()); }
             }
             // which menu screen is up, from the identity of the art either screen samples
             let top=draw.width==240 && draw.height==400;

@@ -14,6 +14,8 @@ mod present;
 mod pc_presentation;
 mod ram_snapshot;
 mod kiu_jump;
+mod menu_capture;
+mod menu_layouts;
 mod recompile;
 mod report;
 mod settings;
@@ -119,6 +121,8 @@ pub fn run(linked: Option<Linked>) {
         land_publications: 0,
         land_seen: None,
         space_jump: kiu_jump::SpaceJump::default(),
+        menu_layouts: menu_layouts::MenuLayouts::from_environment(),
+        menu_capture: menu_capture::MenuCapture::from_environment(),
     };
 
     if let Some(frames) = app.options.headless {
@@ -384,6 +388,10 @@ struct App {
     land_seen: Option<u64>,
     /// KIU: Space uses the equipped Sky Jump (kiu_jump.rs).
     space_jump: kiu_jump::SpaceJump,
+    /// the PC layouts of the game's screens (tools/recomp/menu_layouts.toml)
+    menu_layouts: menu_layouts::MenuLayouts,
+    /// research: saves each menu screen's two pictures (--menu-capture)
+    menu_capture: menu_capture::MenuCapture,
 }
 
 /// how long each step of the loop took, its mean and its longest.
@@ -749,6 +757,10 @@ impl App {
                     self.apply_layout();
                 }
                 KeyCode::F11 => self.toggle_fullscreen(),
+                KeyCode::F12 if self.menu_capture.enabled() => {
+                    if let Some(game) = &mut self.game { self.menu_capture.save_now(&mut game.system); }
+                    return;
+                }
                 _ => {}
             }
         }
@@ -1238,6 +1250,8 @@ impl App {
         zakuro_gpu::diagnostic_frame(game.frame);
         let outcome = game.system.run_frame();
         let scene = zakuro_gpu::kiu_ui::end_frame();
+        self.menu_layouts.poll();
+        self.menu_capture.frame(&mut game.system, &scene);
         let land = game.system.memory.kiu_land_publications();
         if land != self.land_publications || scene.palette {
             self.land_publications = land;
@@ -1300,10 +1314,15 @@ impl App {
             }
             pc_presentation::PanelRequest::Keep => {}
         }
-        // the save select's PC layout leaves out the 3DS HOME button; a
-        // recomposed menu has its lower screen drawn transparent
-        zakuro_gpu::kiu_ui::set_hide_home(self.presentation.automatic() == Some(pc_presentation::AutoPanel::Menus));
-        zakuro_gpu::kiu_ui::compose::set_composing(matches!(self.presentation.layout(self.layout, self.experimental_wide), zakuro_gpu::ScreenLayout::Composed { .. }));
+        // a recomposed screen leaves out its 3DS-only parts (HOME buttons)
+        // and, when its recipe composes, has its lower screen drawn
+        // transparent for laying over the scene
+        let recipe = match self.presentation.layout(self.layout, self.experimental_wide) {
+            zakuro_gpu::ScreenLayout::Composed { recipe, .. } => zakuro_gpu::recipes::recipe(recipe),
+            _ => None,
+        };
+        zakuro_gpu::kiu_ui::set_hidden_lower(recipe.as_ref().map_or(&[][..], |r| &r.hide[..]));
+        zakuro_gpu::kiu_ui::compose::set_composing(recipe.is_some_and(|r| r.compose));
     }
 
     /// the menus, and the actions they asked for, done.
