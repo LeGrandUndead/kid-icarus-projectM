@@ -54,6 +54,19 @@ pub struct BottomScene {
     /// The land Power Palette is on screen (power icons from atlas `mr` in
     /// the action island). Air special orbs come from `gc_00` instead.
     pub palette: bool,
+    /// Menu archives (`us/menu/NNN`) whose own art the lower screen drew this
+    /// frame, one bit each: which menu screen it is.
+    pub menus: MenuSet,
+}
+
+pub const MENU_WORDS: usize = 12;
+pub type MenuSet = [u64; MENU_WORDS];
+
+impl BottomScene {
+    /// The lower screen shows art of menu archive `id` (`us/menu/040`: 40).
+    pub fn shows_menu(&self, id: u16) -> bool {
+        (id as usize) < MENU_WORDS * 64 && self.menus[id as usize / 64] & (1 << (id % 64)) != 0
+    }
 }
 
 /// A layer, as far as classification is concerned.
@@ -102,7 +115,7 @@ pub fn classify<'a>(frame: u64, fresh: bool, layers: impl Iterator<Item = Eviden
             }
             Role::Menu => {}
             Role::Insert => scene.inserts = scene.inserts.saturating_add(1),
-            Role::Hud | Role::Decor | Role::Unlisted => {}
+            Role::Hud | Role::Decor | Role::Unlisted | Role::Screen => {}
         }
         if layer.island {
             scene.hud = scene.hud.saturating_add(1);

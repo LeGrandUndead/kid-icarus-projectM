@@ -42,6 +42,9 @@ pub enum Role {
     /// Not in the catalog, typically system-font text (power names). Only
     /// relocated when it lies inside a HUD island, as part of that layout.
     Unlisted,
+    /// Art of the out-of-stage menu screens (`us/menu/NNN`): never relocated,
+    /// only evidence of which menu screen the lower screen shows.
+    Screen,
 }
 
 impl Role {
@@ -52,6 +55,7 @@ impl Role {
             "menu" => Role::Menu,
             "decor" => Role::Decor,
             "insert" => Role::Insert,
+            "screen" => Role::Screen,
             _ => return None,
         })
     }
@@ -182,6 +186,35 @@ fn parse_catalog(text: &str) -> (HashMap<u64, Source>, Vec<String>) {
     (catalog, names)
 }
 
+/// Menu-screen textures found in exactly one menu archive, by fingerprint:
+/// drawing one tells which menu screen is up. The catalog's source column
+/// lists every archive holding a texture (`menus=010,011,030`); shared art
+/// (Back buttons, frames) tells nothing.
+fn menu_identities(text: &str) -> HashMap<u64, u16> {
+    text.lines().filter_map(|line| {
+        let mut fields = line.trim().split('\t');
+        let hash = u64::from_str_radix(fields.next()?.trim(), 16).ok()?;
+        if fields.next()?.trim() != "screen" { return None; }
+        let _name = fields.next()?;
+        let list = fields.next()?.trim().strip_prefix("menus=")?;
+        let ids: Vec<u16> = list.split(',').filter_map(|id| id.trim().parse().ok()).collect();
+        (ids.len() == 1).then(|| (hash, ids[0]))
+    }).collect()
+}
+
+static MENU_OF: OnceLock<HashMap<u64, u16>> = OnceLock::new();
+/// Menu archives whose own art the lower screen drew since the last end_frame.
+static LOWER_MENUS: [std::sync::atomic::AtomicU64; scene::MENU_WORDS] = [const { std::sync::atomic::AtomicU64::new(0) }; scene::MENU_WORDS];
+
+/// A lower-screen draw sampled this original texture.
+pub(crate) fn note_lower_texture(hash: u64) {
+    if let Some(&id) = MENU_OF.get().and_then(|m| m.get(&hash)) {
+        if (id as usize) < scene::MENU_WORDS * 64 {
+            LOWER_MENUS[id as usize / 64].fetch_or(1 << (id % 64), std::sync::atomic::Ordering::Relaxed);
+        }
+    }
+}
+
 fn state() -> Option<&'static Mutex<State>> {
     static STATE: OnceLock<Option<Mutex<State>>> = OnceLock::new();
     STATE.get_or_init(|| {
@@ -189,6 +222,7 @@ fn state() -> Option<&'static Mutex<State>> {
         let text = std::fs::read_to_string(&file).ok()?;
         let (catalog, names) = parse_catalog(&text);
         if catalog.is_empty() { return None; }
+        let _ = MENU_OF.set(menu_identities(&text));
         let count = |role| catalog.values().filter(|s| s.role == role).count();
         log::info!("Original PC interface layers: {} portrait, {} insert, {} HUD, {} menu, {} decor textures",
             count(Role::Portrait), count(Role::Insert), count(Role::Hud), count(Role::Menu), count(Role::Decor));
@@ -243,6 +277,7 @@ pub fn end_frame() -> BottomScene {
     s.scene = scene::classify(s.frame, fresh, s.shown.iter().map(|l| scene::Evidence {
         role: l.role, atlas: &names[l.name], uv: l.uv, island: l.island.is_some(),
     }));
+    s.scene.menus = std::array::from_fn(|i| LOWER_MENUS[i].swap(0, std::sync::atomic::Ordering::Relaxed));
     if let Some(census) = &mut s.census { census.record(s.frame, fresh, &s.shown, names); }
     evict(s);
     s.scene

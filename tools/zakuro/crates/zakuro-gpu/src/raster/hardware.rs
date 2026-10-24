@@ -204,9 +204,13 @@ fn capture_ui<M: GpuMemory>(memory:&mut M, draw:&Draw) {
             draw.registers[REG_TEXTURE_CONFIG], draw.registers[0x101], s.indices.len()));
     };
     let Some(texture)=draw.textures[0].as_ref() else {reject("no texture 0");return};
+    // which menu screen is up, from the identity of the art it draws
+    if let Some(hash)=texture.source_hash { crate::kiu_ui::note_lower_texture(hash); }
     // Text drawn into a buffer first (power names): its latest host copy.
     let text=texture.drawn.and_then(|d| crate::kiu_ui::text(d.addr,[d.width,d.height]));
     let Some(role)=(if text.is_some() {Some(crate::kiu_ui::Role::Unlisted)} else {crate::kiu_ui::role(texture.source_hash)}) else {reject("no source hash");return};
+    // menu-screen art is only evidence, drawn where the game drew it
+    if role==crate::kiu_ui::Role::Screen {return;}
     // Colors are only reproduced for the standard 2D layout pipeline: one
     // texture, normal alpha blending. Menu atlases are only evidence (UVs).
     let exact = draw.registers[REG_TEXTURE_CONFIG]&7==1 && draw.registers[0x101]==0x01760000;

@@ -14,6 +14,7 @@ mod present;
 mod pc_presentation;
 mod ram_snapshot;
 mod kiu_jump;
+mod top_menus;
 mod recompile;
 mod report;
 mod settings;
@@ -119,6 +120,9 @@ pub fn run(linked: Option<Linked>) {
         land_publications: 0,
         land_seen: None,
         space_jump: kiu_jump::SpaceJump::default(),
+        top_menu: top_menus::Shown::default(),
+        tap: top_menus::Tap::default(),
+        released_for_menu: false,
     };
 
     if let Some(frames) = app.options.headless {
@@ -384,6 +388,12 @@ struct App {
     land_seen: Option<u64>,
     /// KIU: Space uses the equipped Sky Jump (kiu_jump.rs).
     space_jump: kiu_jump::SpaceJump,
+    /// the game's menu answered from the top screen now (top_menus)
+    top_menu: top_menus::Shown,
+    /// a touch the top-screen buttons asked for, given over a few frames
+    tap: top_menus::Tap,
+    /// the mouse was let go for a top-screen menu, to take back for play
+    released_for_menu: bool,
 }
 
 /// how long each step of the loop took, its mean and its longest.
@@ -1213,6 +1223,10 @@ impl App {
                 } else { self.gamepads.apply(keyboard) }
             }
         };
+        // a click on a top-screen menu button touches the lower screen
+        if game.replay.is_none() {
+            if let Some(touch) = self.tap.next() { input.touch = touch; }
+        }
         if game.replay.is_none() {
             // While a Space jump steps through the palette, its D-pad presses
             // replace the player's power keys and wheel for those frames.
@@ -1243,6 +1257,7 @@ impl App {
         zakuro_gpu::diagnostic_frame(game.frame);
         let outcome = game.system.run_frame();
         let scene = zakuro_gpu::kiu_ui::end_frame();
+        self.top_menu.update(&scene, game.frame);
         let land = game.system.memory.kiu_land_publications();
         if land != self.land_publications || scene.palette {
             self.land_publications = land;
@@ -1278,6 +1293,16 @@ impl App {
     /// Lets the presentation follow what the game's own lower screen shows.
     fn follow_scene(&mut self, scene: zakuro_gpu::kiu_ui::BottomScene) {
         if self.game.is_none() || !self.pc_controls { return; }
+        // a menu answered from the top screen needs the pointer; play takes
+        // it back once the game's HUD is up
+        if self.top_menu.menu().is_some() && self.presentation.access.is_none() && self.mouse_captured {
+            self.set_mouse_capture(false);
+            self.released_for_menu = true;
+        }
+        if self.released_for_menu && self.top_menu.menu().is_none() && scene.fresh && scene.hud > 0 {
+            self.released_for_menu = false;
+            self.set_mouse_capture(true);
+        }
         let allowed = zakuro_gpu::kiu_ui::config::get().auto_pause_panel
             && !self.menus.menu_open && !self.menus.settings_open
             && !self.gui.as_ref().is_some_and(Gui::wants_keyboard);
@@ -1302,7 +1327,18 @@ impl App {
         let keyboard = self.game.as_ref().and_then(|game| game.system.keyboard_request().cloned());
         let (menus, library, settings, jobs) = (&mut self.menus, &self.library, &mut self.settings, &self.jobs);
         let mut actions = Vec::new();
+        // the game's menu answered from the top screen, over the upper picture
+        let top_menu = self.top_menu.menu().filter(|_| game.is_some() && self.presentation.enabled
+            && self.presentation.access.is_none() && !self.presentation.legacy && !menus.menu_open && !menus.settings_open);
+        let size = window.inner_size();
+        let view = layout(size.width, size.height, self.presentation.layout(self.layout, self.experimental_wide)).0;
+        let mut tapped = None;
         let overlay = gui.frame(window, |ui| {
+            if let (Some(menu), Some(v)) = (top_menu, view) {
+                let ppp = ui.ctx().pixels_per_point();
+                let rect = egui::Rect::from_min_size(egui::pos2(v.x / ppp, v.y / ppp), egui::vec2(v.width / ppp, v.height / ppp));
+                tapped = top_menus::show(ui.ctx(), menu, rect);
+            }
             match &game {
                 Some((name, fps, recompiled)) => {
                     actions.extend(menus.game(ui, name, show_fps.then_some(*fps), *recompiled, jobs))
@@ -1316,6 +1352,10 @@ impl App {
             menus.message(ui.ctx());
         });
         self.library.changed = false;
+        if let Some(at) = tapped {
+            log::info!("Top-screen menu: touch {at:?}");
+            self.tap.start(at);
+        }
         for action in actions {
             self.act(action, event_loop);
         }
