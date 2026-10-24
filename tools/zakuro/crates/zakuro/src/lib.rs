@@ -642,6 +642,8 @@ impl App {
                 Err(error) => log::warn!("could not record to {}, {error}", record.display()),
             }
         }
+        // where the emulated CPU's time goes, for stalls (F4 marks a moment)
+        game.system.thread_time = Some(zakuro_core::thread_time::ThreadTime::open());
         self.game = Some(game);
         self.menus.menu_open = false;
         self.set_mouse_capture(false);
@@ -712,6 +714,14 @@ impl App {
                 }
                 KeyCode::F3 if self.game.is_some() => {
                     self.set_fast_forward(!self.menus.fast_forward);
+                    return;
+                }
+                KeyCode::F4 if self.game.is_some() => {
+                    if let Some(game) = &mut self.game {
+                        let frame = game.system.frames;
+                        if let Some(time) = &mut game.system.thread_time { time.mark(frame, "F4 pressed"); }
+                        log::info!("marked frame {frame} in build/diagnostics/thread-time.log");
+                    }
                     return;
                 }
                 KeyCode::F1 => {

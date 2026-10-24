@@ -13,6 +13,7 @@ pub mod replay;
 pub mod recompiled;
 pub mod services;
 pub mod usage;
+pub mod thread_time;
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -147,6 +148,10 @@ pub struct System {
     pub hints: Option<hints::Hints>,
     /// what the title asks of the runtime, next to the library as well.
     pub usage: Option<usage::Usage>,
+    /// where the CPU's time goes, once a second (diagnostics)
+    pub thread_time: Option<thread_time::ThreadTime>,
+    /// the thread the current step runs, for thread_time
+    step_thread: Option<kernel::thread::ThreadId>,
     /// instructions the interpreter ran for want of recompiled code, and
     /// the ones recompiled code ran, to see how much the library covers.
     pub interpreted_instructions: u64,
@@ -218,6 +223,8 @@ impl System {
             recompiled: None,
             hints: None,
             usage: None,
+            thread_time: None,
+            step_thread: None,
             interpreted_instructions: 0,
             recompiled_instructions: 0,
         }
@@ -267,7 +274,10 @@ impl System {
         // finds the boundary passed
         let deadline = self.next_frame_boundary;
         while self.cpu.cycles < deadline {
-            match self.step(Some(deadline)) {
+            let before = self.cpu.cycles;
+            let outcome = self.step(Some(deadline));
+            if let Some(time) = &mut self.thread_time { time.add(self.step_thread, self.cpu.cycles - before); }
+            match outcome {
                 StepOutcome::Ran => {}
                 StepOutcome::Exited => return FrameOutcome::Exited,
                 StepOutcome::Faulted => return FrameOutcome::Faulted,
@@ -307,6 +317,7 @@ impl System {
             // too, before it runs on, not over whatever it does next
             self.apply_wait_result();
         }
+        self.step_thread = self.kernel.current_thread;
 
         if self.kernel.current_thread.is_none() {
             // everything is blocked.
@@ -582,6 +593,7 @@ impl System {
     /// everything that happens between frames, vertical blank, input, clock.
     fn end_frame(&mut self) {
         self.frames += 1;
+        if let Some(time) = &mut self.thread_time { time.end_frame(self.frames, &self.kernel.threads); }
         if let Some(usage) = &mut self.usage {
             usage.end_frame();
             if self.frames.is_multiple_of(hints::SAVE_EVERY) {
