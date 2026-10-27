@@ -3255,6 +3255,13 @@ impl Hardware {
         if color_mask != 0 {
             self.surfaces[color].drew(rows);
             self.surfaces[color].guard_writes(memory);
+            // small color buffers too: Kid Icarus reads its effect buffers
+            // (a 64/32/16 chain in Pandora's labyrinth, chapter 9) back on
+            // the CPU; read from stale memory, the warp's white flash stayed
+            // up for as long as nothing happened to bring them down
+            if small_color_read_back(&self.surfaces[color]) {
+                self.surfaces[color].guard(memory);
+            }
             self.overdrawn(color, rows, depth);
         }
         if let Some(depth) = depth {
@@ -4971,6 +4978,17 @@ mod tests {
             }
         }
     }
+}
+
+/// whether the CPU's reads of a color buffer wait for what the GPU drew in
+/// it: the small ones, effect buffers a title may read back (the console's
+/// GPU wrote to memory at once). ZAKURO_UNGUARDED_COLOR=1 leaves all color
+/// buffers as memory holds them, as before October 28.
+fn small_color_read_back(surface: &Surface) -> bool {
+    static OFF: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    !*OFF.get_or_init(|| std::env::var_os("ZAKURO_UNGUARDED_COLOR").is_some())
+        && matches!(surface.kind, Kind::Color(_))
+        && surface.width * surface.height <= 128 * 128
 }
 
 /// whether a texture the game drew is one of its small effect buffers (glow,
