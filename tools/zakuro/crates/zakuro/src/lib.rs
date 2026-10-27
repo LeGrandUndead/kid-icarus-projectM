@@ -746,17 +746,6 @@ impl App {
                     log::info!("render switches: {}", if self.menus.diagnostic.is_empty() { "normal" } else { &self.menus.diagnostic });
                     return;
                 }
-                // experiment for the long white flash after warps: a guest
-                // CPU twice as fast, so the loading threads get through
-                KeyCode::F6 if self.game.is_some() => {
-                    if let Some(game) = &mut self.game {
-                        game.system.cpu_boost = if game.system.cpu_boost > 1 { 1 } else { 2 };
-                        let (frame, boost) = (game.system.frames, game.system.cpu_boost);
-                        if let Some(time) = &mut game.system.thread_time { time.mark(frame, &format!("F6: CPU x{boost}")); }
-                        log::info!("emulated CPU x{boost} (F6 toggles)");
-                    }
-                    return;
-                }
                 KeyCode::F9 if self.presentation.enabled => {
                     self.close_screen_access(false);
                     self.presentation.boundary = true;

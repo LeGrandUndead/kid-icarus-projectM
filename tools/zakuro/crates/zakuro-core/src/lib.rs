@@ -150,11 +150,6 @@ pub struct System {
     pub usage: Option<usage::Usage>,
     /// where the CPU's time goes, once a second (diagnostics)
     pub thread_time: Option<thread_time::ThreadTime>,
-    /// instructions recompiled code runs per guest cycle: 1 is the
-    /// console's pace, 2 a CPU twice as fast (as emulators' clock setting).
-    /// The 60 fps mode runs the game's main loop twice as often, which
-    /// leaves the threads loading the next area half the time they had.
-    pub cpu_boost: u32,
     /// the thread the current step runs, for thread_time
     step_thread: Option<kernel::thread::ThreadId>,
     /// instructions the interpreter ran for want of recompiled code, and
@@ -229,7 +224,6 @@ impl System {
             hints: None,
             usage: None,
             thread_time: None,
-            cpu_boost: 1,
             step_thread: None,
             interpreted_instructions: 0,
             recompiled_instructions: 0,
@@ -503,11 +497,7 @@ impl System {
         let linear_base = self.kernel.linear_base;
         // SAFETY: as in step, until the run is over
         unsafe { self.memory.set_gpu_sync(memory::GpuSync { gpu, linear_base, sync: sync_for_cpu, sync_write: sync_for_cpu_write }) };
-        // with a faster CPU (cpu_boost) a guest cycle holds more instructions
-        let boost = self.cpu_boost.max(1) as u64;
-        let before = self.cpu.cycles;
-        let (ran, stop) = library.run(&mut self.cpu, &mut self.memory, budget * boost);
-        if boost > 1 { self.cpu.cycles = before + ran.div_ceil(boost); }
+        let (ran, stop) = library.run(&mut self.cpu, &mut self.memory, budget);
         self.memory.clear_gpu_sync();
         self.recompiled_instructions += ran;
         if event.is_some_and(|tick| self.cpu.cycles >= tick) {
@@ -603,7 +593,7 @@ impl System {
     /// everything that happens between frames, vertical blank, input, clock.
     fn end_frame(&mut self) {
         self.frames += 1;
-        if let Some(time) = &mut self.thread_time { time.end_frame(self.frames, &self.kernel.threads, self.cpu_boost); }
+        if let Some(time) = &mut self.thread_time { time.end_frame(self.frames, &self.kernel.threads); }
         if let Some(usage) = &mut self.usage {
             usage.end_frame();
             if self.frames.is_multiple_of(hints::SAVE_EVERY) {

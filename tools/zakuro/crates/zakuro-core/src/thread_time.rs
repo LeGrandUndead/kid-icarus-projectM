@@ -42,12 +42,12 @@ impl ThreadTime {
     }
 
     /// After every emulated frame: a line each period.
-    pub fn end_frame(&mut self, frame: u64, threads: &[crate::kernel::thread::Thread], boost: u32) {
+    pub fn end_frame(&mut self, frame: u64, threads: &[crate::kernel::thread::Thread]) {
         self.frames += 1;
         if self.frames < PERIOD { return; }
         self.frames = 0;
         let total = (self.cycles.iter().sum::<u64>() + self.idle).max(1) as f64;
-        let mut line = format!("frame {frame}: cpu x{boost}, idle {:.0}%", self.idle as f64 * 100.0 / total);
+        let mut line = format!("frame {frame}: idle {:.0}%", self.idle as f64 * 100.0 / total);
         for (id, &cycles) in self.cycles.iter().enumerate() {
             let share = cycles as f64 * 100.0 / total;
             if share < 0.5 { continue; }
