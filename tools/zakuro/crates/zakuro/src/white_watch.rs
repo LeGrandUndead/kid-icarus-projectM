@@ -25,7 +25,8 @@ pub struct WhiteWatch {
 impl WhiteWatch {
     /// After each emulated frame.
     pub fn frame(&mut self, memory: &mut Memory, frame: u64) {
-        if zakuro_gpu::white_out::take_full() {
+        let Some(full) = zakuro_gpu::white_out::take_full() else { return };
+        if full {
             self.frames += 1;
             if self.frames == HOLD_FRAMES && self.held_since.is_none()
                 && zakuro_core::kiu_frame_rate::active_rate() == 60
