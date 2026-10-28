@@ -45,6 +45,21 @@ pub(super) struct Twins {
     pub(super) interpolator: Interpolator,
     /// frames ended with interpolation on.
     frames: u64,
+    /// what the frames since the last log line came to.
+    period: Period,
+}
+
+/// totals over the frames between two log lines.
+#[derive(Default)]
+struct Period {
+    frames: u32,
+    drawn: u32,
+    matched: u32,
+    jumped: u32,
+    cuts: u32,
+    /// twins overwritten by their surface, as guest memory changed under it:
+    /// the in-between picture of that surface is the real one then.
+    reloads: u32,
 }
 
 struct Twin {
@@ -97,16 +112,26 @@ impl Hardware {
     /// last swap is the one the next is blended with.
     pub(crate) fn end_frame(&mut self) {
         if self.twins.on {
-            // now and then, how well the frames matched, for the log
+            let counts = self.twins.interpolator.counts();
+            let cut = self.twins.interpolator.cut();
+            let period = &mut self.twins.period;
+            period.frames += 1;
+            period.drawn += counts.drawn;
+            period.matched += counts.matched;
+            period.jumped += counts.jumped;
+            period.cuts += cut as u32;
             self.twins.frames += 1;
-            if self.twins.frames % 600 == 1 {
-                let counts = self.twins.interpolator.counts();
+            if self.twins.frames % 600 == 0 {
+                let p = std::mem::take(&mut self.twins.period);
+                let per = |n: u32| n as f32 / p.frames.max(1) as f32;
                 log::info!(
-                    "in-between frame: {} draws with transforms, {} matched the frame before, {} jumped{}",
-                    counts.drawn,
-                    counts.matched,
-                    counts.jumped,
-                    if self.twins.interpolator.cut() { ", a cut" } else { "" }
+                    "in-between frames, last {}: {:.0} draws with transforms each, {:.0} blended, {:.1} jumped, {} cuts, {:.1} twins reloaded from memory",
+                    p.frames,
+                    per(p.drawn),
+                    per(p.matched - p.jumped),
+                    per(p.jumped),
+                    p.cuts,
+                    per(p.reloads)
                 );
             }
             self.twins.interpolator.end_frame();
@@ -204,6 +229,7 @@ impl Hardware {
     pub(super) fn twin_uploaded(&mut self, index: usize) {
         let Some(twin) = self.twin(index) else { return };
         let target = twin.image.image;
+        self.twins.period.reloads += 1;
         let surface = &self.surfaces[index];
         let size = (surface.width * self.scale, surface.height * self.scale);
         let aspect = match surface.kind {

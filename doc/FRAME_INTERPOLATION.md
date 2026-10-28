@@ -84,9 +84,11 @@ The frame boundary is the top screen's buffer swap (`Gpu::set_framebuffer`).
   and defaults to on. `KIU_INTERPOLATION=1/0` overrides it for one run, as
   do `launch.py --sixty-fps / --thirty-fps`. Fast-forward turns it off while
   it runs.
-- **Log:** every 600 frames the log shows the match counts, for example
-  `in-between frame: N draws with transforms, M matched the frame before, J
-  jumped`.
+- **Log:** every 600 frames the log sums up the last 600: draws with
+  transforms per frame, how many of them were blended, how many jumped,
+  how many frames were cuts, and how many twins were reloaded from guest
+  memory per frame (a surface whose memory the CPU or another buffer
+  changed; its in-between picture is the real one).
 - **Tests:** `cargo test -p zakuro-gpu --features vulkan` covers the shader
   analysis, the matching, and a draw end to end:
   `the_in_between_frame_draws_a_moving_quad_halfway`. In that test the twin
