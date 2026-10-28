@@ -1,5 +1,9 @@
 # 60 FPS analysis
 
+> Superseded, October 28: the 60 Hz logic mode this describes caused the
+> chapter 9 white screens and was removed. 60 FPS is now frame
+> interpolation, which leaves the game at 30: see `doc/FRAME_INTERPOLATION.md`.
+
 ## What controls the rates today
 
 **Simulation and presentation are both tied to the 3DS vertical blank.**

@@ -235,7 +235,7 @@ without touching the generated code.
 5. **GSP**: a thin layer in front of the renderer.
 6. **Audio (DSP HLE)**: self-contained but timing-sensitive.
 7. **Kernel scheduling and timing**: only once frame pacing is understood
-   (see [60FPS_ANALYSIS.md](60FPS_ANALYSIS.md)).
+   (see [history/60FPS_ANALYSIS.md](history/60FPS_ANALYSIS.md)).
 8. **The GPU emulation**: last. It stays the renderer of the KIU runtime
    for the foreseeable future.
 

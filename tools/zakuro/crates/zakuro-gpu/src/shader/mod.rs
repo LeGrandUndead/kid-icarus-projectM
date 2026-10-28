@@ -1,6 +1,7 @@
 //! the PICA200's shader units, which run both vertex and geometry shaders.
 
 pub mod isa;
+pub mod transforms;
 mod batch;
 #[cfg(feature = "vulkan")]
 pub(crate) mod glsl;

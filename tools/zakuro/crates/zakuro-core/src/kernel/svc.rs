@@ -32,7 +32,6 @@ fn invalid_handle(system: &mut System, handle: u32, what: &str) -> u32 {
 
 /// runs one supervisor call.
 pub fn dispatch(system: &mut System, number: u32) {
-    crate::kiu_frame_rate::observe_svc(system, number);
     if let Some(usage) = &mut system.usage {
         usage.svc(number);
         usage.wait_site(number, system.cpu.current_pc(), system.cpu.regs[14],

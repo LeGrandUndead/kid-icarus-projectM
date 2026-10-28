@@ -3,7 +3,6 @@
 
 pub mod cro;
 mod frame_probe;
-pub mod kiu_frame_rate;
 pub mod hints;
 pub mod kernel;
 pub mod loader;
@@ -115,6 +114,9 @@ pub struct System {
     /// the scaled picture each screen had at the last presentation, which
     /// goes up at the next, once the GPU had a frame's time to draw it.
     showing: [Option<zakuro_gpu::ScreenRef>; 2],
+    /// the top screen's last new picture and the frame it came at, for
+    /// showing its in-between picture first, see gpu_screen.
+    top_picture: Option<(zakuro_gpu::ScreenRef, u64)>,
     /// the dynamic module loader's state.
     pub cro: cro::CroManager,
     /// errors the title reported through err:f, newest last.
@@ -207,6 +209,7 @@ impl System {
             services_seen: BTreeSet::new(),
             lcd_force_black: false,
             showing: [None, None],
+            top_picture: None,
             cro: cro::CroManager::default(),
             fatal_errors: Vec::new(),
             undefined_seen: BTreeMap::new(),
@@ -814,7 +817,33 @@ impl System {
             return None;
         }
         let now = self.screen_ref(screen)?;
+        if screen == zakuro_common::Screen::Top {
+            if let Some(between) = self.in_between(now) {
+                return Some(between);
+            }
+        }
         self.gpu.screen_image(now)
+    }
+
+    /// with frame interpolation on, the refresh a new top-screen picture
+    /// arrives at shows the one drawn halfway between it and the last, and
+    /// the next refresh the picture itself. a game drawing every refresh
+    /// has nothing to show in between.
+    fn in_between(&mut self, now: zakuro_gpu::ScreenRef) -> Option<zakuro_gpu::GpuScreen> {
+        let frame = self.frames;
+        let last = self.top_picture.replace((now, frame));
+        if !self.gpu.interpolating() {
+            return None;
+        }
+        match last {
+            Some((before, _)) if before == now => {
+                // the same picture: shown in between last time, itself now
+                self.top_picture = last;
+                None
+            }
+            Some((_, at)) if frame - at >= 2 => self.gpu.in_between_image(now),
+            _ => None,
+        }
     }
 
     /// the picture the host's GPU drew scaled for a screen, when it is still

@@ -6,7 +6,7 @@ kept as the record of how the current build was reached.
 
 - [HUD asset reconstruction](PC_HUD_ASSET_RECONSTRUCTION.md): the HUD rebuilt from the ROM, methods and checks.
 - [Power state](POWER_STATE.md): where the equipped power lives in game memory.
-- Engine and runtime: [native coverage](NATIVE_COVERAGE.md), [performance baseline](PERFORMANCE_BASELINE.md), [60 FPS analysis](60FPS_ANALYSIS.md), [culling and pop-in](CULLING_AND_POP_IN.md), [Zakuro dependency census](ZAKURO_DEPENDENCY_CENSUS.md), [KIU Runtime v0](KIU_RUNTIME_V0.md).
+- Engine and runtime: [native coverage](NATIVE_COVERAGE.md), [performance baseline](PERFORMANCE_BASELINE.md), [60 FPS (frame interpolation)](FRAME_INTERPOLATION.md), [old 60 Hz logic analysis](history/60FPS_ANALYSIS.md), [culling and pop-in](CULLING_AND_POP_IN.md), [Zakuro dependency census](ZAKURO_DEPENDENCY_CENSUS.md), [KIU Runtime v0](KIU_RUNTIME_V0.md).
 - [Interpreted code](INTERPRETED.md): what still runs in the interpreter and how the library is rebuilt to cover it.
 
 - [Single-screen status](PC_SINGLE_SCREEN_STATUS.md): what currently works, what is still dual-screen, launchers and fallbacks.

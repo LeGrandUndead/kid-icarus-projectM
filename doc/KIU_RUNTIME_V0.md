@@ -50,7 +50,7 @@ PC (Windows, Vulkan, cpal, winit)
 2. Move the offline/boot stubs KIU needs into one `kiu` service profile, so
    the rest of Zakuro's service code can be ignored for this title.
 3. Put the frontend's frame loop behind a small trait (tick, present, audio,
-   input) so pacing experiments (see [60FPS_ANALYSIS.md](60FPS_ANALYSIS.md))
+   input) so pacing experiments (see [history/60FPS_ANALYSIS.md](history/60FPS_ANALYSIS.md))
    do not touch the core.
 4. Then filesystem/saves, input, Y2R and GSP, in the order of
    [ZAKURO_DEPENDENCY_CENSUS.md](ZAKURO_DEPENDENCY_CENSUS.md).

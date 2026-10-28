@@ -33,7 +33,7 @@ ORIGINAL_CACHE = ROOT / "build/user-data/local/zakuro/pipelines.bin"
 OWNED_ENV = (
     "KIU_TEXTURE_FILTER", "KIU_TEXTURE_PACK", "KIU_SINGLE_SCREEN", "KIU_NATIVE_DIALOGUE",
     "KIU_GAMEPLAY_CAMERA_SCALE", "KIU_NATIVE_UI", "KIU_NATIVE_HUD", "KIU_UI_CENSUS",
-    "KIU_RAM_SNAPSHOT", "KIU_HUD_PACK", "KIU_60FPS", "KIU_PROJECTION_TRACE", "KIU_EXPERIMENTAL_HUD",
+    "KIU_RAM_SNAPSHOT", "KIU_HUD_PACK", "KIU_INTERPOLATION", "KIU_PROJECTION_TRACE", "KIU_EXPERIMENTAL_HUD",
     "KIU_RENDER_CAPTURE_WAIT", "KIU_DRAW_FRAME", "KIU_DRAW_CAPTURE", "KIU_DIAGNOSTIC_IGNORE_DEPTH",
     "KIU_EXPERIMENTAL_AIR", "KIU_EXPERIMENTAL_WIDE", "KIU_PC_DISPLAY", "KIU_PC_CONTROLS",
     "KIU_INPUT_TRACE", "KIU_MOUSE_MODEL", "KIU_CONTROL_PROFILE", "KIU_MOUSE_ACCELERATION",
@@ -91,7 +91,7 @@ def arguments():
     look.add_argument("--scale", type=int)
     look.add_argument("--display", choices=("1080p",), default="1080p", help="kept for old shortcuts; the PC interface is always 1080p")
     rate = look.add_mutually_exclusive_group()
-    rate.add_argument("--sixty-fps", action="store_true", help="60 FPS mode for this run (Settings > Graphics keeps the saved choice)")
+    rate.add_argument("--sixty-fps", action="store_true", help="in-between frames (60 FPS) for this run (Settings > Graphics keeps the saved choice)")
     rate.add_argument("--thirty-fps", action="store_true", help="original 30 FPS for this run")
 
     controls = ap.add_argument_group("controls")
@@ -171,8 +171,8 @@ def main() -> int:
     if args.texture_pack: env["KIU_TEXTURE_PACK"] = str(args.texture_pack.resolve())
     if not args.original_hud_sampling: env["KIU_EXPERIMENTAL_HUD"] = "1"
     if not args.original_aspect: env["KIU_EXPERIMENTAL_WIDE"] = "1"
-    if args.sixty_fps: env["KIU_60FPS"] = "1"
-    if args.thirty_fps: env["KIU_60FPS"] = "0"
+    if args.sixty_fps: env["KIU_INTERPOLATION"] = "1"
+    if args.thirty_fps: env["KIU_INTERPOLATION"] = "0"
 
     # the profile: settings, pipeline cache, saves (copied once from the
     # normal ones, never written back)

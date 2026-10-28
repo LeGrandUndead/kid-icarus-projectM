@@ -5266,4 +5266,99 @@ mod tests {
             assert!(pictures[0] == pictures[1], "at {scale}x");
         }
     }
+
+    /// with frame interpolation on, a quad the game moves from one side to
+    /// the other between two frames is drawn in the middle in the picture
+    /// shown in between, exactly as if it had been drawn there, while the
+    /// frame itself, its fills and transfer included, stays as without.
+    #[cfg(feature = "vulkan")]
+    #[test]
+    fn the_in_between_frame_draws_a_moving_quad_halfway() {
+        use crate::format::ColorFormat::Rgba8;
+        const OUTPUT: u32 = 0x10_0000;
+        const ID: u32 = 0x1B << 5 | 0x1B << 14;
+        let size = TRANSLATION_SIZE;
+        let Ok(device) = hardware::own_device() else { return };
+        let device = std::sync::Arc::new(device);
+        let registers = translation_registers();
+        // dp4 o0.x..w, c0..c3, v0 then mov o2, v1
+        let mut unit = ShaderUnit::new();
+        for (i, mask) in [0b1000, 0b0100, 0b0010, 0b0001, 0b1111].into_iter().enumerate() {
+            unit.descriptors[i] = mask | ID;
+        }
+        let program = [
+            0x02 << 26 | 0x20 << 12,
+            0x02 << 26 | 0x21 << 12 | 1,
+            0x02 << 26 | 0x22 << 12 | 2,
+            0x02 << 26 | 0x23 << 12 | 3,
+            0x13 << 26 | 2 << 21 | 1 << 12 | 4,
+            0x22 << 26,
+        ];
+        unit.program[..program.len()].copy_from_slice(&program);
+        let corner = |x: f32, y: f32| {
+            let mut input = [shader::ZERO; shader::INPUT_REGISTERS];
+            input[0] = [x, y, -0.5, 1.0];
+            input[1] = [1.0, 1.0, 1.0, 1.0];
+            input
+        };
+        let quad = [corner(-0.2, -0.2), corner(0.2, -0.2), corner(0.2, 0.2), corner(-0.2, -0.2), corner(0.2, 0.2), corner(-0.2, 0.2)];
+        let transfer = hardware::Transfer {
+            input: COLOR,
+            output: OUTPUT,
+            input_width: size,
+            input_height: size,
+            output_width: size,
+            output_height: size,
+            copy: (size, size),
+            scale: (1, 1),
+            flip: false,
+            input_linear: false,
+            output_tiled: false,
+            input_format: Rgba8,
+            output_format: Rgba8,
+        };
+        let bytes = (size * size * 4) as usize;
+        // a frame: cleared, the quad at x, sent to the screen's buffer
+        let frame = |resources: &mut Resources, memory: &mut ConsoleMemory, unit: &mut ShaderUnit, x: f32| {
+            let hardware = resources.hardware.as_mut().unwrap();
+            memory.write(COLOR, &vec![0u8; bytes]);
+            hardware.filled(COLOR, &vec![0u8; bytes]).unwrap();
+            memory.write(DEPTH, &vec![0xFFu8; bytes]);
+            hardware.filled(DEPTH, &vec![0xFFu8; bytes]).unwrap();
+            unit.float_uniforms[0] = [1.0, 0.0, 0.0, x];
+            unit.float_uniforms[1] = [0.0, 1.0, 0.0, 0.0];
+            unit.float_uniforms[2] = [0.0, 0.0, 1.0, 0.0];
+            unit.float_uniforms[3] = [0.0, 0.0, 0.0, 1.0];
+            let vertices = Vertices::Unshaded { vertex_shader: unit, geometry_shader: unit, inputs: &quad, order: None };
+            rasterize(&registers, memory, resources, vertices);
+            let hardware = resources.hardware.as_mut().unwrap();
+            assert!(hardware.display_transfer(memory, &transfer).unwrap());
+            hardware.screen(OUTPUT, (size, size), size, Rgba8, &[]).expect("drawn on the GPU")
+        };
+        // what the quad looks like drawn at x, interpolation off
+        let picture = |x: f32| {
+            let hardware = hardware::Hardware::with_device(device.clone(), true).unwrap();
+            let mut resources = Resources { hardware: Some(hardware), ..Default::default() };
+            let mut memory = ConsoleMemory::default();
+            let mut unit = unit.clone();
+            let screen = frame(&mut resources, &mut memory, &mut unit, x);
+            resources.hardware.as_mut().unwrap().upright_pixels(screen).unwrap().0
+        };
+        let (left, middle, right) = (picture(-0.4), picture(0.0), picture(0.4));
+        assert!(left != middle && middle != right, "the quad moves");
+
+        let mut hardware = hardware::Hardware::with_device(device.clone(), true).unwrap();
+        hardware.set_interpolation(true);
+        assert!(hardware.interpolating());
+        let mut resources = Resources { hardware: Some(hardware), ..Default::default() };
+        let mut memory = ConsoleMemory::default();
+        let mut unit = unit.clone();
+        frame(&mut resources, &mut memory, &mut unit, -0.4);
+        resources.hardware.as_mut().unwrap().end_frame();
+        let screen = frame(&mut resources, &mut memory, &mut unit, 0.4);
+        let hardware = resources.hardware.as_mut().unwrap();
+        assert!(hardware.twin_screen_image(screen).unwrap().is_some(), "an in-between picture to show");
+        assert!(hardware.upright_pixels(screen).unwrap().0 == right, "the frame itself as without");
+        assert!(hardware.twin_upright_pixels(screen).unwrap().0 == middle, "the quad halfway in between");
+    }
 }

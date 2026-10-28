@@ -671,7 +671,7 @@ impl App {
             audio.clear();
         }
         self.menus.fast_forward = false;
-        zakuro_core::kiu_frame_rate::set_fast_forward(false);
+        zakuro_gpu::interpolation::set_fast_forward(false);
         self.menus.menu_open = false;
         self.set_mouse_capture(false);
         self.keyboard.release();
@@ -1215,7 +1215,7 @@ impl App {
     /// draw), no sound, frames run back to back.
     fn set_fast_forward(&mut self, on: bool) {
         self.menus.fast_forward = on;
-        zakuro_core::kiu_frame_rate::set_fast_forward(on);
+        zakuro_gpu::interpolation::set_fast_forward(on);
         if let Some(audio) = &self.audio {
             audio.clear();
         }
