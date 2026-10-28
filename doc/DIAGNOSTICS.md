@@ -52,8 +52,7 @@ sections already beaten.
 
 ## Render capture
 
-`launch.py --render-capture` (or `Capture-Grind-Rail.cmd`, which is
-`Launch-KIU.cmd --render-capture`) writes to
+`Capture-Render.cmd` (rebuilds, then `Launch-KIU.cmd --render-capture`) writes to
 `build/texture-traces/<date>/`:
 
 - `texture-states.csv`: every texture state used (address, size, format,

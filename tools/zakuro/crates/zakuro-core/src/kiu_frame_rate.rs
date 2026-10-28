@@ -91,8 +91,22 @@ fn signatures(system: &mut System) -> bool {
 }
 
 /// called at the two GetSystemTick calls around the scheduler's callback,
+/// Every supervisor call: the display scheduler's two svcGetSystemTick
+/// calls (0x00991164 before its callback, 0x009911CC after) are where the
+/// mode is applied. current_pc() is one instruction behind the SVC.
+pub(crate) fn observe_svc(system: &mut System, number: u32) {
+    if number != 0x28 {
+        return;
+    }
+    match system.cpu.current_pc() {
+        0x0099_1160 => at_scheduler(system, true),
+        0x0099_11C8 => at_scheduler(system, false),
+        _ => {}
+    }
+}
+
 /// `pre` for the one before (0x00991164), else the one after (0x009911CC).
-pub(crate) fn at_scheduler(system: &mut System, pre: bool) {
+fn at_scheduler(system: &mut System, pre: bool) {
     static CHECKED: OnceLock<()> = OnceLock::new();
     static VALID: AtomicBool = AtomicBool::new(false);
     if CHECKED.get().is_none() {

@@ -8,8 +8,8 @@ shows the interpreted share.
 
 ## Play
 
-Double-click **`Launch-KIU.cmd`**. It starts the single-screen PC interface
-build (`zakuro-pc-interface.exe`) at 1080p with PC controls:
+Double-click **`Launch-KIU.cmd`**. It starts the PC interface runtime
+(`zakuro-pc-interface.exe`) at 1080p with PC controls:
 
 - one view: the game's portraits above the subtitles, lower-screen pictures
   top center, special orbs / Power Palette under the health bar, intensity and
@@ -31,6 +31,8 @@ own and is never modified.
 | Path | What |
 |---|---|
 | `Launch-KIU.cmd` | the launcher |
+| `Build-And-Run.cmd` | rebuilds the runtime, then starts the game |
+| `Capture-Render.cmd` | rebuilds, then starts a render capture session (F8) |
 | `build/kiu-aot-o2` | the compiled game library (local, from your ROM) |
 | `build/native-ui`, `build/texture-work` | UI catalog and HUD art sources/pack (local) |
 | `build/user-data` | saves and settings (local) |
@@ -50,11 +52,18 @@ are ignored by git.
   ([details](doc/PC_HUD_ASSET_RECONSTRUCTION.md)).
 - UI sources: `python tools/recomp/prepare_native_ui_sources.py` and
   `tools/recomp/prepare_dialogue_sources.ps1`.
-- Runtime: `cargo build --release -p zakuro --bin zakuro-pc-interface` in
-  `tools/zakuro` (runtime changes are also kept as
-  `tools/recomp/patches/kiu-pc-runtime.patch`).
+- Runtime: `Build-And-Run.cmd`, or `cargo build --release -p zakuro --bin
+  zakuro-pc-interface` in `tools/zakuro`.
 - Recompile with the places still interpreted: `tools/recomp/Rebuild-KIU-With-Hints.ps1`
   ([details](doc/INTERPRETED.md)).
+
+## Cleanup (October 28)
+
+One runtime executable (`zakuro-pc-interface.exe`) and one launcher; the
+experimental, single-screen and dialogue-preview executables were the same
+program under other names and are gone, with the 60 fps research hooks and
+the stale runtime patch file (all in git history). Old one-off scripts and
+build leftovers moved to `archive/2026-10-28-cleanup` on the PC.
 
 ## Cleanup (October 16)
 

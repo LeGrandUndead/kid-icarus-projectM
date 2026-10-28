@@ -28,5 +28,5 @@ documents remain in this directory unchanged.
 
 Use the root launcher. Do not reapply patch packs from `archive` to the live source.
 The combined current runtime changes are saved in
-`tools/recomp/patches/kiu-pc-runtime.patch`; older patch packs and the Python tests were
+git history (the runtime patch file was retired on October 28); older patch packs and the Python tests were
 retired on October 16 and stay in git history.
