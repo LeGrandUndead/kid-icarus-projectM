@@ -73,14 +73,6 @@ pub fn set_fast_forward(on: bool) {
     FAST_FORWARD.store(on, Ordering::Relaxed);
 }
 
-/// while on, the game runs at 30 fps, set by the runtime itself (the
-/// white-out experiment, zakuro::white_watch); the setting is kept.
-static HELD: AtomicBool = AtomicBool::new(false);
-
-pub fn set_held_at_30(on: bool) {
-    HELD.store(on, Ordering::Relaxed);
-}
-
 /// what the game is doing now: 0 not known yet, 30 or 60.
 static ACTIVE: AtomicU8 = AtomicU8::new(0);
 
@@ -126,7 +118,7 @@ pub(crate) fn at_scheduler(system: &mut System, pre: bool) {
         return;
     }
     let interval = system.memory.read32(manager + 0x54);
-    let want = enabled() && !FAST_FORWARD.load(Ordering::Relaxed) && !HELD.load(Ordering::Relaxed);
+    let want = enabled() && !FAST_FORWARD.load(Ordering::Relaxed);
 
     if !pre {
         // the display wait rounds elapsed ticks back to its even count:

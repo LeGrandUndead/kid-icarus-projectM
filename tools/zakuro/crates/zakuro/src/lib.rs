@@ -1271,7 +1271,7 @@ impl App {
         zakuro_gpu::kiu_ui::begin_frame();
         zakuro_gpu::diagnostic_frame(game.frame);
         let outcome = game.system.run_frame();
-        self.white_watch.frame(&mut game.system.memory, game.frame);
+        self.white_watch.frame(&mut game.system, game.frame);
         let scene = zakuro_gpu::kiu_ui::end_frame();
         self.top_menu.update(&scene, game.frame);
         let land = game.system.memory.kiu_land_publications();
