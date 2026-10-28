@@ -18,10 +18,18 @@ const REPORT_FRAMES: u32 = 120;
 /// Frames between reports while it lasts (5 s).
 const REPORT_EVERY: u32 = 300;
 
+/// Frames one rolling copy of the game memory takes.
+const PASS_FRAMES: u32 = 64;
+
 #[derive(Default)]
 pub struct WhiteWatch {
     /// game-drawn frames in a row with the full-white layer
     frames: u32,
+    /// copies of the game memory made while no white was up, the newest
+    /// last: one from before the white began is saved beside the one taken
+    /// during it, to compare (what the fade waits on changes between them)
+    rolling: crate::ram_snapshot::Rolling,
+    passes: std::collections::VecDeque<(u64, Vec<(u32, Box<[u8]>)>)>,
 }
 
 impl WhiteWatch {
@@ -29,11 +37,26 @@ impl WhiteWatch {
     /// `input`: what the PC controls are doing (mouse capture, touch held).
     pub fn frame(&mut self, system: &mut System, frame: u64, input: &str) {
         let Some(full) = zakuro_gpu::white_out::take_full() else { return };
+        if !full {
+            if let Some(pass) = self.rolling.step(&mut system.memory, frame, PASS_FRAMES) {
+                self.passes.push_back(pass);
+                if self.passes.len() > 3 { self.passes.pop_front(); }
+            }
+        }
         if full {
+            if self.frames == 0 {
+                // a copy half made before the white would mix two moments
+                self.rolling = Default::default();
+            }
             self.frames += 1;
             if self.frames == REPORT_FRAMES {
                 log::warn!("white-out held {} frames (frame {frame}): see build/diagnostics/white-out.log", self.frames);
                 crate::ram_snapshot::save_in(&mut system.memory, frame, &folder());
+                // the newest copy: copies stop while the white is up, so it
+                // was made, whole, before the white began
+                if let Some((at, pages)) = self.passes.back() {
+                    crate::ram_snapshot::save_pages(pages.iter().map(|(a, p)| (*a, &p[..])), *at, &folder(), "ram-before");
+                }
             }
             if self.frames >= REPORT_FRAMES && (self.frames - REPORT_FRAMES).is_multiple_of(REPORT_EVERY) {
                 report(system, frame, &format!("white for {} frames; {input}", self.frames));

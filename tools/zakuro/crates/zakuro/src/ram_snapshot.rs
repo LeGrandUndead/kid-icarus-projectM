@@ -33,6 +33,69 @@ pub fn save(memory: &mut Memory, frame: u64) {
     }
 }
 
+/// Saves pages kept earlier (address, page) as a snapshot of that frame.
+pub fn save_pages<'a>(pages: impl Iterator<Item = (u32, &'a [u8])>, frame: u64, folder: &std::path::Path, name: &str) {
+    let _ = std::fs::create_dir_all(folder);
+    let path = folder.join(format!("{name}-{frame:08}.bin"));
+    let result = (|| -> std::io::Result<usize> {
+        let mut out = std::io::BufWriter::new(std::fs::File::create(&path)?);
+        out.write_all(b"KIURAM1\0")?;
+        out.write_all(&frame.to_le_bytes())?;
+        let mut written = 0;
+        for (address, page) in pages {
+            out.write_all(&address.to_le_bytes())?;
+            out.write_all(page)?;
+            written += 1;
+        }
+        out.flush()?;
+        Ok(written)
+    })();
+    match result {
+        Ok(pages) => log::warn!("RAM snapshot: {} ({pages} pages)", path.display()),
+        Err(error) => log::warn!("RAM snapshot failed: {error}"),
+    }
+}
+
+/// Copies the game memory a few pages at a time, so a whole copy is always
+/// at hand without stopping a frame for it: each call takes the next slice
+/// of the address space; when a pass ends it is returned whole.
+#[derive(Default)]
+pub struct Rolling {
+    cursor: u32,
+    started: u64,
+    pages: Vec<(u32, Box<[u8]>)>,
+}
+
+impl Rolling {
+    /// One frame's share (a pass takes `frames` frames); Some(first frame of
+    /// the pass, its pages) when a pass is complete.
+    pub fn step(&mut self, memory: &mut Memory, frame: u64, frames: u32) -> Option<(u64, Vec<(u32, Box<[u8]>)>)> {
+        if self.cursor == 0 && self.pages.is_empty() {
+            self.started = frame;
+        }
+        let per_frame = (0x10_0000 / frames.max(1)).max(1);
+        let mut page = vec![0u8; PAGE as usize];
+        for _ in 0..per_frame {
+            let address = self.cursor;
+            let skipped = SKIP.iter().any(|&(lo, hi)| address >= lo && address < hi);
+            if !skipped && memory.is_readable(address, PAGE) {
+                memory.read_bytes(address, &mut page);
+                if page.iter().any(|&b| b != 0) {
+                    self.pages.push((address, page.clone().into_boxed_slice()));
+                }
+            }
+            match address.checked_add(PAGE) {
+                Some(next) => self.cursor = next,
+                None => {
+                    self.cursor = 0;
+                    return Some((self.started, std::mem::take(&mut self.pages)));
+                }
+            }
+        }
+        None
+    }
+}
+
 fn write(memory: &mut Memory, frame: u64, path: &std::path::Path) -> std::io::Result<usize> {
     let mut out = std::io::BufWriter::new(std::fs::File::create(path)?);
     out.write_all(b"KIURAM1\0")?;
