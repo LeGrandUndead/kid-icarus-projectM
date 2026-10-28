@@ -96,14 +96,9 @@ def arguments():
 
     controls = ap.add_argument_group("controls")
     controls.add_argument("--legacy-controls", action="store_true", help="no PC control layer")
-    # The relative camera and flight aim work by writing into the game's own
-    # camera memory every frame. They are opt-in until the chapter 9 white
-    # screen is cleared of them (October 28): the default writes nothing into
-    # game state, it only presses the game's own inputs.
-    controls.add_argument("--relative-camera", action="store_true", default=False, help="experimental: direct relative mouse for the land camera (writes the game's camera memory)")
-    controls.add_argument("--original-land-camera", dest="relative_camera", action="store_false", help="bounded land camera (the default)")
-    controls.add_argument("--relative-flight-aim", dest="original_flight_aim", action="store_false", default=True, help="experimental: relative flight aim (writes the game's camera memory)")
-    controls.add_argument("--original-flight-aim", dest="original_flight_aim", action="store_true", help="bounded flight aim (the default)")
+    controls.add_argument("--relative-camera", action="store_true", default=True, help="direct relative mouse for the land camera (default)")
+    controls.add_argument("--original-land-camera", dest="relative_camera", action="store_false", help="bounded land camera, other PC controls kept")
+    controls.add_argument("--original-flight-aim", action="store_true", help="bounded flight aim instead of relative")
     controls.add_argument("--mouse-sensitivity", type=float, default=0.55)
     controls.add_argument("--walk-strength", type=float, default=0.60, help="Alt+WASD analog strength")
 
