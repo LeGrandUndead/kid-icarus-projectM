@@ -20,6 +20,7 @@ pub mod shader;
 pub mod stats;
 pub mod profile;
 pub mod tev;
+pub mod white_out;
 pub mod texture;
 
 use format::ColorFormat;

@@ -15,6 +15,7 @@ mod pc_presentation;
 mod ram_snapshot;
 mod kiu_jump;
 mod top_menus;
+mod white_watch;
 mod recompile;
 mod report;
 mod settings;
@@ -121,6 +122,7 @@ pub fn run(linked: Option<Linked>) {
         land_seen: None,
         space_jump: kiu_jump::SpaceJump::default(),
         top_menu: top_menus::Shown::default(),
+        white_watch: white_watch::WhiteWatch::default(),
         tap: top_menus::Tap::default(),
         released_for_menu: false,
     };
@@ -390,6 +392,8 @@ struct App {
     space_jump: kiu_jump::SpaceJump,
     /// the game's menu answered from the top screen now (top_menus)
     top_menu: top_menus::Shown,
+    /// the chapter 9 white-out experiment
+    white_watch: white_watch::WhiteWatch,
     /// a touch the top-screen buttons asked for, given over a few frames
     tap: top_menus::Tap,
     /// the mouse was let go for a top-screen menu, to take back for play
@@ -1267,6 +1271,7 @@ impl App {
         zakuro_gpu::kiu_ui::begin_frame();
         zakuro_gpu::diagnostic_frame(game.frame);
         let outcome = game.system.run_frame();
+        self.white_watch.frame(&mut game.system.memory, game.frame);
         let scene = zakuro_gpu::kiu_ui::end_frame();
         self.top_menu.update(&scene, game.frame);
         let land = game.system.memory.kiu_land_publications();

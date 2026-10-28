@@ -2542,6 +2542,7 @@ fn assemble(topology: u32, count: usize) -> Vec<(usize, usize, usize)> {
 /// CPU decodes then.
 fn rasterize<M: GpuMemory>(registers: &[u32], memory: &mut M, resources: &mut Resources, vertices: Vertices) -> Option<u32> {
     crate::diagnostics::draw(registers);
+    crate::white_out::draw(registers);
     let vertex_count = vertices.len();
     // the offset is two signed 10-bit fields.
     let signed10 = |value: u32| (((value & 0x3FF) << 22) as i32 >> 22) as f32;

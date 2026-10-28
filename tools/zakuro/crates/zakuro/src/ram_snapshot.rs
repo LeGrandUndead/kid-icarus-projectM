@@ -13,6 +13,16 @@ const PAGE: u32 = 0x1000;
 /// VRAM and the GPU/DSP windows hold pictures, not game state.
 const SKIP: [(u32, u32); 2] = [(0x1F00_0000, 0x1F60_0000), (0x1FF0_0000, 0x2000_0000)];
 
+/// Saves a snapshot into a folder named by the runtime itself.
+pub fn save_in(memory: &mut Memory, frame: u64, folder: &std::path::Path) {
+    let _ = std::fs::create_dir_all(folder);
+    let path = folder.join(format!("ram-{frame:08}.bin"));
+    match write(memory, frame, &path) {
+        Ok(pages) => log::warn!("RAM snapshot: {} ({pages} pages)", path.display()),
+        Err(error) => log::warn!("RAM snapshot failed: {error}"),
+    }
+}
+
 pub fn save(memory: &mut Memory, frame: u64) {
     let Some(folder) = std::env::var_os("KIU_RAM_SNAPSHOT").map(std::path::PathBuf::from) else { return };
     let _ = std::fs::create_dir_all(&folder);
