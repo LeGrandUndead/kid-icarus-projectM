@@ -123,6 +123,7 @@ pub fn run(linked: Option<Linked>) {
         space_jump: kiu_jump::SpaceJump::default(),
         top_menu: top_menus::Shown::default(),
         white_watch: white_watch::WhiteWatch::default(),
+        present_failures: 0,
         tap: top_menus::Tap::default(),
         released_for_menu: false,
     };
@@ -394,6 +395,8 @@ struct App {
     top_menu: top_menus::Shown,
     /// the chapter 9 white-out experiment
     white_watch: white_watch::WhiteWatch,
+    /// frames in a row the presenter could not show
+    present_failures: u32,
     /// a touch the top-screen buttons asked for, given over a few frames
     tap: top_menus::Tap,
     /// the mouse was let go for a top-screen menu, to take back for play
@@ -1408,10 +1411,19 @@ impl App {
             &overlay,
         );
         match result {
-            Ok(()) | Err(PresentError::OutOfDate) => {}
+            Ok(()) | Err(PresentError::OutOfDate) => self.present_failures = 0,
+            // one frame not shown is not worth ending the game over (an
+            // overlay allocation, a busy swapchain): skip it, and give up
+            // only when frames keep failing for two seconds
             Err(error) => {
-                log::error!("presentation failed: {error}");
-                event_loop.exit();
+                self.present_failures += 1;
+                if self.present_failures == 1 {
+                    log::error!("presentation failed: {error} (frame skipped)");
+                }
+                if self.present_failures >= 120 {
+                    log::error!("presentation failed {} frames in a row: {error}; closing", self.present_failures);
+                    event_loop.exit();
+                }
             }
         }
     }
