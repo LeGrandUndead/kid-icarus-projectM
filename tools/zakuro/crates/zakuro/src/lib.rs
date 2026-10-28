@@ -14,6 +14,7 @@ mod present;
 mod pc_presentation;
 mod ram_snapshot;
 mod kiu_jump;
+mod rom_prefetch;
 mod top_menus;
 mod white_watch;
 mod recompile;
@@ -630,6 +631,9 @@ impl App {
             None => None,
         };
         let system = loader::load(path, config).map_err(|error| format!("could not open {}, {error}", path.display()))?;
+        if path.is_file() {
+            rom_prefetch::start(path.to_owned());
+        }
         let name = self
             .library
             .games
