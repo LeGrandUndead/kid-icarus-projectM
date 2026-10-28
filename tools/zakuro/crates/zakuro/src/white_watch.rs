@@ -26,7 +26,8 @@ pub struct WhiteWatch {
 
 impl WhiteWatch {
     /// After each emulated frame.
-    pub fn frame(&mut self, system: &mut System, frame: u64) {
+    /// `input`: what the PC controls are doing (mouse capture, touch held).
+    pub fn frame(&mut self, system: &mut System, frame: u64, input: &str) {
         let Some(full) = zakuro_gpu::white_out::take_full() else { return };
         if full {
             self.frames += 1;
@@ -35,12 +36,12 @@ impl WhiteWatch {
                 crate::ram_snapshot::save_in(&mut system.memory, frame, &folder());
             }
             if self.frames >= REPORT_FRAMES && (self.frames - REPORT_FRAMES).is_multiple_of(REPORT_EVERY) {
-                report(system, frame, &format!("white for {} frames", self.frames));
+                report(system, frame, &format!("white for {} frames; {input}", self.frames));
             }
         } else {
             if self.frames >= REPORT_FRAMES {
                 log::warn!("white-out ended at frame {frame} after {} frames", self.frames);
-                report(system, frame, &format!("white ended after {} frames", self.frames));
+                report(system, frame, &format!("white ended after {} frames; {input}", self.frames));
                 crate::ram_snapshot::save_in(&mut system.memory, frame, &folder());
             } else if self.frames >= 30 {
                 log::info!("white-out of {} frames", self.frames);
