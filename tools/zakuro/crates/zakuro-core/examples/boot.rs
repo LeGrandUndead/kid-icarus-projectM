@@ -130,22 +130,9 @@ pub fn main() {
     let snapshot_at: BTreeSet<u64> = std::env::var("KIU_RAM_SNAPSHOT_AT")
         .map(|spec| spec.split(',').filter_map(|f| f.trim().parse().ok()).collect())
         .unwrap_or_default();
-    // research: the writes recompiled code makes over ranges, from a vblank
-    // on, to watch-writes.csv, KIU_WATCH_WRITES=08123450:8,0812F000
-    // KIU_WATCH_FROM=6000.
-    let watches: Vec<(u32, u32)> = std::env::var("KIU_WATCH_WRITES")
-        .map(|spec| spec.split(',').filter_map(|w| {
-            let (addr, len) = w.trim().split_once(':').unwrap_or((w.trim(), "4"));
-            Some((u32::from_str_radix(addr.trim_start_matches("0x"), 16).ok()?, len.parse().ok()?))
-        }).collect())
-        .unwrap_or_default();
-    let watch_from: u64 = std::env::var("KIU_WATCH_FROM").ok().and_then(|f| f.parse().ok()).unwrap_or(0);
-    let mut watch_out = (!watches.is_empty()).then(|| {
-        let mut out = std::io::BufWriter::new(std::fs::File::create("watch-writes.csv").expect("watch-writes.csv"));
-        use std::io::Write;
-        let _ = writeln!(out, "frame,address,value,size,pc,lr");
-        out
-    });
+    // research: who writes chosen memory is the runtime's own watch trace,
+    // KIU_WATCH=E14600:1200 (zakuro-core/src/watch_trace.rs), written to
+    // build/diagnostics/watch-trace.txt under the current folder.
     for frame in 0..frames {
         if profile_from == Some(frame) {
             system.enable_profiler();
@@ -207,18 +194,6 @@ pub fn main() {
         // A headless probe has no presenter to drain optional portrait uploads.
         let _ = zakuro_gpu::kiu_ui::overlay(1920,1080,false);
         executed = frame + 1;
-        if let Some(out) = &mut watch_out {
-            use std::io::Write;
-            if executed == watch_from.max(1) {
-                for &(addr, len) in &watches {
-                    system.memory.watch_cpu_writes(addr, len);
-                }
-                println!("watching writes to {} range(s) from vblank {executed}", watches.len());
-            }
-            for hit in system.memory.watch_hits.drain(..) {
-                let _ = writeln!(out, "{executed},{:08X},{:08X},{},{:08X},{:08X}", hit.address, hit.value, hit.size, hit.pc, hit.lr);
-            }
-        }
         if snapshot_at.contains(&executed) {
             match write_snapshot(&mut system.memory, executed) {
                 Ok(pages) => println!("RAM snapshot at {executed}: {pages} pages"),

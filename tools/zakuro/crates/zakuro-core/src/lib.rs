@@ -6,6 +6,7 @@ mod frame_probe;
 mod kiu_frame_interval;
 pub mod kiu_frame_rate;
 pub mod kiu_warp_fade;
+pub mod watch_trace;
 pub mod hints;
 pub mod kernel;
 pub mod loader;
@@ -100,6 +101,9 @@ pub struct System {
     /// Kid Icarus: Uprising's warp scripts cut off before they fade back
     /// in (60 FPS mode), see kiu_warp_fade.rs.
     warp_fade: kiu_warp_fade::WarpFade,
+    /// research: who writes the memory build/diagnostics/watch.txt names,
+    /// see watch_trace.rs. made at the first frame.
+    watch_trace: Option<Option<watch_trace::WatchTrace>>,
     pub cpu: Cpu,
     pub memory: Memory,
     pub kernel: Kernel,
@@ -208,6 +212,7 @@ impl System {
             lcd_force_black: false,
             showing: [None, None],
             warp_fade: kiu_warp_fade::WarpFade::default(),
+            watch_trace: None,
             cro: cro::CroManager::default(),
             fatal_errors: Vec::new(),
             undefined_seen: BTreeMap::new(),
@@ -587,8 +592,20 @@ impl System {
     /// everything that happens between frames, vertical blank, input, clock.
     fn end_frame(&mut self) {
         self.frames += 1;
+        // the frame's watched writes, for whoever watches
+        let hits = std::mem::take(&mut self.memory.watch_hits);
+        if self.watch_trace.is_none() {
+            let trace = watch_trace::WatchTrace::open();
+            if let Some(trace) = &trace {
+                trace.arm(&mut self.memory);
+            }
+            self.watch_trace = Some(trace);
+        }
+        if let Some(Some(trace)) = &mut self.watch_trace {
+            trace.frame(&hits, self.frames);
+        }
         if self.kernel.program_id == 0x0004000000030100 {
-            self.warp_fade.frame(&mut self.memory, self.frames);
+            self.warp_fade.frame(&mut self.memory, self.frames, &hits);
         }
         if let Some(usage) = &mut self.usage {
             usage.end_frame();

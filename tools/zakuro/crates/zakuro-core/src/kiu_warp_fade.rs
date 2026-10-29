@@ -131,10 +131,9 @@ pub struct WarpFade {
 }
 
 impl WarpFade {
-    /// after each frame.
-    pub fn frame(&mut self, memory: &mut Memory, frame: u64) {
-        let hits: Vec<WatchHit> = memory.watch_hits.drain(..).collect();
-        for hit in &hits {
+    /// after each frame, with the frame's watched writes.
+    pub fn frame(&mut self, memory: &mut Memory, frame: u64, hits: &[WatchHit]) {
+        for hit in hits {
             self.hit(memory, frame, hit);
         }
         self.watch(memory);
