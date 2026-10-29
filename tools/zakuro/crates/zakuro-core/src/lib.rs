@@ -3,6 +3,8 @@
 
 pub mod cro;
 mod frame_probe;
+mod kiu_frame_interval;
+pub mod kiu_frame_rate;
 pub mod hints;
 pub mod kernel;
 pub mod loader;
@@ -11,7 +13,6 @@ pub mod replay;
 pub mod recompiled;
 pub mod services;
 pub mod usage;
-pub mod thread_time;
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -114,14 +115,6 @@ pub struct System {
     /// the scaled picture each screen had at the last presentation, which
     /// goes up at the next, once the GPU had a frame's time to draw it.
     showing: [Option<zakuro_gpu::ScreenRef>; 2],
-    /// the top screen's last new picture and the frame it came at, for
-    /// showing its in-between picture first, see gpu_screen.
-    top_picture: Option<(zakuro_gpu::ScreenRef, u64)>,
-    /// how the refreshes with interpolation on went, for the log: a new
-    /// picture two or more refreshes after the last (an in-between one is
-    /// asked for), one the very next refresh (the game drawing every
-    /// refresh), and the same picture again.
-    refreshes: [u32; 3],
     /// the dynamic module loader's state.
     pub cro: cro::CroManager,
     /// errors the title reported through err:f, newest last.
@@ -154,10 +147,6 @@ pub struct System {
     pub hints: Option<hints::Hints>,
     /// what the title asks of the runtime, next to the library as well.
     pub usage: Option<usage::Usage>,
-    /// where the CPU's time goes, once a second (diagnostics)
-    pub thread_time: Option<thread_time::ThreadTime>,
-    /// the thread the current step runs, for thread_time
-    step_thread: Option<kernel::thread::ThreadId>,
     /// instructions the interpreter ran for want of recompiled code, and
     /// the ones recompiled code ran, to see how much the library covers.
     pub interpreted_instructions: u64,
@@ -214,8 +203,6 @@ impl System {
             services_seen: BTreeSet::new(),
             lcd_force_black: false,
             showing: [None, None],
-            top_picture: None,
-            refreshes: [0; 3],
             cro: cro::CroManager::default(),
             fatal_errors: Vec::new(),
             undefined_seen: BTreeMap::new(),
@@ -231,8 +218,6 @@ impl System {
             recompiled: None,
             hints: None,
             usage: None,
-            thread_time: None,
-            step_thread: None,
             interpreted_instructions: 0,
             recompiled_instructions: 0,
         }
@@ -282,10 +267,7 @@ impl System {
         // finds the boundary passed
         let deadline = self.next_frame_boundary;
         while self.cpu.cycles < deadline {
-            let before = self.cpu.cycles;
-            let outcome = self.step(Some(deadline));
-            if let Some(time) = &mut self.thread_time { time.add(self.step_thread, self.cpu.cycles - before); }
-            match outcome {
+            match self.step(Some(deadline)) {
                 StepOutcome::Ran => {}
                 StepOutcome::Exited => return FrameOutcome::Exited,
                 StepOutcome::Faulted => return FrameOutcome::Faulted,
@@ -325,7 +307,6 @@ impl System {
             // too, before it runs on, not over whatever it does next
             self.apply_wait_result();
         }
-        self.step_thread = self.kernel.current_thread;
 
         if self.kernel.current_thread.is_none() {
             // everything is blocked.
@@ -601,7 +582,6 @@ impl System {
     /// everything that happens between frames, vertical blank, input, clock.
     fn end_frame(&mut self) {
         self.frames += 1;
-        if let Some(time) = &mut self.thread_time { time.end_frame(self.frames, &self.kernel.threads); }
         if let Some(usage) = &mut self.usage {
             usage.end_frame();
             if self.frames.is_multiple_of(hints::SAVE_EVERY) {
@@ -823,39 +803,7 @@ impl System {
             return None;
         }
         let now = self.screen_ref(screen)?;
-        if screen == zakuro_common::Screen::Top {
-            if let Some(between) = self.in_between(now) {
-                return Some(between);
-            }
-        }
         self.gpu.screen_image(now)
-    }
-
-    /// with frame interpolation on, the refresh a new top-screen picture
-    /// arrives at shows the one drawn halfway between it and the last, and
-    /// the next refresh the picture itself. a game drawing every refresh
-    /// has nothing to show in between.
-    fn in_between(&mut self, now: zakuro_gpu::ScreenRef) -> Option<zakuro_gpu::GpuScreen> {
-        let frame = self.frames;
-        let last = self.top_picture.replace((now, frame));
-        if !self.gpu.interpolating() {
-            return None;
-        }
-        let kind = match last {
-            Some((before, _)) if before == now => {
-                // the same picture: shown in between last time, itself now
-                self.top_picture = last;
-                2
-            }
-            Some((_, at)) if frame - at >= 2 => 0,
-            _ => 1,
-        };
-        self.refreshes[kind] += 1;
-        if self.refreshes.iter().sum::<u32>() >= 600 {
-            let [new, next, same] = std::mem::take(&mut self.refreshes);
-            log::info!("refreshes, last 600: {new} new pictures with one in between, {next} new the very next refresh, {same} the same again");
-        }
-        if kind == 0 { self.gpu.in_between_image(now) } else { None }
     }
 
     /// the picture the host's GPU drew scaled for a screen, when it is still

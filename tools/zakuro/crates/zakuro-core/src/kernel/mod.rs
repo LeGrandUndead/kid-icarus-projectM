@@ -197,14 +197,7 @@ impl Kernel {
     /// highest-priority runnable thread.
     pub fn schedule(&mut self, cpu: &mut Cpu, tick: u64) -> bool {
         self.fire_timers(tick);
-        // the most urgent waiter first, as the console's kernel hands an
-        // object that frees one waiter (a one-shot event, a semaphore's
-        // count, a mutex) to the highest-priority thread waiting on it
-        let mut order: Vec<ThreadId> = (0..self.threads.len() as ThreadId)
-            .filter(|&id| self.threads[id as usize].status.is_blocked())
-            .collect();
-        order.sort_by_key(|&id| self.threads[id as usize].priority);
-        for id in order {
+        for id in 0..self.threads.len() as ThreadId {
             self.try_satisfy_wait(id, tick);
         }
         for id in std::mem::take(&mut self.pulsed) {
@@ -660,27 +653,6 @@ impl Kernel {
         }
     }
 
-    /// every thread, one line each: priority, core, state and what it waits
-    /// on, and where it stands (pc, lr), for finding what a stalled title
-    /// waits for.
-    pub fn report(&self, tick: u64) -> String {
-        let mut out = String::new();
-        for thread in &self.threads {
-            if thread.status == ThreadStatus::Dead {
-                continue;
-            }
-            let state = if thread.status.is_blocked() { self.describe_wait(thread.id) } else { format!("{:?}", thread.status) };
-            let wake = thread.wakeup_at.map_or(String::new(), |at| format!(", wakes in {} ticks", at.saturating_sub(tick)));
-            let running = Some(thread.id) == self.current_thread;
-            out += &format!(
-                "  t{} p{:#04X} core{} entry {:08X} pc {:08X} lr {:08X}{}: {state}{wake}\n",
-                thread.id, thread.priority, thread.processor_id, thread.entry,
-                thread.context.regs[15], thread.context.regs[14], if running { " (running)" } else { "" },
-            );
-        }
-        out
-    }
-
     /// number of threads that are not dead, for the diagnostics overlay.
     pub fn live_thread_count(&self) -> usize {
         self.threads
@@ -693,26 +665,6 @@ impl Kernel {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    /// a one-shot event two threads wait on goes to the more urgent one,
-    /// whichever was created first.
-    #[test]
-    fn a_one_shot_event_wakes_the_most_urgent_waiter() {
-        let mut kernel = Kernel::new(0, MemoryRegion::Application, 0x1400_0000);
-        let low = kernel.create_thread("low", 0x0010_0000, 0x1000_0000, 0, 0x38, 0);
-        let high = kernel.create_thread("high", 0x0010_0000, 0x0FF0_0000, 0, 0x20, 0);
-        let (event, _) = kernel.create_event(ResetType::OneShot, "Event");
-        for id in [low, high] {
-            kernel.objects.add_ref(event);
-            let thread = &mut kernel.threads[id as usize];
-            thread.wait_objects = vec![event];
-            thread.status = ThreadStatus::WaitSync;
-        }
-        kernel.signal_event(event);
-        kernel.schedule(&mut Cpu::new(), 0);
-        assert!(!kernel.thread(high).status.is_blocked());
-        assert_eq!(kernel.thread(low).status, ThreadStatus::WaitSync);
-    }
 
     /// a thread that ends holding a mutex, however many times it took it,
     /// gives it back, so a thread waiting on it wakes and gets it, as on the

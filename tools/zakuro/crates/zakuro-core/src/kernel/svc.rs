@@ -32,6 +32,7 @@ fn invalid_handle(system: &mut System, handle: u32, what: &str) -> u32 {
 
 /// runs one supervisor call.
 pub fn dispatch(system: &mut System, number: u32) {
+    crate::kiu_frame_interval::observe(system, number);
     if let Some(usage) = &mut system.usage {
         usage.svc(number);
         usage.wait_site(number, system.cpu.current_pc(), system.cpu.regs[14],
@@ -189,14 +190,10 @@ fn control_memory(system: &mut System) {
             system.cpu.regs[1] = base;
         }
         MEMOP_FREE => {
-            // the pages under addr0, which can start inside a mapping: a
-            // title freeing the top of its heap gives back those pages, not
-            // the mapping's first ones, which it still uses
             if let Some(mapping) = system.memory.mapping_at(addr0).copied() {
-                let offset = addr0 - mapping.base;
                 system.memory.phys.free(crate::memory::PhysicalBlock {
-                    addr: mapping.paddr + offset,
-                    size: size.min(mapping.size - offset),
+                    addr: mapping.paddr,
+                    size: size.min(mapping.size),
                 });
             }
             system.memory.unmap(addr0, size);
@@ -705,38 +702,30 @@ fn arbitrate_address(system: &mut System) {
     if kind == ArbitrationType::Signal {
         // wake up to value threads parked on this address, a negative value
         // means all of them.
+        let mut woken = 0;
         let unlimited = value < 0;
+        let mut to_wake = Vec::new();
         let kernel = &mut system.kernel;
         let threads = &kernel.threads;
-        let mut to_wake = Vec::new();
         if let Some(KObject::AddressArbiter(arbiter)) = kernel.objects.get_mut(object) {
-            // a thread whose wait timed out, or that ended since, left its
-            // entry behind: it goes without counting, a dead thread must
-            // never run again
             arbiter.waiters.retain(|&(thread, addr)| {
-                addr != address || {
-                    let parked = &threads[thread as usize];
-                    parked.status == ThreadStatus::WaitArbiter && parked.wait_address == Some(address)
+                if addr != address {
+                    return true;
                 }
-            });
-            // and a thread that parked again after a timeout is there twice
-            let mut seen = std::collections::HashSet::new();
-            arbiter.waiters.retain(|&entry| seen.insert(entry));
-            // the most urgent waiters on the address first, the earliest
-            // among equals, as the console's kernel releases them
-            let mut parked: Vec<(usize, u32)> = arbiter.waiters.iter().enumerate()
-                .filter(|(_, &(_, addr))| addr == address)
-                .map(|(index, &(thread, _))| (index, threads[thread as usize].priority))
-                .collect();
-            parked.sort_by_key(|&(index, priority)| (priority, index));
-            let count = if unlimited { parked.len() } else { (value as usize).min(parked.len()) };
-            let chosen: std::collections::BTreeSet<usize> = parked[..count].iter().map(|&(index, _)| index).collect();
-            let mut index = 0;
-            arbiter.waiters.retain(|&(thread, _)| {
-                let keep = !chosen.contains(&index);
-                if !keep { to_wake.push(thread); }
-                index += 1;
-                keep
+                // a thread whose wait timed out, or that ended since, left its
+                // entry behind, it goes without counting, a dead thread must
+                // never run again
+                let parked = &threads[thread as usize];
+                if parked.status != ThreadStatus::WaitArbiter || parked.wait_address != Some(address) || to_wake.contains(&thread) {
+                    return false;
+                }
+                if unlimited || woken < value {
+                    woken += 1;
+                    to_wake.push(thread);
+                    false
+                } else {
+                    true
+                }
             });
         }
         for thread in to_wake {
@@ -1162,33 +1151,6 @@ pub const _CURRENT_PROCESS: u32 = CURRENT_PROCESS;
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    /// a signal for one waiter on an address goes to the most urgent thread
-    /// parked there, whichever parked first.
-    #[test]
-    fn an_arbiter_signal_wakes_the_most_urgent_waiter() {
-        let mut system = System::new(crate::Config::default());
-        let low = system.kernel.create_thread("low", 0x0010_0000, 0x1000_0000, 0, 0x38, 0);
-        let high = system.kernel.create_thread("high", 0x0010_0000, 0x0FF0_0000, 0, 0x20, 0);
-        dispatch(&mut system, 0x21);
-        let handle = system.cpu.regs[1];
-        let object = system.kernel.resolve(handle).unwrap();
-        for id in [low, high] {
-            let thread = system.kernel.thread_mut(id);
-            thread.status = ThreadStatus::WaitArbiter;
-            thread.wait_address = Some(0x1000);
-            if let Some(KObject::AddressArbiter(arbiter)) = system.kernel.objects.get_mut(object) {
-                arbiter.waiters.push((id, 0x1000));
-            }
-        }
-        system.cpu.regs[0] = handle;
-        system.cpu.regs[1] = 0x1000;
-        system.cpu.regs[2] = 0; // signal
-        system.cpu.regs[3] = 1;
-        dispatch(&mut system, 0x22);
-        assert_eq!(system.kernel.thread(high).status, ThreadStatus::Ready);
-        assert_eq!(system.kernel.thread(low).status, ThreadStatus::WaitArbiter);
-    }
 
     /// two reads of the clock in a row are as far apart as on the console,
     /// so a title spinning on it until a frame is over spins no longer.

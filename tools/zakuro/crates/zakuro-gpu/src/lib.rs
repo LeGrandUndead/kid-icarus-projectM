@@ -11,7 +11,6 @@ pub mod blend;
 mod device;
 pub mod proctex;
 pub mod fog;
-pub mod interpolation;
 pub mod format;
 pub mod lighting;
 pub mod raster;
@@ -21,7 +20,6 @@ pub mod shader;
 pub mod stats;
 pub mod profile;
 pub mod tev;
-pub mod white_out;
 pub mod texture;
 
 use format::ColorFormat;
@@ -284,51 +282,6 @@ impl Gpu {
             }
             self.on_external_write(base + offset, value);
         }
-        // the frame the top screen now shows is done drawing
-        #[cfg(feature = "vulkan")]
-        if screen == 0 {
-            if let Some(hardware) = self.resources.hardware.as_mut() {
-                hardware.end_frame();
-            }
-        }
-    }
-
-    // -- frame interpolation -------------------------------------------------
-
-    /// draws every frame a second time, halfway towards the one before, for
-    /// a presenter sharing the device to show in between (see
-    /// raster/hardware/twin.rs). the game itself is not touched.
-    pub fn set_interpolation(&mut self, on: bool) {
-        #[cfg(feature = "vulkan")]
-        if let Some(hardware) = self.resources.hardware.as_mut() {
-            hardware.set_interpolation(on);
-        }
-        #[cfg(not(feature = "vulkan"))]
-        let _ = on;
-    }
-
-    /// whether in-between frames are being drawn.
-    pub fn interpolating(&self) -> bool {
-        #[cfg(feature = "vulkan")]
-        if let Some(hardware) = self.resources.hardware.as_ref() {
-            return hardware.interpolating();
-        }
-        false
-    }
-
-    /// the in-between picture of the frame a screen shows, for a presenter
-    /// sharing the device, when there is one worth showing.
-    pub fn in_between_image(&mut self, screen: ScreenRef) -> Option<GpuScreen> {
-        #[cfg(feature = "vulkan")]
-        if let Some(hardware) = self.resources.hardware.as_mut() {
-            match hardware.twin_screen_image(screen) {
-                Ok(image) => return image,
-                Err(error) => log::error!("the GPU could not show an in-between frame, {error}"),
-            }
-        }
-        #[cfg(not(feature = "vulkan"))]
-        let _ = screen;
-        None
     }
 
     // -- fill and transfer engines -----------------------------------------

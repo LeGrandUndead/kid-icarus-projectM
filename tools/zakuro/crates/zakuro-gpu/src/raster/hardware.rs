@@ -35,10 +35,6 @@ use crate::shader::glsl::{self, SEMANTICS};
 use crate::shader::{Program, ShaderUnit, Vec4, DESCRIPTOR_SIZE, INPUT_REGISTERS, PROGRAM_SIZE};
 use crate::GpuMemory;
 
-mod interpolate;
-mod report;
-mod twin;
-
 const SHADE_SPIRV: &[u8] = include_bytes!("../../shaders/shade.vert.spv");
 /// passes lit triangles on with their quaternions on one side, see
 /// flip.geom.
@@ -144,41 +140,6 @@ pub(super) struct Draw<'a> {
     /// whether the fog is on, and its table.
     pub(super) fog: bool,
     pub(super) fog_table: &'a fog::Table,
-}
-
-/// a draw as recorded: everything the command buffer is told, so the
-/// in-between frame can record it again with other uniforms and textures,
-/// see twin.rs.
-#[derive(Clone, Copy)]
-pub(super) struct DrawCommand {
-    pub(super) pipeline: vk::Pipeline,
-    pub(super) viewport: vk::Viewport,
-    pub(super) cull: vk::CullModeFlags,
-    pub(super) scissor: vk::Rect2D,
-    pub(super) depth_test: bool,
-    pub(super) depth_compare: vk::CompareOp,
-    pub(super) depth_write: bool,
-    pub(super) stencil_test: bool,
-    /// on failing, passing, and failing the depth test.
-    pub(super) stencil_ops: [vk::StencilOp; 3],
-    pub(super) stencil_compare: vk::CompareOp,
-    /// the compare mask, the write mask and the reference.
-    pub(super) stencil_masks: [u32; 3],
-    pub(super) blend_constants: [f32; 4],
-    pub(super) blend: bool,
-    pub(super) blend_equation: vk::ColorBlendEquationEXT,
-    pub(super) color_mask: u32,
-    pub(super) logic_op: Option<LogicOp>,
-    /// the three texture units.
-    pub(super) images: [vk::DescriptorImageInfo; 3],
-    pub(super) uniform: vk::DescriptorBufferInfo,
-    pub(super) tables: vk::DescriptorBufferInfo,
-    /// for what the GPU shades: the program, the uniforms and the rest it
-    /// reads, the vertex arrays and the indices.
-    pub(super) vertex: Option<[vk::DescriptorBufferInfo; 4]>,
-    /// for what the CPU placed: where its vertices and indices are.
-    pub(super) placed: (u64, u64),
-    pub(super) count: u32,
 }
 
 /// the triangles of a draw.
@@ -1391,8 +1352,6 @@ pub struct Hardware {
     /// the pipelines compiled before, kept on disk between runs, so a
     /// combination of fragment stages seen once does not stall again.
     pipeline_cache: vk::PipelineCache,
-    /// frame interpolation's images and what it knows of the frame before.
-    twins: twin::Twins,
 }
 
 impl Hardware {
@@ -1595,7 +1554,6 @@ impl Hardware {
                 renderings: 0,
                 draws: 0,
                 pipeline_cache,
-                twins: twin::Twins::default(),
             };
             let ring_usage = vk::BufferUsageFlags::VERTEX_BUFFER
                 | vk::BufferUsageFlags::INDEX_BUFFER
@@ -1968,11 +1926,9 @@ impl Hardware {
     }
 
     fn end_rendering(&mut self) {
-        if let Some((color, depth)) = self.rendering.take() {
+        if self.rendering.take().is_some() {
             // SAFETY: rendering was begun in this command buffer
             unsafe { self.device.cmd_end_rendering(self.commands) };
-            // what was drawn into the surfaces, into their twins
-            self.twin_pass(color, depth);
         }
     }
 
@@ -2011,24 +1967,12 @@ impl Hardware {
     fn clear_rows(&mut self, index: usize, rows: (u32, u32), pixel: &[u8]) -> Result<(), String> {
         let surface = &self.surfaces[index];
         let (width, height, kind, view) = (surface.width, surface.height, surface.kind, surface.image.view);
+        let scale = self.scale;
         self.begin()?;
         self.mark(Work::Clear, false);
+        self.renderings += 1;
         self.end_rendering();
         self.barrier();
-        // the twin is cleared the same
-        let twin = self.twin_view(index);
-        for view in std::iter::once(view).chain(twin) {
-            self.clear_view(view, (width, height), kind, rows, pixel);
-        }
-        self.uploads = true;
-        Ok(())
-    }
-
-    /// clears rows of memory of a surface's image, or its twin's, outside
-    /// rendering.
-    fn clear_view(&mut self, view: vk::ImageView, (width, height): (u32, u32), kind: Kind, rows: (u32, u32), pixel: &[u8]) {
-        let scale = self.scale;
-        self.renderings += 1;
         let attachment = [vk::RenderingAttachmentInfo::default()
             .image_view(view)
             .image_layout(vk::ImageLayout::GENERAL)
@@ -2074,6 +2018,8 @@ impl Hardware {
             self.device.cmd_clear_attachments(self.commands, &[clear], &rect);
             self.device.cmd_end_rendering(self.commands);
         }
+        self.uploads = true;
+        Ok(())
     }
 
     /// the height of the tallest surface of a kind at an address and width,
@@ -2290,7 +2236,6 @@ impl Hardware {
             self.barrier();
             self.blit(index, true);
         }
-        self.twin_uploaded(index);
         self.uploads = true;
         self.surfaces[index].replaced();
         Ok(())
@@ -2621,44 +2566,40 @@ impl Hardware {
                 continue;
             }
             let pixel = filled[..bpp].to_vec();
-            let kind = surface.kind;
+            let (image, kind) = (surface.image.image, surface.kind);
             self.begin()?;
             self.mark(Work::Clear, false);
             self.end_rendering();
-            // the twin is cleared the same
-            let twin = self.twin_image(index);
-            for image in std::iter::once(self.surfaces[index].image.image).chain(twin) {
-                // SAFETY: recording, outside rendering, on an image in the
-                // general layout that allows transfers into it
-                unsafe {
-                    match kind {
-                        Kind::Color(format) => {
-                            let rgba = format.decode(&pixel);
-                            let color = vk::ClearColorValue { float32: rgba.map(|c| c as f32 / 255.0) };
-                            let range = [vk::ImageSubresourceRange::default()
-                                .aspect_mask(vk::ImageAspectFlags::COLOR)
-                                .level_count(1)
-                                .layer_count(1)];
-                            self.unfenced = true;
-                            self.device.cmd_clear_color_image(self.commands, image, vk::ImageLayout::GENERAL, &color, &range);
-                        }
-                        Kind::Depth(sample) => {
-                            let (depth, stencil) = match sample {
-                                2 => {
-                                    let d16 = u16::from_le_bytes([pixel[0], pixel[1]]) as u64;
-                                    (((d16 * 0xFF_FFFF + 0x7FFF) / 0xFFFF) as u32, 0)
-                                }
-                                3 => (u32::from_le_bytes([pixel[0], pixel[1], pixel[2], 0]), 0),
-                                _ => (u32::from_le_bytes([pixel[0], pixel[1], pixel[2], 0]), pixel[3] as u32),
-                            };
-                            let value = vk::ClearDepthStencilValue { depth: depth as f32 / 16_777_215.0, stencil };
-                            let range = [vk::ImageSubresourceRange::default()
-                                .aspect_mask(vk::ImageAspectFlags::DEPTH | vk::ImageAspectFlags::STENCIL)
-                                .level_count(1)
-                                .layer_count(1)];
-                            self.unfenced = true;
-                            self.device.cmd_clear_depth_stencil_image(self.commands, image, vk::ImageLayout::GENERAL, &value, &range);
-                        }
+            // SAFETY: recording, outside rendering, on an image in the
+            // general layout that allows transfers into it
+            unsafe {
+                match kind {
+                    Kind::Color(format) => {
+                        let rgba = format.decode(&pixel);
+                        let color = vk::ClearColorValue { float32: rgba.map(|c| c as f32 / 255.0) };
+                        let range = [vk::ImageSubresourceRange::default()
+                            .aspect_mask(vk::ImageAspectFlags::COLOR)
+                            .level_count(1)
+                            .layer_count(1)];
+                        self.unfenced = true;
+                        self.device.cmd_clear_color_image(self.commands, image, vk::ImageLayout::GENERAL, &color, &range);
+                    }
+                    Kind::Depth(sample) => {
+                        let (depth, stencil) = match sample {
+                            2 => {
+                                let d16 = u16::from_le_bytes([pixel[0], pixel[1]]) as u64;
+                                (((d16 * 0xFF_FFFF + 0x7FFF) / 0xFFFF) as u32, 0)
+                            }
+                            3 => (u32::from_le_bytes([pixel[0], pixel[1], pixel[2], 0]), 0),
+                            _ => (u32::from_le_bytes([pixel[0], pixel[1], pixel[2], 0]), pixel[3] as u32),
+                        };
+                        let value = vk::ClearDepthStencilValue { depth: depth as f32 / 16_777_215.0, stencil };
+                        let range = [vk::ImageSubresourceRange::default()
+                            .aspect_mask(vk::ImageAspectFlags::DEPTH | vk::ImageAspectFlags::STENCIL)
+                            .level_count(1)
+                            .layer_count(1)];
+                        self.unfenced = true;
+                        self.device.cmd_clear_depth_stencil_image(self.commands, image, vk::ImageLayout::GENERAL, &value, &range);
                     }
                 }
             }
@@ -3143,8 +3084,6 @@ impl Hardware {
         let (bottom, top) = (bottom + raise, top + raise);
 
         let mut views = [self.blank.view; 3];
-        // what the twin draw samples instead, see twin.rs
-        let mut twin_views = [None; 3];
         let mut samplers = [vk::Sampler::null(); 3];
         let mut enabled = 0;
         for (unit, bound) in draw.textures.iter().enumerate() {
@@ -3153,9 +3092,6 @@ impl Hardware {
                     let (view, extra) = match bound.drawn {
                         Some(drawn) => {
                             let view = self.copy_texture(&drawn)?;
-                            if self.twins.on() {
-                                twin_views[unit] = self.twin_texture(&drawn)?;
-                            }
                             if unit == 0 && lower_screen_text(draw, &drawn) { self.read_text(&drawn)?; }
                             (view, 0)
                         }
@@ -3314,7 +3250,7 @@ impl Hardware {
         if self.rendering != Some((color, depth)) {
             self.end_rendering();
             self.barrier();
-            self.begin_rendering(color, depth)?;
+            self.begin_rendering(color, depth);
         }
         if color_mask != 0 {
             self.surfaces[color].drew(rows);
@@ -3334,15 +3270,49 @@ impl Hardware {
             }
         }
 
-        let images: [vk::DescriptorImageInfo; 3] = std::array::from_fn(|unit| {
-            vk::DescriptorImageInfo::default()
+        let image_infos: [[vk::DescriptorImageInfo; 1]; 3] = std::array::from_fn(|unit| {
+            [vk::DescriptorImageInfo::default()
                 .sampler(samplers[unit])
                 .image_view(views[unit])
-                .image_layout(vk::ImageLayout::GENERAL)
+                .image_layout(vk::ImageLayout::GENERAL)]
         });
-        let uniform = vk::DescriptorBufferInfo::default().buffer(self.ring.buffer).offset(uniform_offset).range(UNIFORM_SIZE);
-        let tables = vk::DescriptorBufferInfo::default().buffer(self.ring.buffer).offset(tables).range(TABLES_SIZE);
-        let vertex = shaded.map(|staged| staged.map(|(offset, range)| vk::DescriptorBufferInfo::default().buffer(self.ring.buffer).offset(offset).range(range)));
+        let uniform_info = [vk::DescriptorBufferInfo::default().buffer(self.ring.buffer).offset(uniform_offset).range(UNIFORM_SIZE)];
+        let tables_info = [vk::DescriptorBufferInfo::default().buffer(self.ring.buffer).offset(tables).range(TABLES_SIZE)];
+        let vertex_infos = shaded.map(|staged| {
+            staged.map(|(offset, range)| [vk::DescriptorBufferInfo::default().buffer(self.ring.buffer).offset(offset).range(range)])
+        });
+        let mut writes = vec![
+            vk::WriteDescriptorSet::default()
+                .dst_binding(0)
+                .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
+                .image_info(&image_infos[0]),
+            vk::WriteDescriptorSet::default()
+                .dst_binding(1)
+                .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
+                .image_info(&image_infos[1]),
+            vk::WriteDescriptorSet::default()
+                .dst_binding(2)
+                .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
+                .image_info(&image_infos[2]),
+            vk::WriteDescriptorSet::default()
+                .dst_binding(3)
+                .descriptor_type(vk::DescriptorType::UNIFORM_BUFFER)
+                .buffer_info(&uniform_info),
+            vk::WriteDescriptorSet::default()
+                .dst_binding(4)
+                .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
+                .buffer_info(&tables_info),
+        ];
+        if let Some(infos) = &vertex_infos {
+            for (binding, info) in (5..).zip(&infos[..3]) {
+                writes.push(
+                    vk::WriteDescriptorSet::default()
+                        .dst_binding(binding)
+                        .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
+                        .buffer_info(info),
+                );
+            }
+        }
         // where the PICA's viewport puts clip space, for what the GPU
         // shades, the whole target for what the CPU placed on it
         let (x, y, viewport_width, viewport_height) = match draw.geometry {
@@ -3355,50 +3325,80 @@ impl Hardware {
             Geometry::Shaded(shading) if shading.cull != 0 => vk::CullModeFlags::BACK,
             _ => vk::CullModeFlags::NONE,
         };
+
+        let commands = self.commands;
         let scale = self.scale;
+        let viewport = vk::Viewport {
+            x: x * scale as f32,
+            y: y * scale as f32,
+            width: viewport_width * scale as f32,
+            height: viewport_height * scale as f32,
+            min_depth: depth_range.0,
+            max_depth: depth_range.1,
+        };
+        let face = vk::StencilFaceFlags::FRONT_AND_BACK;
         let test = r[REG_STENCIL_TEST];
         let op = r[REG_STENCIL_OP];
         let stencil_op = |raw: u32| vk::StencilOp::from_raw((raw & 7) as i32);
-        let command = DrawCommand {
-            pipeline,
-            viewport: vk::Viewport {
-                x: x * scale as f32,
-                y: y * scale as f32,
-                width: viewport_width * scale as f32,
-                height: viewport_height * scale as f32,
-                min_depth: depth_range.0,
-                max_depth: depth_range.1,
-            },
-            cull,
-            scissor: vk::Rect2D {
-                offset: vk::Offset2D { x: left * scale as i32, y: bottom * scale as i32 },
-                extent: vk::Extent2D { width: (right - left) as u32 * scale, height: (top - bottom) as u32 * scale },
-            },
+        let constant = r[REG_BLEND_COLOR].to_le_bytes().map(|c| c as f32 / 255.0);
+        // SAFETY: recording inside rendering, with everything the draw
+        // reads staged in the ring and every image in the general layout
+        unsafe {
+            let device = &self.device;
+            device.cmd_bind_pipeline(commands, vk::PipelineBindPoint::GRAPHICS, pipeline);
+            device.cmd_set_viewport(commands, 0, &[viewport]);
+            device.cmd_set_cull_mode(commands, cull);
+            device.cmd_set_scissor(
+                commands,
+                0,
+                &[vk::Rect2D {
+                    offset: vk::Offset2D { x: left * scale as i32, y: bottom * scale as i32 },
+                    extent: vk::Extent2D { width: (right - left) as u32 * scale, height: (top - bottom) as u32 * scale },
+                }],
+            );
             // with the test off the PICA still writes depth, which Vulkan
             // only does while testing
-            depth_test: depth.is_some() && (depth_test || depth_write),
-            depth_compare: if depth_test && !crate::diagnostics::ignore_depth_test() { COMPARES[((mask >> 4) & 7) as usize] } else { vk::CompareOp::ALWAYS },
-            depth_write: depth.is_some() && depth_write,
-            stencil_test,
-            stencil_ops: [stencil_op(op), stencil_op(op >> 8), stencil_op(op >> 4)],
-            stencil_compare: COMPARES[((test >> 4) & 7) as usize],
-            stencil_masks: [(test >> 24) & 0xFF, if writable { (test >> 8) & 0xFF } else { 0 }, (test >> 16) & 0xFF],
-            blend_constants: r[REG_BLEND_COLOR].to_le_bytes().map(|c| c as f32 / 255.0),
-            blend: blend.is_some(),
-            blend_equation: blend_equation(blend.unwrap_or(0)),
-            color_mask,
-            logic_op,
-            images,
-            uniform,
-            tables,
-            vertex,
-            placed: (vertex_offset, index_offset),
-            count: vertex_count as u32,
-        };
-        self.issue(&command);
-        self.draws += 1;
-        if self.twins.on() {
-            self.twin_draw(draw, command, twin_views)?;
+            device.cmd_set_depth_test_enable(commands, depth.is_some() && (depth_test || depth_write));
+            device.cmd_set_depth_compare_op(
+                commands,
+                if depth_test && !crate::diagnostics::ignore_depth_test() { COMPARES[((mask >> 4) & 7) as usize] } else { vk::CompareOp::ALWAYS },
+            );
+            device.cmd_set_depth_write_enable(commands, depth.is_some() && depth_write);
+            device.cmd_set_stencil_test_enable(commands, stencil_test);
+            device.cmd_set_stencil_op(
+                commands,
+                face,
+                stencil_op(op),
+                stencil_op(op >> 8),
+                stencil_op(op >> 4),
+                COMPARES[((test >> 4) & 7) as usize],
+            );
+            device.cmd_set_stencil_compare_mask(commands, face, (test >> 24) & 0xFF);
+            device.cmd_set_stencil_write_mask(commands, face, if writable { (test >> 8) & 0xFF } else { 0 });
+            device.cmd_set_stencil_reference(commands, face, (test >> 16) & 0xFF);
+            device.cmd_set_blend_constants(commands, &constant);
+            if let Some(state) = &self.blend_state {
+                state.cmd_set_color_blend_enable(commands, 0, &[blend.is_some().into()]);
+                state.cmd_set_color_blend_equation(commands, 0, &[blend_equation(blend.unwrap_or(0))]);
+                state.cmd_set_color_write_mask(commands, 0, &[vk::ColorComponentFlags::from_raw(color_mask)]);
+                if let Some(ops) = &self.logic_op_state {
+                    state.cmd_set_logic_op_enable(commands, logic_op.is_some());
+                    ops.cmd_set_logic_op(commands, logic_op.map_or(vk::LogicOp::COPY, self::logic_op));
+                }
+            }
+            self.push.cmd_push_descriptor_set(commands, vk::PipelineBindPoint::GRAPHICS, self.layout, 0, &writes);
+            self.draws += 1;
+            match vertex_infos {
+                Some(infos) => {
+                    device.cmd_bind_index_buffer(commands, self.ring.buffer, infos[3][0].offset, vk::IndexType::UINT32);
+                    device.cmd_draw_indexed(commands, vertex_count as u32, 1, 0, 0, 0);
+                }
+                None => {
+                    device.cmd_bind_vertex_buffers(commands, 0, &[self.ring.buffer], &[vertex_offset]);
+                    device.cmd_bind_index_buffer(commands, self.ring.buffer, index_offset, vk::IndexType::UINT32);
+                    device.cmd_draw_indexed(commands, vertex_count as u32, 1, 0, 0, 0);
+                }
+            }
         }
         self.dump_draw(color, r)?;
         Ok(())
@@ -3435,109 +3435,13 @@ impl Hardware {
         Ok(())
     }
 
-    /// records a draw as draw worked it out, inside the rendering begun.
-    fn issue(&mut self, c: &DrawCommand) {
-        let commands = self.commands;
-        let face = vk::StencilFaceFlags::FRONT_AND_BACK;
-        let images = c.images.map(|info| [info]);
-        let (uniform, tables) = ([c.uniform], [c.tables]);
-        let vertex = c.vertex.map(|infos| infos.map(|info| [info]));
-        let mut writes = vec![
-            vk::WriteDescriptorSet::default()
-                .dst_binding(0)
-                .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
-                .image_info(&images[0]),
-            vk::WriteDescriptorSet::default()
-                .dst_binding(1)
-                .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
-                .image_info(&images[1]),
-            vk::WriteDescriptorSet::default()
-                .dst_binding(2)
-                .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
-                .image_info(&images[2]),
-            vk::WriteDescriptorSet::default()
-                .dst_binding(3)
-                .descriptor_type(vk::DescriptorType::UNIFORM_BUFFER)
-                .buffer_info(&uniform),
-            vk::WriteDescriptorSet::default()
-                .dst_binding(4)
-                .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
-                .buffer_info(&tables),
-        ];
-        if let Some(infos) = &vertex {
-            for (binding, info) in (5..).zip(&infos[..3]) {
-                writes.push(
-                    vk::WriteDescriptorSet::default()
-                        .dst_binding(binding)
-                        .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
-                        .buffer_info(info),
-                );
-            }
-        }
-        // SAFETY: recording inside rendering, with everything the draw
-        // reads staged in the ring and every image in the general layout
-        unsafe {
-            let device = &self.device;
-            device.cmd_bind_pipeline(commands, vk::PipelineBindPoint::GRAPHICS, c.pipeline);
-            device.cmd_set_viewport(commands, 0, &[c.viewport]);
-            device.cmd_set_cull_mode(commands, c.cull);
-            device.cmd_set_scissor(commands, 0, &[c.scissor]);
-            device.cmd_set_depth_test_enable(commands, c.depth_test);
-            device.cmd_set_depth_compare_op(commands, c.depth_compare);
-            device.cmd_set_depth_write_enable(commands, c.depth_write);
-            device.cmd_set_stencil_test_enable(commands, c.stencil_test);
-            let [fail, pass, depth_fail] = c.stencil_ops;
-            device.cmd_set_stencil_op(commands, face, fail, pass, depth_fail, c.stencil_compare);
-            let [compare, write, reference] = c.stencil_masks;
-            device.cmd_set_stencil_compare_mask(commands, face, compare);
-            device.cmd_set_stencil_write_mask(commands, face, write);
-            device.cmd_set_stencil_reference(commands, face, reference);
-            device.cmd_set_blend_constants(commands, &c.blend_constants);
-            if let Some(state) = &self.blend_state {
-                state.cmd_set_color_blend_enable(commands, 0, &[c.blend.into()]);
-                state.cmd_set_color_blend_equation(commands, 0, &[c.blend_equation]);
-                state.cmd_set_color_write_mask(commands, 0, &[vk::ColorComponentFlags::from_raw(c.color_mask)]);
-                if let Some(ops) = &self.logic_op_state {
-                    state.cmd_set_logic_op_enable(commands, c.logic_op.is_some());
-                    ops.cmd_set_logic_op(commands, c.logic_op.map_or(vk::LogicOp::COPY, self::logic_op));
-                }
-            }
-            self.push.cmd_push_descriptor_set(commands, vk::PipelineBindPoint::GRAPHICS, self.layout, 0, &writes);
-            match &vertex {
-                Some(infos) => {
-                    device.cmd_bind_index_buffer(commands, self.ring.buffer, infos[3][0].offset, vk::IndexType::UINT32);
-                    device.cmd_draw_indexed(commands, c.count, 1, 0, 0, 0);
-                }
-                None => {
-                    device.cmd_bind_vertex_buffers(commands, 0, &[self.ring.buffer], &[c.placed.0]);
-                    device.cmd_bind_index_buffer(commands, self.ring.buffer, c.placed.1, vk::IndexType::UINT32);
-                    device.cmd_draw_indexed(commands, c.count, 1, 0, 0, 0);
-                }
-            }
-        }
-    }
-
-    fn begin_rendering(&mut self, color: usize, depth: Option<usize>) -> Result<(), String> {
-        if self.twins.on() {
-            // the twins start as the surfaces are before these draws
-            self.twin_ensure(color)?;
-            if let Some(depth) = depth {
-                self.twin_ensure(depth)?;
-            }
-        }
-        let surface = &self.surfaces[color];
-        let size = (surface.width * self.scale, surface.height * self.scale);
-        let depth_view = depth.map(|d| self.surfaces[d].image.view);
-        self.render_into(size, surface.image.view, depth_view);
-        self.rendering = Some((color, depth));
-        Ok(())
-    }
-
-    /// begins rendering into a color image and maybe a depth one, of a
-    /// size, keeping what they hold.
-    fn render_into(&mut self, (width, height): (u32, u32), color: vk::ImageView, depth: Option<vk::ImageView>) {
+    fn begin_rendering(&mut self, color: usize, depth: Option<usize>) {
         self.renderings += 1;
-        let area = vk::Rect2D { offset: vk::Offset2D { x: 0, y: 0 }, extent: vk::Extent2D { width, height } };
+        let surface = &self.surfaces[color];
+        let area = vk::Rect2D {
+            offset: vk::Offset2D { x: 0, y: 0 },
+            extent: vk::Extent2D { width: surface.width * self.scale, height: surface.height * self.scale },
+        };
         let attachment = |view: vk::ImageView| {
             vk::RenderingAttachmentInfo::default()
                 .image_view(view)
@@ -3545,8 +3449,8 @@ impl Hardware {
                 .load_op(vk::AttachmentLoadOp::LOAD)
                 .store_op(vk::AttachmentStoreOp::STORE)
         };
-        let colors = [attachment(color)];
-        let depth_attachment = depth.map(attachment);
+        let colors = [attachment(surface.image.view)];
+        let depth_attachment = depth.map(|d| attachment(self.surfaces[d].image.view));
         let mut info = vk::RenderingInfo::default().render_area(area).layer_count(1).color_attachments(&colors);
         if let Some(depth_attachment) = &depth_attachment {
             info = info.depth_attachment(depth_attachment).stencil_attachment(depth_attachment);
@@ -3555,6 +3459,7 @@ impl Hardware {
         // layout
         self.unfenced = true;
         unsafe { self.device.cmd_begin_rendering(self.commands, &info) };
+        self.rendering = Some((color, depth));
     }
 
     /// runs what the batch recorded and writes everything it drew back to
@@ -3678,9 +3583,6 @@ impl Hardware {
         // turned upright for showing at any scale, at the console's own too
         // that beats the CPU waiting for the GPU and decoding the buffer
         self.capture_screen(target)?;
-        if self.twins.on() {
-            self.twin_transfer(source, target, constants, (t.copy.0 * self.scale, t.copy.1 * self.scale))?;
-        }
         self.surfaces[source].presented = true;
         self.surfaces[target].presented = false;
         self.submit()?;
@@ -3796,47 +3698,20 @@ impl Hardware {
                 return Ok(copy.image.view);
             }
         }
-        let n = self.copy_scale(texture, source);
+        // small buffers drawn to be sampled again are the game's glow and
+        // blur passes: they sample themselves a texel apart, which at the
+        // console's resolution blends smoothly and at a higher one leaves
+        // a grid of separate copies. those keep the console's resolution.
+        let native = self.scale > 1 && effect_buffer(texture) && !matches!(self.surfaces[source].kind, Kind::Depth(_));
+        let n = if native { 1 } else { self.scale };
         if !self.copies.contains_key(texture) {
             let usage = vk::ImageUsageFlags::SAMPLED | vk::ImageUsageFlags::STORAGE;
             let image = self.image(texture.width * n, texture.height * n, COLOR_FORMAT, usage, vk::ImageAspectFlags::COLOR)?;
             self.copies.insert(*texture, Copied { image, surface: source, generation, used: batch });
         }
         let view = self.copies[texture].image.view;
-        let surface = (self.surfaces[source].image.view, self.surfaces[source].image.image);
-        self.copy_texture_from(source, surface, row, view, texture, n)?;
-        if let Some(copy) = self.copies.get_mut(texture) {
-            copy.surface = source;
-            copy.generation = generation;
-            copy.used = batch;
-        }
-        Ok(view)
-    }
-
-    /// how many times the console's resolution a texture copied from a
-    /// surface is kept at.
-    fn copy_scale(&self, texture: &DrawnTexture, source: usize) -> u32 {
-        // small buffers drawn to be sampled again are the game's glow and
-        // blur passes: they sample themselves a texel apart, which at the
-        // console's resolution blends smoothly and at a higher one leaves
-        // a grid of separate copies. those keep the console's resolution.
-        let native = self.scale > 1 && effect_buffer(texture) && !matches!(self.surfaces[source].kind, Kind::Depth(_));
-        if native { 1 } else { self.scale }
-    }
-
-    /// records a texture's rows of a surface, from its image or its twin's
-    /// (image, as a view and itself), copied into the texture's image.
-    fn copy_texture_from(
-        &mut self,
-        source: usize,
-        (image_view, image): (vk::ImageView, vk::Image),
-        row: u32,
-        view: vk::ImageView,
-        texture: &DrawnTexture,
-        n: u32,
-    ) -> Result<(), String> {
         if let Kind::Depth(bytes) = self.surfaces[source].kind {
-            self.copy_depth(source, image, row, bytes, view, texture)?;
+            self.copy_depth(source, row, bytes, view, texture)?;
         } else {
             // the texture's rows run top first, the surface's bottom first,
             // so the copy flips them, and its pixels round to the format as
@@ -3848,10 +3723,15 @@ impl Hardware {
             let (width, height) = ((texture.width * n) as i32, (texture.height * n) as i32);
             let (row, source_height) = ((row * scale) as i32, (self.surfaces[source].height * scale) as i32);
             let constants = [width, height, height * down, height, down, down, 1, format, format, row, source_height];
-            self.dispatch_transfer((image_view, view), constants, (texture.width * n, texture.height * n))?;
+            self.dispatch_transfer((self.surfaces[source].image.view, view), constants, (texture.width * n, texture.height * n))?;
         }
         self.uploads = true;
-        Ok(())
+        if let Some(copy) = self.copies.get_mut(texture) {
+            copy.surface = source;
+            copy.generation = generation;
+            copy.used = batch;
+        }
+        Ok(view)
     }
 
     /// records a host copy of a lower-screen text buffer when it changed
@@ -3932,7 +3812,7 @@ impl Hardware {
     /// records a texture read out of a depth surface, its depth and stencil
     /// copied into a buffer and then made into the colors their bytes read
     /// as.
-    fn copy_depth(&mut self, source: usize, image: vk::Image, row: u32, bytes: u32, view: vk::ImageView, texture: &DrawnTexture) -> Result<(), String> {
+    fn copy_depth(&mut self, source: usize, row: u32, bytes: u32, view: vk::ImageView, texture: &DrawnTexture) -> Result<(), String> {
         let n = self.scale;
         let (width, height) = (self.surfaces[source].width * n, self.surfaces[source].height * n);
         let pixels = (width * height) as u64;
@@ -3972,6 +3852,7 @@ impl Hardware {
         // general layout into a buffer big enough for both aspects, then a
         // barrier before the shader reads it
         unsafe {
+            let image = self.surfaces[source].image.image;
             self.unfenced = true;
             self.device.cmd_copy_image_to_buffer(self.commands, image, vk::ImageLayout::GENERAL, samples, &regions);
             self.barrier();
@@ -4088,23 +3969,16 @@ impl Hardware {
             let image = self.image(width, height, COLOR_FORMAT, usage, vk::ImageAspectFlags::COLOR)?;
             self.surfaces[index].upright = Some(Upright { image, batch: 0, current: false });
         }
+        let (layout, pipeline) = self.upright_image_pipeline()?;
+        self.end_rendering();
+        self.barrier();
         let batch = self.batch;
         let surface = &mut self.surfaces[index];
         let Some(upright) = surface.upright.as_mut() else { unreachable!("made above") };
         upright.batch = batch;
         upright.current = true;
-        let (source, target) = (surface.image.view, upright.image.view);
-        self.record_upright(source, target, (width, height))
-    }
-
-    /// records a surface's image, or its twin, turned upright into an image
-    /// of width and height, a row of the surface a column of the picture.
-    fn record_upright(&mut self, source: vk::ImageView, target: vk::ImageView, (width, height): (u32, u32)) -> Result<(), String> {
-        let (layout, pipeline) = self.upright_image_pipeline()?;
-        self.end_rendering();
-        self.barrier();
-        let source = [vk::DescriptorImageInfo::default().image_view(source).image_layout(vk::ImageLayout::GENERAL)];
-        let target = [vk::DescriptorImageInfo::default().image_view(target).image_layout(vk::ImageLayout::GENERAL)];
+        let source = [vk::DescriptorImageInfo::default().image_view(surface.image.view).image_layout(vk::ImageLayout::GENERAL)];
+        let target = [vk::DescriptorImageInfo::default().image_view(upright.image.view).image_layout(vk::ImageLayout::GENERAL)];
         let writes = [
             vk::WriteDescriptorSet::default()
                 .dst_binding(0)
@@ -4140,13 +4014,6 @@ impl Hardware {
         let (row_pixels, rows) = screen.size;
         let index = self.surfaces.iter().position(|s| s.addr == screen.addr && s.width == row_pixels && s.height == rows).ok_or("no surface")?;
         let image = self.surfaces[index].upright.as_ref().ok_or("nothing upright")?.image.image;
-        self.upright_image_pixels(image, screen)
-    }
-
-    /// an upright picture of a screen read back, and its width.
-    #[cfg(test)]
-    fn upright_image_pixels(&mut self, image: vk::Image, screen: ScreenRef) -> Result<(Vec<u8>, u32), String> {
-        let (row_pixels, rows) = screen.size;
         let (width, height) = (rows * self.scale, row_pixels * self.scale);
         let buffer = self.buffer(u64::from(width * height * 4), vk::BufferUsageFlags::TRANSFER_DST, true)?;
         self.begin()?;
@@ -4190,7 +4057,11 @@ impl Hardware {
         if !self.direct {
             return Ok(None);
         }
-        let Some(index) = self.screen_surface(screen) else { return Ok(None) };
+        let (row_pixels, rows) = screen.size;
+        let found = self.surfaces.iter().position(|s| {
+            s.addr == screen.addr && s.width == row_pixels && s.height == rows && s.kind == Kind::Color(screen.format) && !s.tiled
+        });
+        let Some(index) = found else { return Ok(None) };
         let Some(upright) = self.surfaces[index].upright.as_ref().filter(|upright| upright.batch == screen.batch) else {
             return Ok(None);
         };
@@ -4198,20 +4069,6 @@ impl Hardware {
         if screen.batch >= self.batch {
             self.submit()?;
         }
-        Ok(Some(self.screen_area(view, screen)))
-    }
-
-    /// the surface a screen's picture was transferred into.
-    fn screen_surface(&self, screen: ScreenRef) -> Option<usize> {
-        let (row_pixels, rows) = screen.size;
-        self.surfaces.iter().position(|s| {
-            s.addr == screen.addr && s.width == row_pixels && s.height == rows && s.kind == Kind::Color(screen.format) && !s.tiled
-        })
-    }
-
-    /// a screen's picture as the presenter takes it, in an upright image.
-    fn screen_area(&self, view: vk::ImageView, screen: ScreenRef) -> crate::GpuScreen {
-        let (row_pixels, rows) = screen.size;
         // the rows of the surface the screen shows are columns of the upright
         // picture, the pixels of each run down it from the bottom of a row
         let scale = self.scale;
@@ -4219,11 +4076,11 @@ impl Hardware {
         let (width, height) = ((rows * scale) as f32, (row_pixels * scale) as f32);
         let (left, right) = ((first * scale) as f32, ((first + count) * scale) as f32);
         let (top, bottom) = (((row_pixels - screen.columns) * scale) as f32, (row_pixels * scale) as f32);
-        crate::GpuScreen {
+        Ok(Some(crate::GpuScreen {
             view,
             area: [left / width, top / height, (right - left) / width, (bottom - top) / height],
             bounds: [(left + 0.5) / width, (top + 0.5) / height, (right - 0.5) / width, (bottom - 0.5) / height],
-        }
+        }))
     }
 
     /// the newest picture a display transfer left in a buffer for a screen,
@@ -4502,7 +4359,6 @@ impl Hardware {
                 self.destroy_image(&copy.image);
             }
         }
-        self.retire_twin_copies();
         Ok(())
     }
 
@@ -4828,7 +4684,6 @@ impl Drop for Hardware {
                 }
             }
             self.destroy_image(&self.blank);
-            self.destroy_twins();
             let captures = self.surfaces.iter().flat_map(|s| [&s.capture, &s.screen]).filter_map(|c| c.as_ref().map(|c| &c.buffer));
             let rings = self.free.iter().chain(&self.in_flight).map(|frame| &frame.ring);
             let buffers = [Some(&self.ring), self.readback.as_ref()].into_iter().flatten().chain(rings);

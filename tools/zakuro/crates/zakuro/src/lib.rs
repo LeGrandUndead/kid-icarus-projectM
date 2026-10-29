@@ -14,9 +14,7 @@ mod present;
 mod pc_presentation;
 mod ram_snapshot;
 mod kiu_jump;
-mod rom_prefetch;
 mod top_menus;
-mod white_watch;
 mod recompile;
 mod report;
 mod settings;
@@ -123,8 +121,6 @@ pub fn run(linked: Option<Linked>) {
         land_seen: None,
         space_jump: kiu_jump::SpaceJump::default(),
         top_menu: top_menus::Shown::default(),
-        white_watch: white_watch::WhiteWatch::default(),
-        present_failures: 0,
         tap: top_menus::Tap::default(),
         released_for_menu: false,
     };
@@ -394,10 +390,6 @@ struct App {
     space_jump: kiu_jump::SpaceJump,
     /// the game's menu answered from the top screen now (top_menus)
     top_menu: top_menus::Shown,
-    /// the chapter 9 white-out experiment
-    white_watch: white_watch::WhiteWatch,
-    /// frames in a row the presenter could not show
-    present_failures: u32,
     /// a touch the top-screen buttons asked for, given over a few frames
     tap: top_menus::Tap,
     /// the mouse was let go for a top-screen menu, to take back for play
@@ -631,9 +623,6 @@ impl App {
             None => None,
         };
         let system = loader::load(path, config).map_err(|error| format!("could not open {}, {error}", path.display()))?;
-        if path.is_file() {
-            rom_prefetch::start(path.to_owned());
-        }
         let name = self
             .library
             .games
@@ -653,8 +642,6 @@ impl App {
                 Err(error) => log::warn!("could not record to {}, {error}", record.display()),
             }
         }
-        // where the emulated CPU's time goes, for stalls (F4 marks a moment)
-        game.system.thread_time = Some(zakuro_core::thread_time::ThreadTime::open());
         self.game = Some(game);
         self.menus.menu_open = false;
         self.set_mouse_capture(false);
@@ -671,7 +658,7 @@ impl App {
             audio.clear();
         }
         self.menus.fast_forward = false;
-        zakuro_gpu::interpolation::set_fast_forward(false);
+        zakuro_core::kiu_frame_rate::set_fast_forward(false);
         self.menus.menu_open = false;
         self.set_mouse_capture(false);
         self.keyboard.release();
@@ -725,14 +712,6 @@ impl App {
                 }
                 KeyCode::F3 if self.game.is_some() => {
                     self.set_fast_forward(!self.menus.fast_forward);
-                    return;
-                }
-                KeyCode::F4 if self.game.is_some() => {
-                    if let Some(game) = &mut self.game {
-                        let frame = game.system.frames;
-                        if let Some(time) = &mut game.system.thread_time { time.mark(frame, "F4 pressed"); }
-                        log::info!("marked frame {frame} in build/diagnostics/thread-time.log");
-                    }
                     return;
                 }
                 KeyCode::F1 => {
@@ -1215,7 +1194,7 @@ impl App {
     /// draw), no sound, frames run back to back.
     fn set_fast_forward(&mut self, on: bool) {
         self.menus.fast_forward = on;
-        zakuro_gpu::interpolation::set_fast_forward(on);
+        zakuro_core::kiu_frame_rate::set_fast_forward(on);
         if let Some(audio) = &self.audio {
             audio.clear();
         }
@@ -1278,8 +1257,6 @@ impl App {
         zakuro_gpu::kiu_ui::begin_frame();
         zakuro_gpu::diagnostic_frame(game.frame);
         let outcome = game.system.run_frame();
-        let input_state = format!("mouse captured {}, touch {:?}, camera publications {}", self.mouse_captured, input.touch, game.system.memory.kiu_mouse_publications());
-        self.white_watch.frame(&mut game.system, game.frame, &input_state);
         let scene = zakuro_gpu::kiu_ui::end_frame();
         self.top_menu.update(&scene, game.frame);
         let land = game.system.memory.kiu_land_publications();
@@ -1415,19 +1392,10 @@ impl App {
             &overlay,
         );
         match result {
-            Ok(()) | Err(PresentError::OutOfDate) => self.present_failures = 0,
-            // one frame not shown is not worth ending the game over (an
-            // overlay allocation, a busy swapchain): skip it, and give up
-            // only when frames keep failing for two seconds
+            Ok(()) | Err(PresentError::OutOfDate) => {}
             Err(error) => {
-                self.present_failures += 1;
-                if self.present_failures == 1 {
-                    log::error!("presentation failed: {error} (frame skipped)");
-                }
-                if self.present_failures >= 120 {
-                    log::error!("presentation failed {} frames in a row: {error}; closing", self.present_failures);
-                    event_loop.exit();
-                }
+                log::error!("presentation failed: {error}");
+                event_loop.exit();
             }
         }
     }
