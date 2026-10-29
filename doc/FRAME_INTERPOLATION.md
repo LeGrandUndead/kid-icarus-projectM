@@ -1,5 +1,10 @@
 # 60 FPS: frame interpolation
 
+> Set aside October 29 (`doc/ROLLBACK_2026-10-29.md`): in-between frames still
+> looked like 30 for most of a session, and the 60 Hz logic mode is in use
+> again with its white screens fixed ([WARP_WHITE_SCREEN.md](WARP_WHITE_SCREEN.md)).
+> The code is in git history (`d1c8774` to `e697423`).
+
 Kid Icarus: Uprising runs at 30 frames a second, so it draws a new picture
 every other vertical blank. With **Settings > Graphics > 60 FPS** on, the
 renderer shows a picture between each two the game draws, with everything

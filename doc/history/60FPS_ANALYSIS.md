@@ -1,8 +1,10 @@
 # 60 FPS analysis
 
-> Superseded, October 28: the 60 Hz logic mode this describes caused the
-> chapter 9 white screens and was removed. 60 FPS is now frame
-> interpolation, which leaves the game at 30: see `doc/FRAME_INTERPOLATION.md`.
+> October 29: this is the 60 FPS mode in use again (`kiu_frame_rate.rs`).
+> The chapter 9 white screens it caused are fixed in
+> [WARP_WHITE_SCREEN.md](../WARP_WHITE_SCREEN.md); frame interpolation,
+> tried in its place on October 28, is set aside
+> ([FRAME_INTERPOLATION.md](../FRAME_INTERPOLATION.md)).
 
 ## What controls the rates today
 

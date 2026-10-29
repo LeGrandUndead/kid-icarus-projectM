@@ -1,0 +1,50 @@
+# Names we gave parts of Kid Icarus: Uprising (USA, 0004000000030100) as we
+# understood them, read by tools/re/kiu_map.py. One per line:
+#   address  name  what it is (and where it was worked out)
+# Addresses are the game's own; nothing of its code is here.
+
+# frame timing (doc/history/60FPS_ANALYSIS.md)
+00D63824  DisplayScheduler.instance      the display scheduler: +0x54 blanks per frame (2), +0xB0 elapsed ticks
+00828E30  UpdateStep                     float 2.0: the update step in 60ths of a second (1.0 in the 60 FPS mode)
+00917618  ObjectAges.tick                increments every object's "updates alive" counter (+0xB0), once a game update
+
+# screen fades (doc/WARP_WHITE_SCREEN.md)
+00D63620  ScreenFader.instance           per-screen faders at +0xB8; per layer 0x48, per slot 4: colour +0x1C, amount +0x2C, target +0x3C, rate +0x4C
+00475E20  ScreenFader.get                get-or-create of the screen fader
+00538B34  ScreenFade.start               (manager, isBlack, fadeIn, screen, frames, [sp] layer): fade slot 1 to white or black
+00461060  ScreenFader.startOnScreen      picks the screen's fader, rate = 1/frames
+004641E0  Fader.start                    writes colour, target and rate of a layer's slot
+00390D64  Fader.fadeTo                   rate = (target - amount) / frames
+00390D40  Fader.clear                    amount, target and rate to 0
+
+# warps (doc/WARP_WHITE_SCREEN.md)
+00820B50  WarpController.update          states: 0 fade out, 1 hold, 2 move, 3 fade in, 4 end, -1 idle; member +0x524 of its owner
+0082115C  WarpController.request         from anime_command::WarpControl; +0xAC set when no destination (no fades)
+00AE0090  anime_command::Warp.run        sends the player a teleport to a named destination
+00AEAD80  anime_command::StartFade.run   kind 0 white / 1 black ...; layer, screen, frame_, isFadeIn_
+
+# animation scripts
+0048CB3C  AnimeScript.runCommands        runs a script's commands in order until one is not done (vtable +0x20, +0x24)
+0048CA44  AnimeScript.update             one script's update, from the actor's animation component
+
+# managers seen
+00D635E0  GameManager.instance           the most used singleton (588 uses); stage, warp destinations (+0x1E9AC), player lookups
+
+# the frame (doc/GAME_ARCHITECTURE.md): main loop, task manager, phases
+00102AB0  App.mainLoop                   until quit: per-frame setup, every system in the list at +0x48 (vfunc 0), frame count
+00BA9A50  TaskManager.run                15 phases in order, each a list of tasks; calls task vfunc +0x14
+00916FAC  ProfileScope.begin             (scope, "name", ...): the game's profiler; its names mark the per-frame systems
+00D637AC  TaskManager.instance           the gameplay task manager (instance 0x00F2E4B0); 0x00D637A4 and 0x00D637B4 hold two more of the same class
+
+# the managers that own the frame's tasks (singletons; phase in brackets)
+00D636D4  Phase1Manager?.instance        [1] task at +0x20, update 0x00A3FF68
+00D636E4  InputManager.instance          [2] InputTaskUpdate
+00D635C8  SequenceManagerA?.instance     [3] SequenceTaskUpdate
+00D635D8  SequenceManagerB?.instance     [3] SequenceTaskUpdate
+00D63648  OnlineAvatarManager?.instance  [3] SequenceTaskUpdate, AvatarOnlineWork, BltNetManageProc
+00D63638  EnemyCommonManager?.instance   [3] SequenceTaskUpdate, EnemyCommonWork, EzBillboardProc
+00D635F0  ScreenFadeManager.instance     [4] the `this` of ScreenFade.start (0x00538B34); SoundLocator
+00D636F4  StageManager.instance          [6] StageTaskPostUpdate; [+0x80]+4 is the player, whose +0x524 is the warp controller
+00D636CC  ActorManager.instance          [8] ActorTaskUpdate, ActorTaskEvCalc, ActorTaskPostUpdate
+00D636BC  Phase9Manager?.instance        [9] task update 0x00A33D28
+00D63608  GeneratorManager?.instance     [12] SequenceTaskUpdate, GeneratorWork

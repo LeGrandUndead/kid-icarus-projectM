@@ -1,12 +1,19 @@
 # Project documentation
 
+Start here:
+
+- [Architecture](ARCHITECTURE.md): the runtime and the game library, one frame end to end, where every Kid Icarus change is.
+- [Game architecture](GAME_ARCHITECTURE.md): the game inside: its frame, managers, classes and scripts, the map tool, and how to find and change things.
+- [The white after warps](WARP_WHITE_SCREEN.md): the 60 FPS warp fix, the worked example of that method.
+- [Rollback of October 29](ROLLBACK_2026-10-29.md): what was set aside, to bring back one piece at a time.
+
 Current build: `Launch-KIU.cmd` (PC interface). Documents that mention other
 `Launch-KIU-*.cmd` launchers describe builds archived on October 16; they are
 kept as the record of how the current build was reached.
 
 - [HUD asset reconstruction](PC_HUD_ASSET_RECONSTRUCTION.md): the HUD rebuilt from the ROM, methods and checks.
 - [Power state](POWER_STATE.md): where the equipped power lives in game memory.
-- Engine and runtime: [native coverage](NATIVE_COVERAGE.md), [performance baseline](PERFORMANCE_BASELINE.md), [60 FPS (frame interpolation)](FRAME_INTERPOLATION.md), [old 60 Hz logic analysis](history/60FPS_ANALYSIS.md), [culling and pop-in](CULLING_AND_POP_IN.md), [Zakuro dependency census](ZAKURO_DEPENDENCY_CENSUS.md), [KIU Runtime v0](KIU_RUNTIME_V0.md).
+- Engine and runtime: [native coverage](NATIVE_COVERAGE.md), [performance baseline](PERFORMANCE_BASELINE.md), [60 FPS mode](history/60FPS_ANALYSIS.md), [frame interpolation (set aside)](FRAME_INTERPOLATION.md), [culling and pop-in](CULLING_AND_POP_IN.md), [Zakuro dependency census](ZAKURO_DEPENDENCY_CENSUS.md), [KIU Runtime v0](KIU_RUNTIME_V0.md).
 - [Interpreted code](INTERPRETED.md): what still runs in the interpreter and how the library is rebuilt to cover it.
 
 - [Single-screen status](PC_SINGLE_SCREEN_STATUS.md): what currently works, what is still dual-screen, launchers and fallbacks.
