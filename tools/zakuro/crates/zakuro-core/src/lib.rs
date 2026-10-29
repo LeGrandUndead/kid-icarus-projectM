@@ -5,7 +5,7 @@ pub mod cro;
 mod frame_probe;
 mod kiu_frame_interval;
 pub mod kiu_frame_rate;
-pub mod kiu_fade_trace;
+pub mod kiu_warp_fade;
 pub mod hints;
 pub mod kernel;
 pub mod loader;
@@ -97,9 +97,9 @@ pub enum FrameOutcome {
 pub type Screen = (std::sync::Arc<Vec<u8>>, u32, u32);
 
 pub struct System {
-    /// diagnostic, temporary: the white screens after warps at 60 FPS,
-    /// see kiu_fade_trace.rs. made at the first frame of the game it is for.
-    fade_trace: Option<Option<kiu_fade_trace::FadeTrace>>,
+    /// Kid Icarus: Uprising's warp scripts cut off before they fade back
+    /// in (60 FPS mode), see kiu_warp_fade.rs.
+    warp_fade: kiu_warp_fade::WarpFade,
     pub cpu: Cpu,
     pub memory: Memory,
     pub kernel: Kernel,
@@ -207,7 +207,7 @@ impl System {
             services_seen: BTreeSet::new(),
             lcd_force_black: false,
             showing: [None, None],
-            fade_trace: None,
+            warp_fade: kiu_warp_fade::WarpFade::default(),
             cro: cro::CroManager::default(),
             fatal_errors: Vec::new(),
             undefined_seen: BTreeMap::new(),
@@ -588,10 +588,7 @@ impl System {
     fn end_frame(&mut self) {
         self.frames += 1;
         if self.kernel.program_id == 0x0004000000030100 {
-            let trace = self.fade_trace.get_or_insert_with(kiu_fade_trace::FadeTrace::open);
-            if let Some(trace) = trace {
-                trace.frame(&mut self.memory, self.frames, kiu_frame_rate::active_rate());
-            }
+            self.warp_fade.frame(&mut self.memory, self.frames);
         }
         if let Some(usage) = &mut self.usage {
             usage.end_frame();
