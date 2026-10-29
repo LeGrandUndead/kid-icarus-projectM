@@ -38,11 +38,11 @@ fn path() -> Option<std::path::PathBuf> {
 
 fn setting() -> &'static AtomicBool {
     static VALUE: OnceLock<AtomicBool> = OnceLock::new();
-    // off whatever the saved choice or KIU_60FPS say: running the game's
-    // logic twice as often is what made the screen stay white after warps
-    // (chapter 9, October 28; doc/FRAME_INTERPOLATION.md). 60 FPS is being
-    // redone without touching the game's logic.
-    VALUE.get_or_init(|| AtomicBool::new(false))
+    VALUE.get_or_init(|| {
+        let saved = path().and_then(|p| std::fs::read_to_string(p).ok());
+        let on = std::env::var("KIU_60FPS").ok().or(saved).map(|v| v.trim() == "1").unwrap_or(false);
+        AtomicBool::new(on)
+    })
 }
 
 /// whether the 60 fps mode is wanted.
