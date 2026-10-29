@@ -24,12 +24,14 @@ use std::collections::HashMap;
 
 use ash::vk;
 
-use super::interpolate::{Interpolator, Uniforms};
+use super::interpolate::{Interpolator, Outcome, Uniforms};
+use super::report::Report;
 use super::{
     Draw, DrawCommand, Geometry, Hardware, Image, Inputs, Kind, Shading, COLOR_FORMAT,
     DEPTH_FORMAT, SHADING_SIZE,
 };
 use crate::raster::DrawnTexture;
+use crate::shader::transforms::Transforms;
 use crate::shader::FLOAT_UNIFORMS;
 use crate::ScreenRef;
 
@@ -47,6 +49,8 @@ pub(super) struct Twins {
     frames: u64,
     /// what the frames since the last log line came to.
     period: Period,
+    /// every draw of a few frames written out, see report.rs.
+    report: Report,
 }
 
 /// totals over the frames between two log lines.
@@ -60,6 +64,14 @@ struct Period {
     /// twins overwritten by their surface, as guest memory changed under it:
     /// the in-between picture of that surface is the real one then.
     reloads: u32,
+    /// in-between pictures asked for and shown, and why the rest were not:
+    /// the screen's buffer has no surface or twin, its twin is of another
+    /// transfer, or the frame was a cut.
+    asked: u32,
+    shown: u32,
+    no_twin: u32,
+    stale: u32,
+    cut: u32,
 }
 
 struct Twin {
@@ -125,16 +137,23 @@ impl Hardware {
                 let p = std::mem::take(&mut self.twins.period);
                 let per = |n: u32| n as f32 / p.frames.max(1) as f32;
                 log::info!(
-                    "in-between frames, last {}: {:.0} draws with transforms each, {:.0} blended, {:.1} jumped, {} cuts, {:.1} twins reloaded from memory",
+                    "in-between frames, last {}: {:.0} draws with transforms each, {:.0} blended, {:.1} jumped, {} cuts, {:.1} twins reloaded from memory; shown {} of {} asked ({} no twin, {} of another transfer, {} cuts)",
                     p.frames,
                     per(p.drawn),
                     per(p.matched - p.jumped),
                     per(p.jumped),
                     p.cuts,
-                    per(p.reloads)
+                    per(p.reloads),
+                    p.shown,
+                    p.asked,
+                    p.no_twin,
+                    p.stale,
+                    p.cut
                 );
             }
             self.twins.interpolator.end_frame();
+            let frames = self.twins.frames;
+            self.twins.report.end_frame(frames);
         }
         let wanted = crate::interpolation::wanted();
         if wanted != self.twins.on {
@@ -263,11 +282,13 @@ impl Hardware {
                 image.image_view = view;
             }
         }
+        let mut seen = (0, Transforms::default());
         if let (Geometry::Shaded(shading), Some(vertex)) = (draw.geometry, command.vertex.as_mut())
         {
             let transforms = self.twins.interpolator.transforms(shading.unit);
+            let key = draw_key(draw, shading);
+            seen = (key, transforms);
             if transforms.all != 0 {
-                let key = draw_key(draw, shading);
                 let mut blended: Uniforms = [[0.0; 4]; FLOAT_UNIFORMS];
                 if self.twins.interpolator.blend(
                     key,
@@ -293,6 +314,10 @@ impl Hardware {
                     vertex[1] = vertex[1].offset(offset);
                 }
             }
+        }
+        if self.twins.report.on() {
+            let outcome = if seen.1.all != 0 { self.twins.interpolator.outcome() } else { Outcome::default() };
+            self.twins.report.draw(draw, seen.0, seen.1, outcome);
         }
         self.twins.pending.push(command);
         Ok(())
@@ -446,17 +471,25 @@ impl Hardware {
         if !self.twins.on {
             return Ok(None);
         }
-        let Some(index) = self.screen_surface(screen) else {
+        self.twins.period.asked += 1;
+        let upright = self
+            .screen_surface(screen)
+            .and_then(|index| self.twin(index))
+            .and_then(|twin| twin.upright.as_ref());
+        let Some(upright) = upright else {
+            self.twins.period.no_twin += 1;
             return Ok(None);
         };
-        let Some(upright) = self
-            .twin(index)
-            .and_then(|twin| twin.upright.as_ref())
-            .filter(|u| u.batch == screen.batch && u.shown)
-        else {
+        if upright.batch != screen.batch {
+            self.twins.period.stale += 1;
             return Ok(None);
-        };
+        }
+        if !upright.shown {
+            self.twins.period.cut += 1;
+            return Ok(None);
+        }
         let view = upright.image.view;
+        self.twins.period.shown += 1;
         if screen.batch >= self.batch {
             self.submit()?;
         }

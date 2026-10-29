@@ -89,6 +89,16 @@ The frame boundary is the top screen's buffer swap (`Gpu::set_framebuffer`).
   how many frames were cuts, and how many twins were reloaded from guest
   memory per frame (a surface whose memory the CPU or another buffer
   changed; its in-between picture is the real one).
+- **Refreshes:** every 600 refreshes the log also says how many brought
+  a new picture with an in-between one before it, how many a new picture
+  the very next refresh (nothing to show between), and how many the same
+  picture again; and of the in-between pictures asked for, how many were
+  shown, and why not the rest.
+- **Report:** with 60 FPS on, three frames in a row are written every 15
+  seconds (16 times a session) to `build/diagnostics/interpolation/`:
+  every draw, what it was recognised by, whether it matched, jumped or
+  blended, all its float uniforms, and the vertex programs. The layout is
+  in `raster/hardware/report.rs`.
 - **Tests:** `cargo test -p zakuro-gpu --features vulkan` covers the shader
   analysis, the matching, and a draw end to end:
   `the_in_between_frame_draws_a_moving_quad_halfway`. In that test the twin

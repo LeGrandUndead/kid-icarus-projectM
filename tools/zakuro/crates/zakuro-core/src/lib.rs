@@ -117,6 +117,11 @@ pub struct System {
     /// the top screen's last new picture and the frame it came at, for
     /// showing its in-between picture first, see gpu_screen.
     top_picture: Option<(zakuro_gpu::ScreenRef, u64)>,
+    /// how the refreshes with interpolation on went, for the log: a new
+    /// picture two or more refreshes after the last (an in-between one is
+    /// asked for), one the very next refresh (the game drawing every
+    /// refresh), and the same picture again.
+    refreshes: [u32; 3],
     /// the dynamic module loader's state.
     pub cro: cro::CroManager,
     /// errors the title reported through err:f, newest last.
@@ -210,6 +215,7 @@ impl System {
             lcd_force_black: false,
             showing: [None, None],
             top_picture: None,
+            refreshes: [0; 3],
             cro: cro::CroManager::default(),
             fatal_errors: Vec::new(),
             undefined_seen: BTreeMap::new(),
@@ -835,15 +841,21 @@ impl System {
         if !self.gpu.interpolating() {
             return None;
         }
-        match last {
+        let kind = match last {
             Some((before, _)) if before == now => {
                 // the same picture: shown in between last time, itself now
                 self.top_picture = last;
-                None
+                2
             }
-            Some((_, at)) if frame - at >= 2 => self.gpu.in_between_image(now),
-            _ => None,
+            Some((_, at)) if frame - at >= 2 => 0,
+            _ => 1,
+        };
+        self.refreshes[kind] += 1;
+        if self.refreshes.iter().sum::<u32>() >= 600 {
+            let [new, next, same] = std::mem::take(&mut self.refreshes);
+            log::info!("refreshes, last 600: {new} new pictures with one in between, {next} new the very next refresh, {same} the same again");
         }
+        if kind == 0 { self.gpu.in_between_image(now) } else { None }
     }
 
     /// the picture the host's GPU drew scaled for a screen, when it is still

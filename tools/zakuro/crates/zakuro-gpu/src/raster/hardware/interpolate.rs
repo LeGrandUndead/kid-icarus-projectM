@@ -44,6 +44,17 @@ pub(super) struct Interpolator {
     /// uniform blocks to reuse.
     spare: Vec<Box<Uniforms>>,
     frame: Counts,
+    /// what became of the last draw blend saw.
+    last: Outcome,
+}
+
+/// what became of one draw: whether it matched one of the frame before,
+/// turned too far to blend, and was drawn blended.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub(super) struct Outcome {
+    pub(super) matched: bool,
+    pub(super) jumped: bool,
+    pub(super) blended: bool,
 }
 
 struct Entry {
@@ -80,6 +91,7 @@ impl Interpolator {
         uniforms: &Uniforms,
         blended: &mut Uniforms,
     ) -> bool {
+        self.last = Outcome::default();
         if transforms.all == 0 {
             return false;
         }
@@ -111,8 +123,10 @@ impl Interpolator {
         let Some(before) = closest else { return false };
         before.taken = true;
         self.frame.matched += 1;
+        self.last.matched = true;
         if jumped(transforms.direct, &before.uniforms, uniforms) {
             self.frame.jumped += 1;
+            self.last.jumped = true;
             return false;
         }
         blended.copy_from_slice(uniforms);
@@ -126,7 +140,13 @@ impl Interpolator {
                 }
             }
         }
+        self.last.blended = changed;
         changed
+    }
+
+    /// what became of the last draw blend saw.
+    pub(super) fn outcome(&self) -> Outcome {
+        self.last
     }
 
     /// whether so many draws of the frame so far jumped that it is a cut.

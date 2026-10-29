@@ -36,6 +36,7 @@ use crate::shader::{Program, ShaderUnit, Vec4, DESCRIPTOR_SIZE, INPUT_REGISTERS,
 use crate::GpuMemory;
 
 mod interpolate;
+mod report;
 mod twin;
 
 const SHADE_SPIRV: &[u8] = include_bytes!("../../shaders/shade.vert.spv");
