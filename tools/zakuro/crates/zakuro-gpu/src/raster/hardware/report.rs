@@ -202,7 +202,7 @@ impl Report {
 /// what a texture unit samples, as the matching sees it, 0 for nothing.
 fn texture(draw: &Draw, unit: usize) -> u64 {
     match draw.textures.get(unit) {
-        Some(Some(bound)) => bound.source_hash.or(bound.drawn.map(|d| d.addr as u64)).unwrap_or(1),
+        Some(Some(bound)) => bound.addr as u64 | 1 << 32,
         _ => 0,
     }
 }

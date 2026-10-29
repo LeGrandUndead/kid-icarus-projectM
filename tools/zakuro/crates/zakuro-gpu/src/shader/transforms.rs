@@ -15,7 +15,11 @@
 //! A uniform counts as a transform where the program uses it as a matrix:
 //! - an operand of dp3, dp4 or dph, a row of a matrix applied to a vector;
 //! - multiplied by one component of another vector repeated (`mul r0,
-//!   c0, v0.xxxx`, `mad r0, v0.yyyy, c1, r0`), a column applied to one.
+//!   c0, v0.xxxx`, `mad r0, v0.yyyy, c1, r0`), a column applied to one;
+//! - added to such columns applied (`add r0, c3, r0` after the above), the
+//!   column a vector's w of 1 would have picked, the translation, which
+//!   compilers add on its own rather than multiply by 1. Followed through
+//!   the temporary registers in program order.
 //!
 //! Read relative to an address register (`dp4 r0, c[a0.x + 20], v0`, the
 //! bone palettes of skinned models), every uniform from the base on counts,
@@ -54,33 +58,35 @@ pub fn transform_uniforms(
     let mut transform = 0u128;
     let mut direct = 0u128;
     let mut other = 0u128;
-    for pc in reachable(program, entry) {
+    // temporaries holding columns applied to a vector, bit per register
+    let mut columns = 0u16;
+    let temporary = |register: u32| (0x10..0x20).contains(&register).then(|| register - 0x10);
+    let mut pcs = reachable(program, entry);
+    pcs.sort_unstable();
+    for pc in pcs {
         let instruction = Instruction(program[pc]);
         let op = instruction.opcode();
-        let (uniform, relative, use_) = match op {
+        let (uniform, relative, use_, written) = match op {
             OpCode::Mad | OpCode::MadI => {
                 let (src1, src2, src3) = instruction.mad_sources();
                 let descriptor = OperandDescriptor(
                     descriptors[instruction.mad_descriptor_index() as usize % DESCRIPTOR_SIZE],
                 );
                 let relative = instruction.mad_address_register_index() != 0;
+                let written = (instruction.mad_destination(), false);
                 if op == OpCode::Mad {
                     // src1 * src2 + src3, src2 the wide one: a column when
                     // the other factor is one component repeated
                     let broadcast = is_broadcast(descriptor.source(1).0);
-                    (
-                        src2,
-                        relative,
-                        if broadcast {
-                            Use::Transform
-                        } else {
-                            Use::Other
-                        },
-                    )
+                    if broadcast {
+                        (src2, relative, Use::Transform, (written.0, src2 >= UNIFORM_BASE))
+                    } else {
+                        (src2, relative, Use::Other, written)
+                    }
                 } else {
                     // the wide one is what is added
                     let _ = src1;
-                    (src3, relative, Use::Other)
+                    (src3, relative, Use::Other, written)
                 }
             }
             op if op.writes() || matches!(op, OpCode::Mova | OpCode::Cmp) => {
@@ -90,16 +96,32 @@ pub fn transform_uniforms(
                 );
                 let relative = instruction.address_register_index() != 0;
                 let wide = if op.is_inverted() { src2 } else { src1 };
-                let use_ = match op {
-                    OpCode::Dp3 | OpCode::Dp4 | OpCode::Dph | OpCode::DphI => Use::Transform,
+                let onto_columns = temporary(src2).is_some_and(|t| columns & 1 << t != 0);
+                let (use_, column) = match op {
+                    OpCode::Dp3 | OpCode::Dp4 | OpCode::Dph | OpCode::DphI => (Use::Transform, false),
                     // the narrow operand is the second source
-                    OpCode::Mul if is_broadcast(descriptor.source(2).0) => Use::Transform,
-                    _ => Use::Other,
+                    OpCode::Mul if is_broadcast(descriptor.source(2).0) => (Use::Transform, wide >= UNIFORM_BASE),
+                    // a translation added to columns applied, or two
+                    // partial sums of them added together
+                    OpCode::Add if onto_columns => {
+                        let both = temporary(src1).is_some_and(|t| columns & 1 << t != 0);
+                        (if wide >= UNIFORM_BASE { Use::Transform } else { Use::Other }, wide >= UNIFORM_BASE || both)
+                    }
+                    _ => (Use::Other, false),
                 };
-                (wide, relative, use_)
+                let written = if op.writes() { instruction.destination() } else { u32::MAX };
+                (wide, relative, use_, (written, column))
             }
             _ => continue,
         };
+        let (destination, column) = written;
+        if let Some(t) = temporary(destination) {
+            if column {
+                columns |= 1 << t;
+            } else {
+                columns &= !(1 << t);
+            }
+        }
         let Some(index) = uniform
             .checked_sub(UNIFORM_BASE)
             .filter(|&i| (i as usize) < FLOAT_UNIFORMS)
@@ -253,6 +275,29 @@ mod tests {
             END,
         ];
         assert_eq!(run(&code, &d), 1 << 4 | 1 << 5);
+    }
+
+    #[test]
+    fn a_translation_added_to_columns_is_a_transform_and_an_offset_to_a_texcoord_is_not() {
+        let d = [
+            descriptor(IDENTITY, XXXX, IDENTITY),
+            descriptor(YYYY, IDENTITY, IDENTITY),
+            descriptor(IDENTITY, IDENTITY, IDENTITY),
+        ];
+        let code = [
+            // r0 = c0 * v0.x + c1 * v0.y, then + c3: a 4x4 with w = 1
+            regular(MUL, 0x10, c(0), 0, 0, 0),
+            mad(0x10, 0, c(1), 0x10, 1),
+            regular(ADD, 0x10, c(3), 0x10, 2, 0),
+            regular(MOV, 0, 0x10, 0, 2, 0),
+            // r1 = v2 + c8: an atlas cell offset on a raw texture coordinate
+            regular(ADD, 0x11, c(8), 2, 2, 0),
+            // r0 rewritten by something else: c9 added to it is no translation
+            regular(MOV, 0x10, 1, 0, 2, 0),
+            regular(ADD, 0x10, c(9), 0x10, 2, 0),
+            END,
+        ];
+        assert_eq!(run(&code, &d), 1 << 0 | 1 << 1 | 1 << 3);
     }
 
     #[test]

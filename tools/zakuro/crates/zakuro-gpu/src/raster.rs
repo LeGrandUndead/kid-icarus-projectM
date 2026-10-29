@@ -966,6 +966,10 @@ fn trace_texture_state(
 
 /// a texture unit's configuration and backing data for one draw call.
 struct BoundTexture {
+    /// where the texture is in guest memory, the same from one frame to
+    /// the next even when its contents change (frame interpolation tells
+    /// draws apart by it).
+    addr: u32,
     source_hash: Option<u64>,
     /// All decoded mip levels, base first, each row-major RGBA8.
     texels: Arc<[[u8; 4]]>,
@@ -1380,6 +1384,7 @@ fn bind_texture<M: GpuMemory>(
     );
 
     Some(BoundTexture {
+        addr,
         source_hash: if drawn.is_none() { cache.entries.get(&key).map(|d|d.hash) } else { None },
         texels,
         drawn,
@@ -3294,6 +3299,7 @@ mod tests {
     #[test]
     fn clamp_to_border_reads_the_border_color() {
         let texture = |wrap: Wrap| BoundTexture {
+            addr: 0,
             source_hash: None,
             drawn: None,
             texels: vec![[0xFF; 4]; 8 * 8].into(),

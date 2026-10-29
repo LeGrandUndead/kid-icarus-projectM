@@ -32,14 +32,17 @@ The work is all in `zakuro-gpu`.
    - it is an operand of `dp3`, `dp4` or `dph`;
    - it is multiplied by one component of another value repeated
      (`mul r0, c4, v0.xxxx`, `mad r0, v0.yyyy, c5, r0`);
-   - it lies in a range read through an address register (bone palettes).
+   - it lies in a range read through an address register (bone palettes);
+   - it is added to columns applied that way (`add r0, c3, r0`): the
+     translation, which compilers add rather than multiply by w = 1.
 
    A uniform used any other way anywhere in the program is excluded: for
    example an atlas cell offset that is added, an index for `mova`, or a
    colour multiplied component by component. Blending those would sample
    between animation cells or digits.
 2. **Which draw is which** (`raster/hardware/interpolate.rs`). A draw is
-   recognised by its program, vertex arrays, textures and target buffers.
+   recognised by its program, vertex arrays, the addresses of its
+   textures (not their contents, which animate) and target buffers.
    Copies of one model take the closest of the previous frame's matching
    draws. Its transform uniforms are blended halfway. These draws are drawn
    as in the new frame instead:

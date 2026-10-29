@@ -588,11 +588,9 @@ fn draw_key(draw: &Draw, shading: &Shading) -> u64 {
         Inputs::Decoded(decoded) => hash = mix(hash, decoded.len() as u64),
     }
     for bound in draw.textures {
-        let texture = bound.as_ref().map_or(0, |b| {
-            b.source_hash
-                .or(b.drawn.map(|d| d.addr as u64))
-                .unwrap_or(1)
-        });
+        // by where it is, not what it holds: an animated texture is still
+        // the same object's
+        let texture = bound.as_ref().map_or(0, |b| b.addr as u64 | 1 << 32);
         hash = mix(hash, texture);
     }
     hash
