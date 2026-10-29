@@ -381,7 +381,11 @@ impl Menus {
                 let mut view=100.0/zakuro_gpu::kiu_ui::camera::scale();
                 if ui.add(egui::Slider::new(&mut view,100.0..=133.33333)
                     .text("Gameplay view").suffix("%").fixed_decimals(0))
-                    .on_hover_text("100% is the original view. Higher values zoom out, but the game still only shows enemies, aim and damage effects inside its original view, so enemies pop in at the edges.")
+                    .on_hover_text(if zakuro_gpu::kiu_ui::camera::game_view() {
+                        "100% is the original view. Higher values zoom the game's own camera out: enemies, aim and markers follow the whole picture."
+                    } else {
+                        "100% is the original view. Higher values zoom out, but the game still only shows enemies, aim and damage effects inside its original view, so enemies pop in at the edges. A game library built with kiu-wide-view.c widens the game's own camera instead."
+                    })
                     .changed() {
                     zakuro_gpu::kiu_ui::camera::set_scale(100.0/view);
                 }

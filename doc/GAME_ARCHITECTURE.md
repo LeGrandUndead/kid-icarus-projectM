@@ -131,6 +131,8 @@ like `YAK_G09_Warp_G05_00` sit beside them.
 | screen fades | `ScreenFader` `0x00D63620` (faders per screen at `+0xB8`), `ScreenFade.start` `0x00538B34` | layout in `kiu_names.txt`, `WARP_WHITE_SCREEN.md` |
 | warps | `WarpController` (player `+0x524`), `anime_command::Warp`, `WarpControl` | `WARP_WHITE_SCREEN.md` |
 | land camera | found through its input readers | `LAND_CAMERA.md`, `memory/kiu_mouse.rs` |
+| cameras and lens | camera: view updater `+0`, projection updater `+4` (fov `+0x10`, aspect `+0x14`), matrix `+0x6C` (`0x00B4F89C`), frustum (`0x00B4F948`), lens cache `+0x114` (`0x0090DC70`) | `WIDE_VIEW.md`, `kiu-wide-view.c` |
+| stage parameters | `0x006F3058`: field of view, near/far, flight camera distance and movable area | `kiu_names.txt` |
 | power palette | count, selection, entries | `POWER_STATE.md`, `kiu_jump.rs` |
 | bottom-screen UI | recognised by its textures | `PC_PRESENTATION.md`, `kiu_ui` |
 

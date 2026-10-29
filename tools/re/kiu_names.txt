@@ -48,3 +48,13 @@
 00D636CC  ActorManager.instance          [8] ActorTaskUpdate, ActorTaskEvCalc, ActorTaskPostUpdate
 00D636BC  Phase9Manager?.instance        [9] task update 0x00A33D28
 00D63608  GeneratorManager?.instance     [12] SequenceTaskUpdate, GeneratorWork
+
+# cameras (doc/WIDE_VIEW.md): psl camera over Nintendo's graphics library
+003901C4  Camera.projectionMatrix        the camera's projection (cached at +0x6C, valid bit 4 of +8): its updater's method 2, or the default lens 0x00D4E248
+0090DC70  Camera.lensCache               tan(fov/2) +0x114, aspect +0x118, fov +0x11C (valid bit 0x20 of +8); perspective updaters (type 1) or the matrix
+0090DC50  Camera.fov                     the cached fov (+0x11C)
+0090DD44  Camera.aspect                  the cached aspect (+0x118)
+00B4F89C  PerspectiveUpdater.matrix      method 2 (table 0x00D20080): the projection from near +8, far +0xC, fov +0x10, aspect +0x14 (top screen 5:3)
+00B4F948  PerspectiveUpdater.frustum     method 3: the culling planes from the same lens; s0 widens the aspect (1 + 2*s0)
+00D4E248  DefaultLens                    near 0.1, far 1000, fov 60 degrees, aspect 4:3, for a camera without a projection updater
+006F3058  StageParam.read                a stage's parameters: near +0x30, far +0x34, fieldOfViewY_ +0x38, airCameraToAvatarDistance_ +0xAC, airMovableAreaHalfW_ +0xB0, airMovableAreaHalfH_ +0xB4

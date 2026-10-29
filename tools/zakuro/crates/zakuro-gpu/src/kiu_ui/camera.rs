@@ -6,7 +6,26 @@
 //! the new edges and the reticle/damage effects keep the original frame.
 //! The PC interface therefore starts at 1 (original view) and keeps the
 //! wider view as an option until culling and aim follow it.
-use std::sync::{atomic::{AtomicU32, Ordering}, OnceLock};
+//!
+//! They do when the game library has `tools/recomp/overrides/kiu-wide-view.c`:
+//! the game's own camera is then widened (zakuro-core `kiu_wide_view.rs`),
+//! which says so through `set_game_view`, and the renderer leaves the
+//! world's projection alone.
+use std::sync::{atomic::{AtomicBool, AtomicU32, Ordering}, OnceLock};
+
+static GAME_VIEW: AtomicBool = AtomicBool::new(false);
+static WORLD_SEEN: AtomicBool = AtomicBool::new(false);
+
+/// The game widens its own camera (16:9 and the zoom): the world, markers
+/// and reticle are already where they belong.
+pub fn game_view() -> bool { GAME_VIEW.load(Ordering::Relaxed) }
+pub fn set_game_view(on: bool) { GAME_VIEW.store(on, Ordering::Relaxed); }
+
+/// A gameplay world draw (the perspective programs the wide view knows)
+/// reached the top screen.
+pub(crate) fn note_world() { WORLD_SEEN.store(true, Ordering::Relaxed); }
+/// Whether one did since the last call.
+pub fn take_world_seen() -> bool { WORLD_SEEN.swap(false, Ordering::Relaxed) }
 
 /// The PC interface keeps its own value so the October 14 preview keeps its.
 fn pc_interface() -> bool { std::env::var_os("KIU_NATIVE_UI").is_some() }

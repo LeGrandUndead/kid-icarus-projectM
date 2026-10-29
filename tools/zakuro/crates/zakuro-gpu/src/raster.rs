@@ -2160,9 +2160,17 @@ fn kiu_wide_shader(registers: &[u32], unit: &ShaderUnit) -> Option<ShaderUnit> {
     // and the descriptors they actually use define its identity.
     let identity = if matches!(fingerprint, 0x5132E71D8B2FE0FB | 0xFD02797C12EA5C7C | 0x67A1295922939A3A | 0x798D4FC813C0B966) { fingerprint }
         else if kiu_linear_shader_key(unit) == Some(18295097681142006406) {
-            0x19037D7C6A2EE397
+            KIU_HUD
         } else { return None; };
-    let row = kiu_projection_row(identity, &unit.float_uniforms)?;
+    let game_view = crate::kiu_ui::camera::game_view();
+    let row = kiu_projection_row(identity, &unit.float_uniforms, game_view)?;
+    if identity != KIU_HUD { crate::kiu_ui::camera::note_world(); }
+    if game_view {
+        // The game's camera is widened already (kiu-wide-view.c): the world,
+        // markers and reticle stay as drawn. Only the known HP/score batches
+        // are still narrowed and moved to the edges (pin_fixed_hud).
+        return (identity == KIU_HUD).then(|| unit.clone());
+    }
     let mut adjusted = unit.clone();
     for v in &mut adjusted.float_uniforms[row] { *v *= 15.0 / 16.0; }
     let scale=crate::kiu_ui::camera::scale();
@@ -2180,9 +2188,10 @@ fn scale_kiu_view(u:&mut [[f32;4];96], horizontal:usize, scale:f32) {
 }
 
 fn fixed_hud_candidate(adjusted:Option<&ShaderUnit>, original:&ShaderUnit) -> bool {
-    adjusted.is_some() && crate::kiu_ui::camera::scale()!=1.0
+    use crate::kiu_ui::camera;
+    adjusted.is_some() && (camera::scale()!=1.0 || camera::game_view())
         && kiu_linear_shader_key(original)==Some(18295097681142006406)
-        && kiu_projection_row(0x19037D7C6A2EE397,&original.float_uniforms)==Some(1)
+        && kiu_projection_row(KIU_HUD,&original.float_uniforms,false)==Some(1)
 }
 
 // Only known complete HP/score batches opt out of camera zoom. Reticles and
@@ -2281,20 +2290,26 @@ fn kiu_hud_anchor_bounds(bounds: [f32; 4]) -> f32 {
     else { 0.0 }
 }
 
-fn kiu_projection_row(fingerprint: u64, u: &[[f32; 4]; 96]) -> Option<usize> {
+/// The identity of the top screen's orthographic HUD program (HP, score,
+/// markers, reticle).
+const KIU_HUD: u64 = 0x19037D7C6A2EE397;
+
+/// `game_view`: the game's camera is widened already (16:9 lens).
+fn kiu_projection_row(fingerprint: u64, u: &[[f32; 4]; 96], game_view: bool) -> Option<usize> {
     let close = |a: f32, b: f32| a.is_finite() && (a-b).abs() < 0.0001;
+    let aspect = if game_view { 16.0/9.0 } else { 5.0/3.0 };
     match fingerprint {
         // Rotated perspective projection: vertical scale in row 86, horizontal
         // in 87. Preserve vertical FOV; expose 16/15 as much world horizontally.
         0x5132E71D8B2FE0FB | 0xFD02797C12EA5C7C
-            if kiu_perspective(&u[86..90]) => Some(87),
+            if kiu_perspective(&u[86..90], aspect) => Some(87),
         // Recorded alternate effect programs project through rows 0..3.
         // Their translated code is identical across these two memory hashes.
         0x67A1295922939A3A | 0x798D4FC813C0B966
-            if kiu_perspective(&u[0..4]) => Some(1),
+            if kiu_perspective(&u[0..4], aspect) => Some(1),
         // Orthographic HUD, centered in the original safe area with unchanged
         // physical proportions after the top image is presented at 16:9.
-        0x19037D7C6A2EE397 if close(u[0][1], -2.0/240.0)
+        KIU_HUD if close(u[0][1], -2.0/240.0)
             && close(u[1][0], -2.0/400.0)
             && u[1][1..] == [0.0, 0.0, 1.0]
             && u[3] == [0.0, 0.0, 0.0, 1.0] => Some(1),
@@ -2302,13 +2317,14 @@ fn kiu_projection_row(fingerprint: u64, u: &[[f32; 4]; 96]) -> Option<usize> {
     }
 }
 
-fn kiu_perspective(rows: &[[f32; 4]]) -> bool {
+fn kiu_perspective(rows: &[[f32; 4]], aspect: f32) -> bool {
     rows.len() == 4 && rows.iter().flatten().all(|v| v.is_finite())
         && rows[3] == [0.0, 0.0, -1.0, 0.0]
         && rows[0][1] > 0.0 && rows[1][0] < 0.0
         // The title temporarily uploads 1.6656 during camera transitions.
-        // Accept that quantization, but reject 4:3, 16:9 and arbitrary lenses.
-        && (rows[0][1] / -rows[1][0] - 5.0/3.0).abs() < 0.002
+        // Accept that quantization, but reject other screens and arbitrary
+        // lenses (5:3, or 16:9 once the game widens its own camera).
+        && (rows[0][1] / -rows[1][0] - aspect).abs() < 0.002
 }
 
 /// executes a draw call, fetches vertices, shades them, assembles triangles
@@ -2920,28 +2936,43 @@ mod tests {
         u[86][1] = 2.413907;
         u[87][0] = -1.4483442;
         u[89] = [0.0, 0.0, -1.0, 0.0];
-        assert_eq!(kiu_projection_row(0x5132E71D8B2FE0FB, &u), Some(87));
-        assert_eq!(kiu_projection_row(0xCDAF69FC4FB97908, &u), None);
-        assert_eq!(kiu_projection_row(0xFD02797C12EA5C7C, &u), Some(87));
+        assert_eq!(kiu_projection_row(0x5132E71D8B2FE0FB, &u, false), Some(87));
+        assert_eq!(kiu_projection_row(0xCDAF69FC4FB97908, &u, false), None);
+        assert_eq!(kiu_projection_row(0xFD02797C12EA5C7C, &u, false), Some(87));
         u[86][1] = -u[87][0] * 1.6656;
-        assert_eq!(kiu_projection_row(0x5132E71D8B2FE0FB, &u), Some(87));
+        assert_eq!(kiu_projection_row(0x5132E71D8B2FE0FB, &u, false), Some(87));
         u[86][1] = -u[87][0] * (16.0/9.0);
-        assert_eq!(kiu_projection_row(0x5132E71D8B2FE0FB, &u), None);
+        assert_eq!(kiu_projection_row(0x5132E71D8B2FE0FB, &u, false), None);
         u[86][1] = -u[87][0] * (5.0/3.0);
         for i in 0..4 { u[i] = u[86+i]; }
-        assert_eq!(kiu_projection_row(0x67A1295922939A3A, &u), Some(1));
-        assert_eq!(kiu_projection_row(0x798D4FC813C0B966, &u), Some(1));
+        assert_eq!(kiu_projection_row(0x67A1295922939A3A, &u, false), Some(1));
+        assert_eq!(kiu_projection_row(0x798D4FC813C0B966, &u, false), Some(1));
         u[3] = [0.0,0.0,0.0,1.0];
-        assert_eq!(kiu_projection_row(0x67A1295922939A3A, &u), None);
+        assert_eq!(kiu_projection_row(0x67A1295922939A3A, &u, false), None);
         u[87][0] = f32::NAN;
-        assert_eq!(kiu_projection_row(0x5132E71D8B2FE0FB, &u), None);
+        assert_eq!(kiu_projection_row(0x5132E71D8B2FE0FB, &u, false), None);
         u = [[0.0; 4]; 96];
         u[0] = [0.0, -2.0/240.0, 0.0, 1.0];
         u[1] = [-2.0/400.0, 0.0, 0.0, 1.0];
         u[3] = [0.0, 0.0, 0.0, 1.0];
-        assert_eq!(kiu_projection_row(0x19037D7C6A2EE397, &u), Some(1));
+        assert_eq!(kiu_projection_row(0x19037D7C6A2EE397, &u, false), Some(1));
         u[1][0] = -2.0/320.0;
-        assert_eq!(kiu_projection_row(0x19037D7C6A2EE397, &u), None);
+        assert_eq!(kiu_projection_row(0x19037D7C6A2EE397, &u, false), None);
+    }
+
+    #[test]
+    fn once_the_game_widens_its_camera_its_16_9_lens_is_the_world() {
+        let mut u = [[0.0; 4]; 96];
+        u[87][0] = -1.4483442 * 15.0 / 16.0;
+        u[86][1] = -u[87][0] * (16.0/9.0);
+        u[89] = [0.0, 0.0, -1.0, 0.0];
+        assert_eq!(kiu_projection_row(0x5132E71D8B2FE0FB, &u, true), Some(87));
+        assert_eq!(kiu_projection_row(0x5132E71D8B2FE0FB, &u, false), None);
+        // the camera transitions' 1.6656, widened
+        u[86][1] = -u[87][0] * 1.6656 * 16.0 / 15.0;
+        assert_eq!(kiu_projection_row(0x5132E71D8B2FE0FB, &u, true), Some(87));
+        u[86][1] = -u[87][0] * (5.0/3.0);
+        assert_eq!(kiu_projection_row(0x5132E71D8B2FE0FB, &u, true), None);
     }
 
     #[test]

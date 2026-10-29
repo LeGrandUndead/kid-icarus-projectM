@@ -54,6 +54,9 @@ the game, and is not what fixes pop-in at the screen edges.
 
 ## The proper fix for the wide view
 
+Done October 29, needing a library rebuild: the game's own camera is
+widened, see [WIDE_VIEW.md](WIDE_VIEW.md). The plan as first written:
+
 Make the game's culling use the same wider frustum as the drawing:
 
 1. Find the game's camera field of view (or its projection parameters) in

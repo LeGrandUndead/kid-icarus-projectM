@@ -77,7 +77,7 @@ then shows the screens.
    frames into screen images (display transfers).
 4. **End of frame** (`System::end_frame`): vertical-blank interrupts, the
    clock, timers, and the game-specific work that runs once a frame
-   (`kiu_warp_fade.rs`).
+   (`kiu_warp_fade.rs`, `kiu_wide_view.rs`).
 5. **Sound**: the DSP is emulated at a high level (`services/dsp*.rs`);
    the frame's samples go to the host's output (`zakuro/src/audio.rs`).
 6. **Showing**: `App::present` hands the screens to the presenter
@@ -100,6 +100,7 @@ Everything specific to the game, by where it acts.
 | game logic | `zakuro-core/src/kiu_frame_rate.rs` | 60 FPS mode: the display scheduler's interval and update step |
 | game logic | `tools/recomp/overrides/kiu-60fps.c` | 60 FPS mode: per-object update counters at half rate |
 | game logic | `zakuro-core/src/kiu_warp_fade.rs` | the white after warps: finishing a cut-off warp script's fade-in |
+| game logic | `tools/recomp/overrides/kiu-wide-view.c`, `zakuro-core/src/kiu_wide_view.rs` | the 16:9 view and zoom made by the game's own camera |
 | game input | `zakuro-core/src/memory/kiu_mouse.rs` | mouse camera on land, flight aim |
 | game input | `zakuro-core/src/services/hid.rs` | circle pad range (156) |
 | frontend input | `zakuro/src/input.rs`, `kiu_jump.rs` | keyboard and mouse controls, Space jump |
