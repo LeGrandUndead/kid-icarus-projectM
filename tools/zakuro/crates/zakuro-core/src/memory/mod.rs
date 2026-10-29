@@ -833,4 +833,12 @@ pub struct WatchHit {
     pub size: u8,
     pub pc: u32,
     pub lr: u32,
+    /// r0 to r12 and the stack pointer when the write was made.
+    pub regs: [u32; 14],
+    /// the words from the stack pointer up, where the callers' return
+    /// addresses and saved registers are.
+    pub stack: [u32; STACK_WORDS],
 }
+
+/// the words of the stack a WatchHit keeps.
+pub const STACK_WORDS: usize = 48;

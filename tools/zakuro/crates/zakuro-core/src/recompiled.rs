@@ -146,7 +146,13 @@ unsafe fn watch(ctx: *mut Context, address: u32, value: u32, size: u8) {
     let memory = unsafe { &mut *machine(ctx).memory };
     if memory.watched(address, size as u32) && memory.watch_hits.len() < 4_000_000 {
         let context = unsafe { &*ctx };
-        memory.watch_hits.push(crate::memory::WatchHit { address, value, size, pc: context.r[15], lr: context.r[14] });
+        let mut regs = [0; 14];
+        regs.copy_from_slice(&context.r[..14]);
+        let mut stack = [0; crate::memory::STACK_WORDS];
+        for (i, word) in stack.iter_mut().enumerate() {
+            *word = memory.read32(context.r[13].wrapping_add(4 * i as u32));
+        }
+        memory.watch_hits.push(crate::memory::WatchHit { address, value, size, pc: context.r[15], lr: context.r[14], regs, stack });
     }
 }
 
