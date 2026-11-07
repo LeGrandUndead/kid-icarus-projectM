@@ -66,11 +66,17 @@ Remove-Leftover 'tools\toolchains\winlibs.zip'
 ''
 $git = Get-Command git -ErrorAction SilentlyContinue
 if ($git) {
+    # the folder belongs to another Windows account (an older install), so
+    # git refuses it unless told it is safe, for these commands only: the
+    # global git settings are left alone
+    $safe = 'safe.directory=' + ($root -replace '\\', '/')
     $big = '52b9a1ff0484e503a40a4041392320ba929d5145'
-    $kind = & git -C $root cat-file -t $big 2>$null
-    if ($kind) { "git object $big`: $kind, $([math]::Round([int64](& git -C $root cat-file -s $big) / 1GB, 2)) GB" }
+    $kind = & git -c $safe -C $root cat-file -t $big 2>$null
+    if ($kind) { "git object $big`: $kind, $([math]::Round([int64](& git -c $safe -C $root cat-file -s $big) / 1GB, 2)) GB" }
+    & git -c $safe -C $root count-objects -vH 2>&1 | ForEach-Object { "git before: $_" }
     $before = Get-Size (Join-Path $root '.git')
-    & git -C $root gc --prune=now --quiet 2>&1 | ForEach-Object { "git: $_" }
+    & git -c $safe -C $root gc --prune=now --quiet 2>&1 | ForEach-Object { "git: $_" }
+    & git -c $safe -C $root count-objects -vH 2>&1 | ForEach-Object { "git after: $_" }
     $after = Get-Size (Join-Path $root '.git')
     '{0,8:N2} GB  freed    .git (git gc --prune=now: {1:N2} GB left)' -f (($before - $after) / 1GB), ($after / 1GB)
     $script:freed += $before - $after
