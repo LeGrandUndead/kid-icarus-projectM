@@ -129,6 +129,9 @@ Two ways to change the game's behaviour:
 | `Capture-Render.cmd` | builds and starts with F8 render captures |
 | `tools/recomp/Rebuild-KIU-With-Hints.ps1` | regenerates and rebuilds the game library (about two hours) |
 | `tools/recomp/Bench-KIU.ps1` | replays a recording headless, for comparisons |
+| `Rebuild-Library.cmd` | the runtime, then the game library, in one window; does not start the game |
+| `Disk-Report.cmd` | measures the project's folders (reads only), to `build\disk-report.txt` |
+| `Clean-Up.cmd` | deleted the leftovers agreed on November 7 2026 (`tools/recomp/Clean-Up.ps1`, log `build\cleanup.log`); edit its list before using it again |
 
 ## Data and settings
 
