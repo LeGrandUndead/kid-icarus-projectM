@@ -5,6 +5,7 @@ rem second: two frames are written draw by draw to build\texture-traces\<time>
 rem (doc/DIAGNOSTICS.md, Render capture).
 cd /d "%~dp0"
 taskkill /im zakuro-pc-interface.exe >nul 2>&1
+taskkill /im "Kid Icarus Uprising.exe" >nul 2>&1
 timeout /t 2 >nul
 echo Building the runtime, a few minutes...
 powershell -NoProfile -ExecutionPolicy Bypass -File tools\recomp\Build-Runtime.ps1 > build\runtime-build.log 2>&1

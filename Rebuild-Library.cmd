@@ -7,6 +7,7 @@ rem build\rebuild-hints.log). The old library is kept as
 rem build\kiu-aot-o2-previous. Does not start the game: Launch-KIU.cmd does.
 cd /d "%~dp0"
 taskkill /im zakuro-pc-interface.exe >nul 2>&1
+taskkill /im "Kid Icarus Uprising.exe" >nul 2>&1
 timeout /t 2 >nul
 echo Building the runtime, a few minutes...
 powershell -NoProfile -ExecutionPolicy Bypass -File tools\recomp\Build-Runtime.ps1 > build\runtime-build.log 2>&1

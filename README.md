@@ -8,8 +8,10 @@ shows the interpreted share.
 
 ## Play
 
-Double-click **`Launch-KIU.cmd`**. It starts the single-screen PC interface
-build (`zakuro-pc-interface.exe`) at 1080p with PC controls:
+Double-click **`Kid Icarus Uprising.exe`** (made by `Build-And-Run.cmd`). It
+needs nothing else: no Python, no console window. It finds the game library
+and your `.3ds` in this folder (or asks for it once), and starts the
+single-screen PC interface at 1080p with PC controls:
 
 - one view: the game's portraits above the subtitles, lower-screen pictures
   top center, special orbs / Power Palette under the health bar, intensity and
@@ -19,9 +21,11 @@ build (`zakuro-pc-interface.exe`) at 1080p with PC controls:
 - the HUD uses the game's own art rebuilt sharper from your ROM
   (`build/texture-work/hud-pc`, local only).
 
-Options (Esc twice > Settings): Interface, Controls, Graphics. Launcher
-extras, for example `Launch-KIU.cmd --hud-art original` or `--input-trace`:
-see `python tools/recomp/launch.py --help`.
+Options (Esc twice > Settings): Interface, Controls, Graphics.
+
+`Launch-KIU.cmd` is the developer launcher (Python, with a console): research
+extras such as `Launch-KIU.cmd --hud-art original` or `--input-trace`, see
+`python tools/recomp/launch.py --help`.
 
 Saves: `build/user-data/gameplay-preview/kiu`. The save format is the game's
 own and is never modified.
@@ -30,7 +34,8 @@ own and is never modified.
 
 | Path | What |
 |---|---|
-| `Launch-KIU.cmd` | the launcher |
+| `Kid Icarus Uprising.exe` | the game (built locally, not in git) |
+| `Launch-KIU.cmd` | the developer launcher |
 | `build/kiu-aot-o2` | the compiled game library (local, from your ROM) |
 | `build/native-ui`, `build/texture-work` | UI catalog and HUD art sources/pack (local) |
 | `build/user-data` | saves and settings (local) |

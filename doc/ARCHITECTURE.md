@@ -47,10 +47,13 @@ window, keyboard, mouse, pad ──► zakuro (frontend) ──► zakuro-core (
 | `zakuro-gpu` | 22.6k | the PICA200 GPU: command lists, shaders, the Vulkan renderer, the presenter, the PC interface layer (`kiu_ui`) |
 | `zakuro` | 5.8k | the frontend: window, input, audio, menus, settings, and the PC presentation |
 
-`zakuro` builds several programs (`[[bin]]` in its `Cargo.toml`), each a
-one-line `main` choosing a mode. The game runs as
-`zakuro-pc-interface.exe`, started by `Launch-KIU.cmd` through
-`tools/recomp/launch.py`.
+`zakuro` builds several programs (`[[bin]]` in its `Cargo.toml`), all the
+same code set up by environment switches. The game is
+`Kid Icarus Uprising.exe` (`kid_icarus_uprising.rs`): `kiu_launcher.rs` sets
+those switches inside the program, finds the game library and the player's
+`.3ds`, and says what is missing in a message box. `Launch-KIU.cmd` with
+`tools/recomp/launch.py` starts `zakuro-pc-interface.exe` the same way from
+Python, with the research switches.
 
 ## One frame
 
@@ -125,7 +128,8 @@ Two ways to change the game's behaviour:
 | Script | Does |
 |---|---|
 | `Build-And-Run.cmd` | closes the game, builds the runtime (`tools/recomp/Build-Runtime.ps1`, log `build/runtime-build.log`, about 4 minutes), starts it |
-| `Launch-KIU.cmd` | starts the last build (`tools/recomp/launch.py`) |
+| `Kid Icarus Uprising.exe` | the game, by double-click |
+| `Launch-KIU.cmd` | the developer launcher (`tools/recomp/launch.py`) |
 | `Capture-Render.cmd` | builds and starts with F8 render captures |
 | `tools/recomp/Rebuild-KIU-With-Hints.ps1` | regenerates and rebuilds the game library (about two hours) |
 | `tools/recomp/Bench-KIU.ps1` | replays a recording headless, for comparisons |

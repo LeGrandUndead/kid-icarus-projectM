@@ -14,6 +14,7 @@ mod present;
 mod pc_presentation;
 mod ram_snapshot;
 mod kiu_jump;
+mod kiu_launcher;
 mod top_menus;
 mod recompile;
 mod report;
@@ -54,6 +55,18 @@ pub fn run(linked: Option<Linked>) {
             std::process::exit(2);
         }
     };
+    start(options, linked);
+}
+
+/// runs Kid Icarus: Uprising as its own program does: set up by
+/// kiu_launcher.rs, with no console to print to.
+pub fn play() {
+    report::init();
+    let options = kiu_launcher::prepare().and_then(cli::parse_from).unwrap_or_else(|message| kiu_launcher::fail(&message));
+    start(options, None);
+}
+
+fn start(options: cli::Options, linked: Option<Linked>) {
     let mut settings = Settings::load();
     let pc_display = std::env::var("KIU_PC_DISPLAY").as_deref() == Ok("1080p");
     if pc_display { settings.layout = Screens::TopOnly; }

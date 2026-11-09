@@ -48,3 +48,7 @@ path = "src/single_screen.rs"
 [[bin]]
 name = "zakuro-pc-interface"
 path = "src/pc_interface.rs"
+
+[[bin]]
+name = "kid-icarus-uprising"
+path = "src/kid_icarus_uprising.rs"

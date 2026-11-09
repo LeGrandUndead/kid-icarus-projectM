@@ -70,6 +70,11 @@ the working directory or where saves live, for titles that render text with it.
 ";
 
 pub fn parse() -> Result<Options, String> {
+    parse_from(std::env::args().skip(1))
+}
+
+/// the options a list of arguments asks for.
+pub fn parse_from(arguments: impl IntoIterator<Item = String>) -> Result<Options, String> {
     let mut rom = None;
     let mut options = Options {
         rom: None,
@@ -87,7 +92,7 @@ pub fn parse() -> Result<Options, String> {
         mute: false,
     };
 
-    let mut args = std::env::args().skip(1);
+    let mut args = arguments.into_iter();
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "-h" | "--help" => {
