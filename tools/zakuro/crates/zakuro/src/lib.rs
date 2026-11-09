@@ -636,10 +636,12 @@ impl App {
             }
             None => None,
         };
-        let system = loader::load(path, config).map_err(|error| format!("could not open {}, {error}", path.display()))?;
+        // before the game starts running, so the boot finds the library read
+        let library = config.recompiled.clone().filter(|library| library.is_file());
         if path.is_file() {
-            rom_prefetch::start(path.to_owned());
+            rom_prefetch::start(library, path.to_owned());
         }
+        let system = loader::load(path, config).map_err(|error| format!("could not open {}, {error}", path.display()))?;
         let name = self
             .library
             .games
