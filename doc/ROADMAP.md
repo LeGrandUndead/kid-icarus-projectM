@@ -1,78 +1,54 @@
-# Next project milestone: complete PC gameplay
+# Roadmap
 
-**October 10 experimental update:** `Launch-KIU-Experimental.cmd` provides a separate 1080p/wider-view build and relative flight aiming with the guided camera retained. It uses copied saves and independent settings. HUD asset detail, complete widescreen coverage and menu transitions remain under validation. See [experimental setup and limitations](PC_PRESENTATION.md).
+The goal: Kid Icarus: Uprising as a native-feeling PC game, in the spirit
+of Sonic Unleashed Recompiled. The player supplies their own ROM; the game
+keeps its soul (its art, its jokes, Sakurai's team's look), and plays on one
+screen with mouse and keyboard or a controller. Saves, high-resolution
+rendering and the controls never regress.
 
-The October 9 rendering build fixes the verified land-resolution fallback and
-shared-font mismatch. Controls were deliberately left unchanged during that work.
-The user wants to revisit controls and bottom-screen features before moving on.
+Rules of work: find the root cause and change the game's own code where
+needed; look at the whole architecture first ([ARCHITECTURE.md](ARCHITECTURE.md),
+[GAME_ARCHITECTURE.md](GAME_ARCHITECTURE.md)); one change at a time,
+measured before and after.
 
-## 1. Accept the rendering baseline
+## Where it stands (November 9 2026)
 
-Check the corrected land scene and dialogue/menu lettering through Launch-KIU.
-Keep the current executable and isolated recording as regression references.
-Original low-resolution textures and bitmap UI remain original assets; sharp
-geometry does not imply an HD texture pack. See [rendering status](RENDERING_STATUS.md).
+| Area | State |
+|---|---|
+| Launcher | `Kid Icarus Uprising.exe`, by double-click, no Python or console (`kiu_launcher.rs`) |
+| Frame rate | 60 FPS mode, with the chapter 9 white screen fixed (`WARP_WHITE_SCREEN.md`) |
+| View | 16:9 and zoom made by the game's own camera: drawing, culling and aim agree (`WIDE_VIEW.md`) |
+| Controls | keyboard and mouse on land and in flight, Space jump, rebindable; controller |
+| Interface | portraits, specials, powers and counters over gameplay; pause menu as a panel |
+| Loading | library and ROM read ahead in the background (`rom_prefetch.rs`) |
 
-## 2. Controls and bottom-screen functionality
+## 1. A clean product (now)
 
-The user identified these priorities on October 9:
+1. **Launch and first run.** Done: one program, ROM found or asked for
+   once. Left: the first-run preparation still needs Python scripts (the
+   interface catalog `build/native-ui/ui-sources.tsv`, the HUD pack); move
+   it into the program. An icon. Saves and settings out of `build/`.
+2. **Smoothness.** Cold-start hitches (prefetch, to be confirmed on the next
+   cold start). Then the remaining slow frames by cause, from the session
+   logs' `slow_frame` lines.
+3. **Open bugs.** Pit feeling slower in flight on the keyboard (lead: the
+   relative flight aim rewriting the touch state; test with
+   `Launch-KIU.cmd --original-flight-aim`). Markers and captions 16/15 wide.
+4. **Set-aside work, one at a time** (`ROLLBACK_2026-10-29.md`): the kernel
+   wake-order fix, the presenter's frame skip.
+5. **Code clean-up.** One program instead of five identical ones; the
+   environment switches the launcher sets become settings; research
+   switches kept apart.
 
-1. Implemented October 9: E uses the equipped land power; 1/3 select powers,
-   with mouse capture and aim maintained. No synthetic Z or pointer transition.
-   Isolated gameplay replays verified Sky Jump and Autoreticle use/charge counts.
-2. Implemented October 9: E triggers the air special, verified by a consumed
-   charge in the recorded flight scene. All three aliases are rebindable.
-   Because they send native D-pad actions, 1/3 also trigger the special in flight.
-   Next: human gameplay check of convenience and remaining touch interactions.
-3. Later, investigate adding free jump to Pit's basic land moveset, preferably
-   Space. This is a gameplay modification requiring investigation of movement,
-   animation, collision and level behavior, not just an existing-action remap.
+## 2. One screen, from boot to credits
 
-Old reports about F3, inverted dashes or
-mouse edges describe earlier revisions; do not assume all remain broken now or
-reapply old patch packs. Test flight aiming/dodging, land movement/dashing/camera,
-capture release/resume, menus and transitions separately. Preserve working behavior
-with paired recorded tests and human feel checks.
+- Menus on one screen, never switching layouts, rebuilt from the game's own
+  assets (the room kept, buttons in the same style).
+- The HUD: an HD, PC-adapted version of the game's own, faithful to the
+  original. No AI upscaling, no redesign; the portraits are not touched.
+- Chapter 1 HUD bugs.
 
-Inventory bottom-screen interactions as working, awkward, missing or untested.
-Separate combat actions, menu actions and display-only information. The exact
-list starts with the reported item/power workflow above; other game features
-should be audited rather than assumed missing.
+## 3. After that
 
-Current implementation: uncaptured pointer clicks can reach the bottom screen;
-captured mouse motion supplies aiming touch and left click attacks. There is no
-complete dedicated PC replacement for the bottom-screen interface. Determine
-which actions need bindings, a temporary pointer mode, or an overlay. Entering and
-leaving UI interaction must not jump the camera, fire accidentally or leave input
-held. Keep the original bottom screen available until replacements cover its
-required functionality. Check controller behavior too.
-
-## 3. Complete gameplay checks
-
-Validate complete chapters, flight-to-land transitions, touch actions, menus,
-pause/resume, death/retry and saving. Track remaining renderer issues such as
-geometry mode 2 separately from control bugs. Use copied saves for automated tests.
-
-## 4. PC presentation
-
-User selected presentation over reticle/free-jump work for the next pass. A
-reversible 1080p window profile and Tab bottom-screen interaction are implemented;
-true 16:9 world-camera rendering remains open. See [PC presentation](PC_PRESENTATION.md).
-
-After the actions and controls work, implement true widescreen projection and
-audit culling/effects. Then combine the top/bottom information into a PC HUD with
-clear interaction and scaling. Avoid designing away access to a required action.
-
-## Performance throughout
-
-Measure each candidate on the same scene, resolution, font and initial cache,
-without simultaneous builds or game instances. Preserve the working path when
-an experiment does not improve results. The October 9 CPU-copy and GPU-blit
-experiments were both rejected; they are not shipped optimizations. Further work
-should profile costly readbacks and frame-time spikes rather than blindly
-increasing thread counts or memory use. Higher internal resolution is a workload
-choice: 5x provides 2000x1200 while 8x provides 3200x1920; saved preferences remain
-unchanged.
-
-Independent recompiler research remains available in `recompiler`, but replacing
-the working execution backend is not a prerequisite for these gameplay fixes.
+Quality of life (skippable scripted sections), mod support, new content
+(boss rush, missions), online. Fixes where players' feedback asks for them.
