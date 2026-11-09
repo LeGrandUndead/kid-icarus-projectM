@@ -183,7 +183,7 @@ mod tests {
     use super::*;
     fn scene(ids: &[u16]) -> BottomScene {
         let mut s = BottomScene { fresh: true, ..BottomScene::default() };
-        for &id in ids { s.menus[id as usize / 64] |= 1 << (id % 64); }
+        for &id in ids { s.lower_menus[id as usize / 64] |= 1 << (id % 64); }
         s
     }
     #[test]

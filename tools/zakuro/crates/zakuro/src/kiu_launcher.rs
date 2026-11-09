@@ -67,6 +67,16 @@ pub fn prepare() -> Result<Vec<String>, String> {
     if hud.is_dir() {
         set.push(("KIU_HUD_PACK", hud.into()));
     }
+    // the menus' art rebuilt sharper from the ROM, when it has been
+    let menu_art = root.join("build/texture-work/menu-pc");
+    if menu_art.is_dir() {
+        set.push(("KIU_MENU_PACK", menu_art.into()));
+    }
+    // every menu on one screen: the game's own menu laid over its scene
+    let layouts = root.join("tools/recomp/menu_layouts.toml");
+    if layouts.is_file() {
+        set.push(("KIU_MENU_LAYOUTS", layouts.into()));
+    }
     // the game library's own runtime libraries
     let mut path = std::ffi::OsString::from(root.join("tools/toolchains/winlibs/mingw64/bin"));
     if let Some(old) = std::env::var_os("PATH") {
@@ -78,7 +88,7 @@ pub fn prepare() -> Result<Vec<String>, String> {
         std::env::set_var(name, value);
     }
     // research switches of a terminal the game was started from stay out
-    for name in ["KIU_NATIVE_HUD", "KIU_NATIVE_DIALOGUE", "KIU_GAMEPLAY_CAMERA_SCALE", "KIU_TEXTURE_FILTER", "KIU_TEXTURE_PACK", "KIU_60FPS"] {
+    for name in ["KIU_NATIVE_HUD", "KIU_NATIVE_DIALOGUE", "KIU_GAMEPLAY_CAMERA_SCALE", "KIU_TEXTURE_FILTER", "KIU_TEXTURE_PACK", "KIU_60FPS", "KIU_MENU_CAPTURE"] {
         std::env::remove_var(name);
     }
     // paths the runtime takes from the working folder (the shared font,

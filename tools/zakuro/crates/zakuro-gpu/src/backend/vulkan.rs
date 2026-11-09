@@ -8,11 +8,14 @@ use ash::vk;
 use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
 
 use super::vulkan_overlay::OverlayPainter;
-use super::{layout, GpuScreen, Overlay, PresentError, Presenter, ScreenImage, ScreenLayout, Viewport};
+use super::{backdrop, pieces, GpuScreen, Overlay, PresentError, Presenter, ScreenImage, ScreenLayout, Viewport};
 use crate::raster::hardware::{can_render, render_device};
 use crate::SharedDevice;
 
 const VERTEX_SPIRV: &[u8] = include_bytes!("../../shaders/present.vert.spv");
+/// How long the pieces of a menu layout take to fade out when another one
+/// replaces it.
+const FADE_SECONDS: f32 = 0.18;
 const FRAGMENT_SPIRV: &[u8] = include_bytes!("../../shaders/present.frag.spv");
 
 /// how many frames may be recorded before waiting on the oldest.
@@ -104,6 +107,9 @@ pub struct VulkanPresenter {
     overlay: Option<OverlayPainter>,
     window: (u32, u32),
     arrangement: ScreenLayout,
+    /// the arrangement shown before a change between two menu layouts, and
+    /// when the change came: its pieces fade out over the new ones.
+    leaving: Option<(ScreenLayout, std::time::Instant)>,
     /// set when the swapchain no longer matches the window.
     stale: bool,
 }
@@ -358,6 +364,7 @@ impl VulkanPresenter {
             overlay: Some(overlay),
             window: size,
             arrangement: ScreenLayout::default(),
+            leaving: None,
             stale: false,
         };
 
@@ -668,7 +675,7 @@ impl VulkanPresenter {
 
             let clear = [vk::ClearValue {
                 color: vk::ClearColorValue {
-                    float32: [0.0, 0.0, 0.0, 1.0],
+                    float32: backdrop(self.arrangement),
                 },
             }];
             device.cmd_begin_render_pass(
@@ -689,10 +696,18 @@ impl VulkanPresenter {
                 self.pipeline,
             );
 
-            let (top, bottom) = layout(self.extent.width, self.extent.height, self.arrangement);
-            for (index, viewport) in [top, bottom].into_iter().enumerate() {
-                let Some(viewport) = viewport else { continue };
-                let (descriptor, crop) = match sources[index] {
+            // a change between two menu layouts crossfades: the new pieces,
+            // then the old ones over them fading out (FADE_SECONDS)
+            let mut drawn = pieces(self.extent.width, self.extent.height, self.arrangement);
+            if let Some((old, since)) = self.leaving {
+                let t = since.elapsed().as_secs_f32() / FADE_SECONDS;
+                if t < 1.0 {
+                    drawn.extend(pieces(self.extent.width, self.extent.height, old).into_iter().map(|mut p| { p.opacity *= 1.0 - t; p.touch = false; p }));
+                }
+            }
+            for piece in drawn {
+                let index = piece.screen;
+                let (descriptor, image) = match sources[index] {
                     Source::Nothing => continue,
                     Source::Own => (self.screens[index].descriptor, WHOLE),
                     Source::Gpu(gpu) => {
@@ -701,7 +716,18 @@ impl VulkanPresenter {
                         (self.gpu_sets[self.frame][index], [x, y, width, height, left, top, right, bottom])
                     }
                 };
-                set_viewport(device, command_buffer, viewport, self.extent);
+                // the piece's part of the screen, inside the screen's area
+                let size = if index == 0 { super::TOP_SIZE } else { super::BOTTOM_SIZE };
+                let [l, t, r, b] = piece.source;
+                let [ax, ay, aw, ah] = [image[0], image[1], image[2], image[3]];
+                let (half_u, half_v) = (image[4] - ax, image[5] - ay);
+                let (u0, v0) = (ax + l / size[0] * aw, ay + t / size[1] * ah);
+                let (u1, v1) = (ax + r / size[0] * aw, ay + b / size[1] * ah);
+                let crop = [u0, v0, u1 - u0, v1 - v0, u0 + half_u, v0 + half_v, u1 - half_u, v1 - half_v];
+                // an uploaded copy has no coverage, it is drawn opaque
+                let coverage = piece.coverage && matches!(sources[index], Source::Gpu(_));
+                let mode = [if coverage { 1.0 } else { 0.0 }, piece.opacity, 0.0, 0.0];
+                set_viewport(device, command_buffer, piece.dest, self.extent);
                 device.cmd_bind_descriptor_sets(
                     command_buffer,
                     vk::PipelineBindPoint::GRAPHICS,
@@ -710,7 +736,7 @@ impl VulkanPresenter {
                     &[descriptor],
                     &[],
                 );
-                let constants: Vec<u8> = crop.iter().flat_map(|c| c.to_le_bytes()).collect();
+                let constants: Vec<u8> = crop.iter().chain(&piece.feather).chain(&mode).flat_map(|c| c.to_le_bytes()).collect();
                 device.cmd_push_constants(command_buffer, self.pipeline_layout, vk::ShaderStageFlags::FRAGMENT, 0, &constants);
                 device.cmd_draw(command_buffer, 3, 1, 0, 0);
             }
@@ -852,6 +878,10 @@ impl Presenter for VulkanPresenter {
     }
 
     fn set_layout(&mut self, arrangement: ScreenLayout) {
+        let menu = |a: ScreenLayout| matches!(a, ScreenLayout::Menus { .. } | ScreenLayout::Composed { .. });
+        if arrangement != self.arrangement && menu(arrangement) && menu(self.arrangement) {
+            self.leaving = Some((self.arrangement, std::time::Instant::now()));
+        }
         self.arrangement = arrangement;
     }
 }
@@ -1042,7 +1072,7 @@ fn create_pipeline(
     // where the screen lies in the image and the bounds its samples keep in
     let constants = [vk::PushConstantRange::default()
         .stage_flags(vk::ShaderStageFlags::FRAGMENT)
-        .size(size_of_val(&WHOLE) as u32)];
+        .size((size_of_val(&WHOLE) + 2 * size_of::<[f32; 4]>()) as u32)];
     let pipeline_layout = unsafe {
         device.create_pipeline_layout(
             &vk::PipelineLayoutCreateInfo::default()
@@ -1078,7 +1108,18 @@ fn create_pipeline(
         .line_width(1.0);
     let multisample = vk::PipelineMultisampleStateCreateInfo::default()
         .rasterization_samples(vk::SampleCountFlags::TYPE_1);
+    // screens are opaque except where a layout fades their edges into the
+    // window's background (feather) or lays a transparent picture over
+    // another; the shader outputs premultiplied colour. the window keeps its
+    // own alpha
     let blend_attachments = [vk::PipelineColorBlendAttachmentState::default()
+        .blend_enable(true)
+        .src_color_blend_factor(vk::BlendFactor::ONE)
+        .dst_color_blend_factor(vk::BlendFactor::ONE_MINUS_SRC_ALPHA)
+        .color_blend_op(vk::BlendOp::ADD)
+        .src_alpha_blend_factor(vk::BlendFactor::ZERO)
+        .dst_alpha_blend_factor(vk::BlendFactor::ONE)
+        .alpha_blend_op(vk::BlendOp::ADD)
         .color_write_mask(vk::ColorComponentFlags::RGBA)];
     let blend =
         vk::PipelineColorBlendStateCreateInfo::default().attachments(&blend_attachments);

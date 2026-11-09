@@ -51,22 +51,20 @@ pub struct BottomScene {
     /// A pause-menu label or an option bar is drawn: the player is in the
     /// pause menu or one of its sub-screens (Options).
     pub menu: bool,
+    /// The game's save select is up (its speech bubble or books were drawn
+    /// this frame, on either screen).
+    pub save_select: bool,
+    /// The lower screen drew art of the out-of-stage menus this frame (title,
+    /// save select, main menu, Solo, chapter select...).
+    pub menu_screen: bool,
+    /// The upper screen drew a 3D scene this frame (depth-tested draws).
+    pub top_3d: bool,
+    /// The menu archives whose own art the lower screen drew this frame
+    /// (recipes::MenuSet): which menu screen it is.
+    pub lower_menus: crate::backend::recipes::MenuSet,
     /// The land Power Palette is on screen (power icons from atlas `mr` in
     /// the action island). Air special orbs come from `gc_00` instead.
     pub palette: bool,
-    /// Menu archives (`us/menu/NNN`) whose own art the lower screen drew this
-    /// frame, one bit each: which menu screen it is.
-    pub menus: MenuSet,
-}
-
-pub const MENU_WORDS: usize = 12;
-pub type MenuSet = [u64; MENU_WORDS];
-
-impl BottomScene {
-    /// The lower screen shows art of menu archive `id` (`us/menu/040`: 40).
-    pub fn shows_menu(&self, id: u16) -> bool {
-        (id as usize) < MENU_WORDS * 64 && self.menus[id as usize / 64] & (1 << (id % 64)) != 0
-    }
 }
 
 /// A layer, as far as classification is concerned.
@@ -202,5 +200,12 @@ mod tests {
         hud.island = true;
         let s = classify(3, true, [ev(Role::Portrait, "FB_000", uv(0.0, 0.0, 1.0, 1.0)), hud].into_iter());
         assert_eq!((s.portraits, s.hud, s.menu, s.pause_menu), (1, 1, false, false));
+    }
+}
+
+impl BottomScene {
+    /// The lower screen shows art of menu archive `id` (`us/menu/040`: 40).
+    pub fn shows_menu(&self, id: u16) -> bool {
+        crate::backend::recipes::menu_bit(&self.lower_menus, id)
     }
 }

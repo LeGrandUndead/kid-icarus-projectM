@@ -63,6 +63,17 @@ pub fn island_for(b: Rect) -> Option<Island> {
     ISLANDS.into_iter().find(|island| inside(c, island.source))
 }
 
+/// Whether rectangle `inner` lies within `outer` (to a pixel).
+pub fn contains(outer: Rect, inner: Rect) -> bool {
+    inner[0] >= outer[0] - 1.0 && inner[1] >= outer[1] - 1.0 && inner[2] <= outer[2] + 1.0 && inner[3] <= outer[3] + 1.0
+}
+
+/// The save select's "HOME / go to HOME Menu" button, between Back and How
+/// to Play at the foot of the lower screen (measured on the PC layout,
+/// October 23). It is the 3DS's system button: draws entirely inside it are
+/// left out while the save select is shown on one screen.
+pub const SAVE_SELECT_HOME: Rect = [56.0, 186.0, 190.0, 240.0];
+
 /// The original stylus marker is drawn at the touch point. It is a 3DS
 /// affordance, and the PC reticle already shows aim on the main view.
 pub fn is_touch_marker(xy: &[[f32; 2]; 4], touch: Option<[f32; 2]>) -> bool {
@@ -184,6 +195,16 @@ mod tests {
         assert_eq!(island_for(bounds(&quad(0.0, 0.0, 320.0, 240.0))), None);
         assert_eq!(island_for(bounds(&quad(0.0, 0.0, 200.0, 40.0))), None, "chapter title is centered outside the counters");
         assert_eq!(island_for(bounds(&quad(150.0, 60.0, 320.0, 240.0))), None, "portrait-sized art");
+    }
+
+    #[test]
+    fn only_draws_wholly_inside_the_home_button_are_left_out() {
+        assert!(contains(SAVE_SELECT_HOME, [70.0, 196.0, 140.0, 216.0]), "the button");
+        assert!(contains(SAVE_SELECT_HOME, [66.0, 218.0, 182.0, 230.0]), "its caption");
+        assert!(!contains(SAVE_SELECT_HOME, [0.0, 0.0, 320.0, 240.0]), "the backdrop");
+        assert!(!contains(SAVE_SELECT_HOME, [8.0, 196.0, 52.0, 236.0]), "Back");
+        assert!(!contains(SAVE_SELECT_HOME, [186.0, 190.0, 318.0, 240.0]), "How to Play");
+        assert!(!contains(SAVE_SELECT_HOME, [40.0, 40.0, 120.0, 180.0]), "a book");
     }
 
     #[test]
