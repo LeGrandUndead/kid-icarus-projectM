@@ -142,9 +142,10 @@ hide = [[205, 4, 320, 74], [226, 192, 268, 234]]
   at = [-6, -6]
   scale = 0.7
 
-# Solo: Palutena's temple fills the window and the game's own signposts stand
-# around it, Move Out on the stairs. Arrow keys still turn the game's camera
-# from place to place; a click on a signpost does what a touch did.
+# Solo hall: the room fills the window and stays clear in the middle (its
+# door, floor and the caption under them). Move Out! hangs from the top like
+# the banner it is; the other places stand in two columns at the sides, Idol
+# Toss and Back in the bottom corners, away from the caption and the hearts.
 [[screen]]
 name = "solo_hall"
 when = ["030"]
@@ -155,27 +156,31 @@ compose = true
   from = "upper"
   fill = "cover"
 
+  # Move Out!
   [[screen.piece]]
   from = "lower"
-  src = [64, 0, 206, 162]
-  anchor = "center"
-  at = [0, -14]
-  scale = 0.72
+  src = [14, 0, 250, 162]
+  anchor = "top"
+  at = [0, 0]
+  scale = 0.56
 
+  # Practice Range
   [[screen.piece]]
   from = "lower"
   src = [0, 100, 88, 204]
   anchor = "left"
-  at = [12, -14]
-  scale = 0.78
+  at = [10, -45]
+  scale = 0.7
 
+  # Gear
   [[screen.piece]]
   from = "lower"
   src = [184, 166, 320, 240]
   anchor = "left"
-  at = [12, 62]
-  scale = 0.62
+  at = [10, 35]
+  scale = 0.6
 
+  # Back
   [[screen.piece]]
   from = "lower"
   src = [0, 202, 46, 238]
@@ -183,25 +188,28 @@ compose = true
   at = [6, -6]
   scale = 0.75
 
+  # Treasure Hunt
   [[screen.piece]]
   from = "lower"
   src = [226, 0, 320, 58]
   anchor = "top-right"
-  at = [-12, 10]
-  scale = 0.78
+  at = [-10, 8]
+  scale = 0.75
 
+  # Arms Altar
   [[screen.piece]]
   from = "lower"
   src = [198, 76, 320, 154]
   anchor = "right"
-  at = [-12, -14]
-  scale = 0.78
+  at = [-10, -30]
+  scale = 0.75
 
+  # Idol Toss
   [[screen.piece]]
   from = "lower"
   src = [88, 174, 178, 238]
-  anchor = "bottom"
-  at = [0, -26]
+  anchor = "bottom-right"
+  at = [-10, -4]
   scale = 0.65
 
 # Chapter select: the chapters (the game's scrolling tiles, Gear and Back) on
