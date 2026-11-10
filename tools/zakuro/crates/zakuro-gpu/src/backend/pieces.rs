@@ -7,8 +7,14 @@
 //! one drawn transparent, kiu_ui::compose) laid where the PC layout wants
 //! them. Clicks are found back through the same pieces (`touch_at`), so what
 //! is seen is what is touched.
+//!
+//! A recipe that redraws (`ScreenRecipe::redraw`) cuts nothing out of the
+//! lower picture: its lower pieces are elements (`elements`), each of the
+//! game's draws goes whole to its element's place on a canvas the size of
+//! the window, and the presenter lays that canvas over the upper pieces.
 
 use super::recipes::{self, Fill, ScreenRecipe};
+use crate::kiu_ui::compose::Element;
 use super::{feather, layout, ScreenLayout, Viewport};
 
 /// A part of a screen's picture drawn into the window.
@@ -45,7 +51,15 @@ fn whole(screen: usize) -> [f32; 4] {
 /// The pieces of an arrangement, drawn in order (later ones over earlier).
 pub fn pieces(width: u32, height: u32, arrangement: ScreenLayout) -> Vec<Piece> {
     if let ScreenLayout::Composed { wide, recipe, room } = arrangement {
-        return recipes::recipe(recipe).map_or_else(Vec::new, |r| composed(width as f32, height as f32, &r, wide && room));
+        let Some(r) = recipes::recipe(recipe) else { return Vec::new() };
+        let mut all = composed(width as f32, height as f32, &r, wide && room);
+        if r.redraw {
+            // the upper pieces, then the canvas the elements were drawn on
+            all.retain(|p| p.screen == 0);
+            let window = Viewport { x: 0.0, y: 0.0, width: width as f32, height: height as f32 };
+            all.push(Piece { screen: 1, source: whole(1), dest: window, feather: [0.0; 4], coverage: true, touch: false, opacity: 1.0 });
+        }
+        return all;
     }
     let (top, bottom) = layout(width, height, arrangement);
     let (top_edges, bottom_edges) = feather(arrangement);
@@ -62,7 +76,12 @@ pub fn pieces(width: u32, height: u32, arrangement: ScreenLayout) -> Vec<Piece> 
 /// Where a click at window pixel (x, y) touches the lower screen, through
 /// the topmost touchable piece under it.
 pub fn touch_at(width: u32, height: u32, arrangement: ScreenLayout, x: f32, y: f32) -> Option<[f32; 2]> {
-    pieces(width, height, arrangement).into_iter().rev().filter(|p| p.touch && p.screen == 1).find_map(|p| {
+    // a redrawn screen is touched through its elements, not its canvas
+    let touched = match arrangement {
+        ScreenLayout::Composed { wide, recipe, room } => recipes::recipe(recipe).map_or_else(Vec::new, |r| composed(width as f32, height as f32, &r, wide && room)),
+        _ => pieces(width, height, arrangement),
+    };
+    touched.into_iter().rev().filter(|p| p.touch && p.screen == 1).find_map(|p| {
         let (u, v) = ((x - p.dest.x) / p.dest.width, (y - p.dest.y) / p.dest.height);
         ((0.0..1.0).contains(&u) && (0.0..1.0).contains(&v)).then(|| {
             let [l, t, r, b] = p.source;
@@ -96,6 +115,18 @@ pub fn composed(w: f32, h: f32, recipe: &ScreenRecipe, room: bool) -> Vec<Piece>
         };
         Piece { screen: spec.screen.min(1), source: spec.source, dest, feather: spec.feather,
             coverage: spec.screen == 1 && recipe.compose, touch: spec.touch && spec.screen == 1, opacity: spec.opacity.clamp(0.0, 1.0) }
+    }).collect()
+}
+
+/// The elements of a recipe that redraws, in a `w` x `h` window: its lower
+/// pieces, each with where the lower screen lands on the canvas (the lower
+/// picture, 320x240, stretched over the whole window) at its scale.
+pub fn elements(w: f32, h: f32, recipe: &ScreenRecipe, room: bool) -> Vec<Element> {
+    let (cx, cy) = (BOTTOM_SIZE[0] / w, BOTTOM_SIZE[1] / h);
+    composed(w, h, recipe, room).into_iter().filter(|p| p.screen == 1).map(|p| {
+        let [l, t, r, b] = p.source;
+        let (sx, sy) = (p.dest.width / (r - l), p.dest.height / (b - t));
+        Element { home: p.source, scale: [sx * cx, sy * cy], origin: [(p.dest.x - l * sx) * cx, (p.dest.y - t * sy) * cy] }
     }).collect()
 }
 
@@ -154,6 +185,36 @@ mod tests {
         }
         let p = composed(1920.0, 1080.0, &r, false);
         assert!((p[0].dest.y).abs() < 0.01 && (p[1].dest.y + p[1].dest.height - 1080.0).abs() < 0.5, "fills the height at 1080p");
+    }
+
+    #[test]
+    fn a_redrawn_screen_is_a_canvas_touched_through_its_elements() {
+        let r = ScreenRecipe { redraw: true, ..save_select() };
+        for (w, h) in SIZES {
+            let (wf, hf) = (w as f32, h as f32);
+            let placed = composed(wf, hf, &r, false);
+            let e = elements(wf, hf, &r, false);
+            assert_eq!(e.len(), 3);
+            // an element puts its home's corners where its piece is, in the
+            // canvas's 320x240
+            for (element, piece) in e.iter().zip(&placed[1..]) {
+                let [l, t, right, b] = piece.source;
+                let (a, z) = (element.place([l, t]), element.place([right, b]));
+                assert!((a[0] / 320.0 * wf - piece.dest.x).abs() < 0.01 && (a[1] / 240.0 * hf - piece.dest.y).abs() < 0.01);
+                assert!((z[0] / 320.0 * wf - piece.dest.x - piece.dest.width).abs() < 0.01 && (z[1] / 240.0 * hf - piece.dest.y - piece.dest.height).abs() < 0.01);
+            }
+        }
+        // drawn: the scene and one canvas; touched: the elements
+        let _turn = super::super::recipes::TEST_TABLE.lock().unwrap_or_else(|e| e.into_inner());
+        super::super::recipes::set_recipes(vec![r]);
+        let layout = ScreenLayout::Composed { wide: false, recipe: 0, room: false };
+        let drawn = pieces(1920, 1080, layout);
+        assert_eq!(drawn.len(), 2);
+        assert!(drawn[1].coverage && !drawn[1].touch && drawn[1].dest.width == 1920.0 && drawn[1].dest.height == 1080.0);
+        let back = composed(1920.0, 1080.0, &super::super::recipes::recipe(0).unwrap(), false)[2].dest;
+        let t = touch_at(1920, 1080, layout, back.x + back.width * 0.5, back.y + back.height * 0.5).unwrap();
+        assert!((t[0] - 32.0).abs() < 0.05 && (t[1] - 214.0).abs() < 0.05);
+        assert_eq!(touch_at(1920, 1080, layout, 960.0, 1.0), None);
     }
 
     #[test]

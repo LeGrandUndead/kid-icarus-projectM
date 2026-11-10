@@ -313,26 +313,75 @@ fn draw_bounds<M: GpuMemory>(memory:&mut M, draw:&Draw, half:[f32;2]) -> Option<
     }
     b[0].is_finite().then_some(b)
 }
-/// Whether a lower-screen draw is a backdrop (kiu_ui::compose::is_backdrop:
-/// its triangles cover most of the screen), shaded on the CPU. Draws too
-/// large to shade quickly, or that cannot be placed, are kept.
-fn lower_screen_backdrop<M: GpuMemory>(memory:&mut M, draw:&Draw) -> bool {
-    let points:Vec<[f32;2]>=match draw.geometry {
+/// Where a lower-screen draw's vertices land on the screen (320x240), from
+/// its placed vertices or by running its vertex program on the CPU; a vertex
+/// that cannot be placed is far outside. None for draws too large to shade
+/// quickly.
+fn lower_screen_points<M: GpuMemory>(memory:&mut M, draw:&Draw) -> Option<Vec<[f32;2]>> {
+    Some(match draw.geometry {
         Geometry::Placed { vertices, .. } => vertices.iter().map(|v| [320.0-v.y,240.0-v.x]).collect(),
         Geometry::Shaded(s) => {
             let count=s.indices.iter().copied().max().map_or(0,|m|m as usize+1);
-            if count==0 || count>2048 {return false;}
-            let Some(inputs)=vertex_inputs(memory,s,count) else {return false};
+            if count==0 || count>2048 {return None;}
+            let inputs=vertex_inputs(memory,s,count)?;
             crate::shader::run_vertices(s.unit,&inputs).iter().map(|o| {
                 let p=position(o,&s.semantics);
-                if !p.iter().all(|v|v.is_finite()) || p[3].abs()<0.0001 {[-1e4,-1e4]}
+                if !p.iter().all(|v|v.is_finite()) || p[3].abs()<0.0001 {UNPLACED}
                 else {[(1.0-p[1]/p[3])*160.0,(1.0-p[0]/p[3])*120.0]}
             }).collect()
         }
-    };
+    })
+}
+const UNPLACED:[f32;2]=[-1e4,-1e4];
+/// Whether a lower-screen draw is a backdrop (kiu_ui::compose::is_backdrop:
+/// its triangles cover most of the screen). Draws that cannot be placed are
+/// kept.
+fn lower_screen_backdrop(points:&[[f32;2]], draw:&Draw) -> bool {
     let indices=match draw.geometry { Geometry::Placed { indices, .. } => indices, Geometry::Shaded(s) => s.indices };
     crate::kiu_ui::compose::is_backdrop(indices.chunks_exact(3)
-        .map(|t| [t[0],t[1],t[2]].map(|i| points.get(i as usize).copied().unwrap_or([-1e4;2]))))
+        .map(|t| [t[0],t[1],t[2]].map(|i| points.get(i as usize).copied().unwrap_or(UNPLACED))))
+}
+/// A lower-screen draw of a screen being redrawn (kiu_ui::compose), moved
+/// to its element's place on the canvas.
+enum Redrawn {
+    /// not part of any element: left out.
+    Nothing,
+    /// a draw the GPU shades goes whole: its viewport and scissor move.
+    Whole(crate::kiu_ui::compose::Element),
+    /// vertices placed on the CPU (text) move piece by piece, each glyph to
+    /// its own element; the scissor moves when they all went to one.
+    Pieces(Vec<Screen>, Vec<u32>, Option<crate::kiu_ui::compose::Element>),
+}
+fn redraw(elements:&[crate::kiu_ui::compose::Element], points:Option<&[[f32;2]]>, draw:&Draw) -> Redrawn {
+    use crate::kiu_ui::compose::{element_for,pieces_of};
+    match draw.geometry {
+        Geometry::Shaded(s) => {
+            // what cannot be placed counts as the whole screen
+            let mut b=[f32::INFINITY,f32::INFINITY,f32::NEG_INFINITY,f32::NEG_INFINITY];
+            for p in s.indices.iter().filter_map(|&i| points?.get(i as usize)).filter(|p| **p!=UNPLACED) {
+                b=[b[0].min(p[0]),b[1].min(p[1]),b[2].max(p[0]),b[3].max(p[1])];
+            }
+            if !b[0].is_finite() { b=[0.0,0.0,320.0,240.0]; }
+            element_for(elements,b).map_or(Redrawn::Nothing,Redrawn::Whole)
+        }
+        Geometry::Placed { vertices, indices } => {
+            let Some(points)=points else {return Redrawn::Nothing};
+            let (piece,bounds)=pieces_of(points,indices);
+            let to:Vec<_>=bounds.iter().map(|b| element_for(elements,*b)).collect();
+            let moved:Vec<Screen>=vertices.iter().zip(&piece).map(|(v,&n)| match to[n as usize] {
+                Some(e) => { let (x,y)=e.buffer_point(v.x,v.y); Screen { x, y, ..*v } }
+                None => *v,
+            }).collect();
+            let kept:Vec<u32>=indices.chunks_exact(3)
+                .filter(|t| t.iter().all(|&i| (i as usize)<piece.len()) && to[piece[t[0] as usize] as usize].is_some())
+                .flatten().copied().collect();
+            if kept.is_empty() {return Redrawn::Nothing;}
+            let mut used=kept.iter().map(|&i| to[piece[i as usize] as usize]);
+            let first=used.next().flatten();
+            let one=first.filter(|f| used.all(|e| e.as_ref()==Some(f)));
+            Redrawn::Pieces(moved,kept,one)
+        }
+    }
 }
 
 /// Census only (KIU_UI_CENSUS): every textured draw of either screen that
@@ -3174,11 +3223,31 @@ impl Hardware {
         // a menu recomposed on one screen (kiu_ui::compose): its lower screen
         // without backdrops, alpha as coverage, for laying over the upper one
         let compose_bottom = crate::kiu_ui::compose::composing() && draw.width==240 && draw.height==320;
+        // a screen being redrawn: the draw goes to its element's place on
+        // the canvas the lower picture then is
+        let mut whole = None;
+        let (moved, moved_draw);
+        let mut draw = draw;
         if compose_bottom {
             crate::kiu_ui::compose::note_bottom_target(draw.target, draw.width * draw.height * Kind::Color(draw.format).bytes());
-            if lower_screen_backdrop(memory, draw) { return Ok(()); }
+            let _profile = crate::profile::scope(crate::profile::Phase::PcInterface);
+            let points = lower_screen_points(memory, draw);
+            if points.as_ref().is_some_and(|p| lower_screen_backdrop(p, draw)) { return Ok(()); }
+            if let Some(elements) = crate::kiu_ui::compose::elements() {
+                const ALL: [i32; 4] = [0, 0, 240, 320];
+                match redraw(&elements, points.as_deref(), draw) {
+                    Redrawn::Nothing => return Ok(()),
+                    Redrawn::Whole(element) => whole = Some(element),
+                    Redrawn::Pieces(vertices, indices, one) => {
+                        moved = (vertices, indices);
+                        let scissor = match one { Some(e) => e.scissor(draw.scissor), None => ALL };
+                        moved_draw = Draw { geometry: Geometry::Placed { vertices: &moved.0, indices: &moved.1 }, scissor, ..*draw };
+                        draw = &moved_draw;
+                    }
+                }
+            }
         }
-        let [left, bottom, right, top] = draw.scissor;
+        let [left, bottom, right, top] = whole.map_or(draw.scissor, |e| e.scissor(draw.scissor));
         let (left, bottom) = (left.max(0), bottom.max(0));
         let (right, top) = (right.min(draw.width as i32), top.min(draw.height as i32));
         let empty = match draw.geometry {
@@ -3456,7 +3525,7 @@ impl Hardware {
         // where the PICA's viewport puts clip space, for what the GPU
         // shades, the whole target for what the CPU placed on it
         let (x, y, viewport_width, viewport_height) = match draw.geometry {
-            Geometry::Shaded(shading) => shading.viewport,
+            Geometry::Shaded(shading) => whole.map_or(shading.viewport, |e| e.viewport(shading.viewport)),
             Geometry::Placed { .. } => (0.0, 0.0, width, height),
         };
         let y = y + raise as f32;

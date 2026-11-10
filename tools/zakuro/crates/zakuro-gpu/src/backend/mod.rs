@@ -8,7 +8,7 @@ pub mod vulkan;
 mod vulkan_overlay;
 mod pieces;
 pub mod recipes;
-pub use pieces::{composed, pieces, touch_at, Piece, BOTTOM_SIZE, TOP_SIZE};
+pub use pieces::{composed, elements, pieces, touch_at, Piece, BOTTOM_SIZE, TOP_SIZE};
 
 /// one screen's pixels, already converted to straight RGBA8, or where they
 /// are on the GPU, for a presenter sharing the renderer's device.

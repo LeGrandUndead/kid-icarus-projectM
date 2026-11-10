@@ -1364,12 +1364,17 @@ impl App {
         // a recomposed screen leaves out its 3DS-only parts (HOME buttons)
         // and, when its recipe composes, has its lower screen drawn
         // transparent for laying over the scene
-        let recipe = match self.presentation.layout(self.layout, self.experimental_wide) {
-            zakuro_gpu::ScreenLayout::Composed { recipe, .. } => zakuro_gpu::recipes::recipe(recipe),
-            _ => None,
+        let (recipe, room) = match self.presentation.layout(self.layout, self.experimental_wide) {
+            zakuro_gpu::ScreenLayout::Composed { recipe, wide, room } => (zakuro_gpu::recipes::recipe(recipe), wide && room),
+            _ => (None, false),
         };
         zakuro_gpu::kiu_ui::set_hidden_lower(recipe.as_ref().map_or(&[][..], |r| &r.hide[..]));
-        zakuro_gpu::kiu_ui::compose::set_composing(recipe.is_some_and(|r| r.compose));
+        zakuro_gpu::kiu_ui::compose::set_composing(recipe.as_ref().is_some_and(|r| r.compose));
+        // a screen that is redrawn: where each of its elements goes in this
+        // window, for the renderer to draw the game's lower screen there
+        let size = self.window.as_ref().map(|w| w.inner_size()).filter(|s| s.width > 0 && s.height > 0);
+        zakuro_gpu::kiu_ui::compose::set_elements(recipe.as_ref().filter(|r| r.redraw).zip(size)
+            .map(|(r, s)| zakuro_gpu::elements(s.width as f32, s.height as f32, r, room)));
     }
 
     /// the menus, and the actions they asked for, done.

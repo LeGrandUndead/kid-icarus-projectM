@@ -11,6 +11,8 @@
 //! unless = []               # archives that mean another screen
 //! page = "#F6F5F1"          # the window's background
 //! compose = true            # lower screen drawn transparent, backdrops left out
+//! redraw = true             # lower pieces are elements: each of the game's draws goes
+//!                           # whole to the piece whose src holds its centre (implies compose)
 //! hide = [[56, 186, 190, 240]]   # lower-screen parts left out (3DS-only)
 //!
 //! [[screen.piece]]
@@ -48,6 +50,8 @@ struct Screen {
     page: Option<String>,
     #[serde(default)]
     compose: bool,
+    #[serde(default)]
+    redraw: bool,
     #[serde(default)]
     hide: Vec<[f32; 4]>,
     #[serde(default)]
@@ -119,7 +123,7 @@ pub fn parse(text: &str) -> Result<Vec<ScreenRecipe>, String> {
         }).collect::<Result<Vec<_>, String>>()?;
         Ok(ScreenRecipe {
             page: match &screen.page { Some(c) => colour(c).map_err(|e| format!("{}: {e}", screen.name))?, None => [0.0, 0.0, 0.0, 1.0] },
-            name: screen.name, when: screen.when, unless: screen.unless, compose: screen.compose, hide: screen.hide, pieces,
+            name: screen.name, when: screen.when, unless: screen.unless, compose: screen.compose || screen.redraw, redraw: screen.redraw, hide: screen.hide, pieces,
         })
     }).collect()
 }

@@ -12,6 +12,11 @@
 # page    the window's background, #RRGGBB.
 # compose the lower screen is drawn transparent, its full-screen backdrops
 #         left out, so its pieces can lie over the scene.
+# redraw  the lower pieces are elements: each thing the game draws on its
+#         lower screen (a button, its label, a glyph) is drawn whole, at the
+#         window's resolution, at the place of the piece whose src holds its
+#         centre. Nothing is cut out of a picture; what is in no piece is
+#         left out. Implies compose.
 # hide    lower-screen parts left out (3DS-only art), console pixels
 #         [left, top, right, bottom]; a draw entirely inside one is skipped.
 #
@@ -92,7 +97,7 @@ compose = true
 name = "main_menu"
 when = ["040"]
 page = "#F3EEE6"
-compose = true
+redraw = true
 hide = [[205, 4, 320, 74], [226, 192, 268, 234]]
 
   [[screen.piece]]
@@ -150,7 +155,7 @@ hide = [[205, 4, 320, 74], [226, 192, 268, 234]]
 name = "solo_hall"
 when = ["030"]
 page = "#000000"
-compose = true
+redraw = true
 
   [[screen.piece]]
   from = "upper"
@@ -357,7 +362,7 @@ hide = [[170, 185, 340, 260]]
 name = "every_other_menu"
 when = ["any"]
 page = "#000000"
-compose = true
+redraw = true
 
   [[screen.piece]]
   from = "upper"

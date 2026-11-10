@@ -28,6 +28,11 @@ pub struct ScreenRecipe {
     /// The lower screen is drawn transparent, without its full-screen
     /// backdrops, so its pieces can lie over the scene (kiu_ui::compose).
     pub compose: bool,
+    /// The lower pieces are elements: each of the game's lower-screen draws
+    /// is drawn whole, at the window's resolution, where the piece whose
+    /// `source` holds its centre is placed; draws in no piece are left out.
+    /// Nothing is cut out of the lower picture (kiu_ui::compose::Element).
+    pub redraw: bool,
     /// Parts of the lower screen left out (3DS-only art: HOME buttons...),
     /// console pixels, left, top, right, bottom; a draw entirely inside one
     /// is skipped.
@@ -134,6 +139,10 @@ pub fn find(menus: &MenuSet, pause: bool) -> Option<u16> {
     }).map(|i| i as u16)
 }
 
+/// Tests that replace the table take turns.
+#[cfg(test)]
+pub(crate) static TEST_TABLE: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -144,6 +153,7 @@ mod tests {
     }
     #[test]
     fn screens_are_found_by_their_menu_art() {
+        let _turn = TEST_TABLE.lock().unwrap_or_else(|e| e.into_inner());
         let make = |name: &str, when: &[&str], unless: &[&str]| ScreenRecipe { name: name.into(),
             when: when.iter().map(|s| s.to_string()).collect(), unless: unless.iter().map(|s| s.to_string()).collect(), ..Default::default() };
         set_recipes(vec![make("solo", &["030"], &["010"]), make("chapters", &["010", "menu011"], &[]), make("pause", &["pause"], &[])]);
