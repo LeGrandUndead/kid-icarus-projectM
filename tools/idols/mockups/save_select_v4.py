@@ -1,5 +1,6 @@
+import os; WORK=os.environ.get('IDOLS_WORK','work')  # the folder with the extracted models and renders
 exec(open('mk.py').read())
-sys_path='/tmp/claude-0/-home-claude/0846ad66-37b8-5f7e-bbd2-eb4c158aa498/scratchpad/render'
+sys_path=WORK+'/render'
 import sys; sys.path.insert(0,sys_path)
 import books
 INK=(16,10,12)

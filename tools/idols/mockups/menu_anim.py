@@ -1,9 +1,10 @@
 # The main menu in motion: each mode's idol plays its move; rays turn, motes
 # drift, the vine's selection follows; modes cross-fade. Writes frames for ffmpeg.
+import os; WORK=os.environ.get('IDOLS_WORK','work')  # the folder with the extracted models and renders
 exec(open('mk.py').read())
 exec(open('vine.py').read())
 import random, sys
-R='/tmp/claude-0/-home-claude/0846ad66-37b8-5f7e-bbd2-eb4c158aa498/scratchpad/render/frames'
+R=WORK+'/render/frames'
 INK=(16,10,12)
 atlas,_=art('040','MenTopBt_Lang0002')
 A=np.asarray(atlas); lab,_=ndimage.label(A[:,:,3]>10); objs=ndimage.find_objects(lab); kA=atlas.width/256

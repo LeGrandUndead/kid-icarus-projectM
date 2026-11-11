@@ -29,3 +29,20 @@ extracted ROM.
 Idols used so far: 000 Pit, 009 Dark Pit, 002 Palutena, 012 Viridi
 (also 001 winged Pit, 006 Medusa, 007 Magnus, 010 Poseidon, 011 Hades,
 013 Phosphora?, 014 a girl character).
+
+Every script reads and writes its working folder from `IDOLS_WORK`
+(default `work/`): the extracted models (`idols/`), the renders
+(`render/frames/`), the fonts (`mock/`).
+
+- `catalog/`: every animation we can play, as a labelled, looping grid.
+  `build.py` lists them (each idol's Wait and Action00, and Pit's ground
+  and air moves from `player/g0`, `a0` played on his idol) and exports
+  24 frames of each; `render.py` renders them; `compose.py` lays out the
+  pages (`compose.py still` for one still sheet per page).
+- `render/freeze.py`: one frame of a move (Pit's idol Action00, frame 18,
+  mid-leap) at every angle from -55° to +20°, so the menu can hold the
+  pose and turn it toward the pointer; then the rest of the move from that
+  frame, turning back to face the camera.
+- `mockups/solo_freeze.py`: the Solo mock-up made from them: frozen pose
+  following the pointer, click, the move resumes, a 0.4 s zoom into the
+  Solo hall.

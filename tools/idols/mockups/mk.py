@@ -1,8 +1,9 @@
 # helpers for the menu mock-ups (game art from the player's own ROM; stays local)
+import os; WORK=os.environ.get('IDOLS_WORK','work')  # the folder with the extracted models and renders
 import glob, os, math, numpy as np
 from PIL import Image, ImageDraw, ImageFilter, ImageFont, ImageChops
 from scipy import ndimage
-S='/tmp/claude-0/-home-claude/0846ad66-37b8-5f7e-bbd2-eb4c158aa498/scratchpad'
+S=WORK
 W,H=1920,1080; U=H/240
 TSV={}
 for line in open('/mnt/user-data/uploads/Kid icarus/build/native-ui/ui-sources.tsv'):

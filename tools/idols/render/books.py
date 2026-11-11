@@ -1,8 +1,9 @@
 # the save select's 3D books, rendered with the idol renderer
+import os; WORK=os.environ.get('IDOLS_WORK','work')  # the folder with the extracted models and renders
 import sys, math, numpy as np
-sys.path.insert(0,'/tmp/claude-0/-home-claude/0846ad66-37b8-5f7e-bbd2-eb4c158aa498/scratchpad/render')
+sys.path.insert(0,WORK+'/render')
 import idol
-D='/tmp/claude-0/-home-claude/0846ad66-37b8-5f7e-bbd2-eb4c158aa498/scratchpad/idols'
+D=WORK+'/idols'
 BOOKMESH={1:'BookMT2',2:'BookMT',3:'BookMT1'}
 def loader(b):
     def load(_):

@@ -1,9 +1,10 @@
 # Renders a posed idol (exported by the SPICA converter) with its own
 # textures, plus a stylised look: soft two-tone light, a rim light in a
 # chosen colour, a thin ink outline. Software rasteriser (numpy).
+import os; WORK=os.environ.get('IDOLS_WORK','work')  # the folder with the extracted models and renders
 import numpy as np, math, sys, os
 from PIL import Image
-S='/tmp/claude-0/-home-claude/0846ad66-37b8-5f7e-bbd2-eb4c158aa498/scratchpad/idols'
+S=WORK+'/idols'
 
 def load(idol):
     out=f'{S}/out{idol}'; tex=f'{S}/tex{idol}'
