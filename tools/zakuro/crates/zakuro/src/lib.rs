@@ -17,6 +17,7 @@ mod kiu_jump;
 mod kiu_launcher;
 mod rom_prefetch;
 mod top_menus;
+mod native_menu;
 mod menu_capture;
 mod menu_layouts;
 mod recompile;
@@ -137,6 +138,9 @@ fn start(options: cli::Options, linked: Option<Linked>) {
         land_seen: None,
         space_jump: kiu_jump::SpaceJump::default(),
         top_menu: top_menus::Shown::default(),
+        native_screen: false,
+        native_art: None,
+        native_art_failed: false,
         tap: top_menus::Tap::default(),
         released_for_menu: false,
         menu_layouts: menu_layouts::MenuLayouts::from_environment(),
@@ -408,6 +412,11 @@ struct App {
     space_jump: kiu_jump::SpaceJump,
     /// the game's menu answered from the top screen now (top_menus)
     top_menu: top_menus::Shown,
+    /// the screen's layout has its menu redrawn by us (native_menu)
+    native_screen: bool,
+    /// the redrawn menu's art, loaded once from the menu art pack
+    native_art: Option<native_menu::Art>,
+    native_art_failed: bool,
     /// a touch the top-screen buttons asked for, given over a few frames
     tap: top_menus::Tap,
     /// the mouse was let go for a top-screen menu, to take back for play
@@ -1284,9 +1293,10 @@ impl App {
         zakuro_gpu::diagnostic_frame(game.frame);
         let outcome = game.system.run_frame();
         let scene = zakuro_gpu::kiu_ui::end_frame();
-        // the hand-made PC buttons (top_menus) stand in only where no
-        // layout file lays the game's own menu over the picture
-        if !self.menu_layouts.active() { self.top_menu.update(&scene, game.frame); }
+        // which of the game's menus is up, for the PC's own buttons: drawn
+        // where the screen's layout says it is redrawn natively
+        // (native_menu), or everywhere without a layout file (top_menus)
+        self.top_menu.update(&scene, game.frame);
         self.menu_layouts.poll();
         self.menu_capture.frame(&mut game.system, &scene);
         let land = game.system.memory.kiu_land_publications();
@@ -1370,6 +1380,7 @@ impl App {
         };
         zakuro_gpu::kiu_ui::set_hidden_lower(recipe.as_ref().map_or(&[][..], |r| &r.hide[..]));
         zakuro_gpu::kiu_ui::compose::set_composing(recipe.as_ref().is_some_and(|r| r.compose));
+        self.native_screen = recipe.as_ref().is_some_and(|r| r.native);
         // a screen that is redrawn: where each of its elements goes in this
         // window, for the renderer to draw the game's lower screen there
         let size = self.window.as_ref().map(|w| w.inner_size()).filter(|s| s.width > 0 && s.height > 0);
@@ -1388,10 +1399,28 @@ impl App {
         // the game's menu answered from the top screen, over the upper picture
         let top_menu = self.top_menu.menu().filter(|_| game.is_some() && self.presentation.enabled
             && self.presentation.access.is_none() && !self.presentation.legacy && !menus.menu_open && !menus.settings_open);
+        // a menu redrawn with the game's art (native_menu) where its layout
+        // asks for it; the plain PC buttons only without a layout file
+        let native = top_menu.filter(|_| self.native_screen)
+            .and_then(|m| native_menu::SCREENS.iter().copied().find(|s| s.id == m.id));
+        let top_menu = top_menu.filter(|_| !self.menu_layouts.active());
+        if let Some(screen) = native {
+            if self.native_art.as_ref().is_none_or(|a| a.id != screen.id) && !self.native_art_failed {
+                self.native_art = native_menu::Art::load(&gui.ctx, screen);
+                if self.native_art.is_none() {
+                    self.native_art_failed = true;
+                    log::warn!("The redrawn menus need the menu art pack (KIU_MENU_PACK); none found");
+                }
+            }
+        }
+        let native = native.zip(self.native_art.as_ref()).filter(|(s, a)| s.id == a.id);
         let size = window.inner_size();
         let view = layout(size.width, size.height, self.presentation.layout(self.layout, self.experimental_wide)).0;
         let mut tapped = None;
         let overlay = gui.frame(window, |ui| {
+            if let Some((screen, art)) = native {
+                tapped = native_menu::show(ui.ctx(), screen, art, ui.ctx().content_rect());
+            }
             if let (Some(menu), Some(v)) = (top_menu, view) {
                 let ppp = ui.ctx().pixels_per_point();
                 let rect = egui::Rect::from_min_size(egui::pos2(v.x / ppp, v.y / ppp), egui::vec2(v.width / ppp, v.height / ppp));

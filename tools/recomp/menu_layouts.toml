@@ -17,6 +17,9 @@
 #         window's resolution, at the place of the piece whose src holds its
 #         centre. Nothing is cut out of a picture; what is in no piece is
 #         left out. Implies compose.
+# native  the screen's buttons are drawn by the PC itself from the game's
+#         art (native_menu.rs); give no lower pieces, the lower screen is
+#         not shown.
 # hide    lower-screen parts left out (3DS-only art), console pixels
 #         [left, top, right, bottom]; a draw entirely inside one is skipped.
 #
@@ -91,61 +94,19 @@ compose = true
   scale = 0.6
 
 # Main menu: the section's own art (it changes with the highlighted button)
-# fills the height; the game's buttons stand in two groups at its sides,
-# leaving its title and line visible. StreetPass and AR (3DS only) left out.
+# fills the height. The buttons are not the lower screen: the PC draws them
+# itself from the game's button art (native_menu.rs), in one column on the
+# left; the lower screen is not shown (doc/UI_DESIGN_RULES.md).
 [[screen]]
 name = "main_menu"
 when = ["040"]
 page = "#F3EEE6"
-redraw = true
-hide = [[205, 4, 320, 74], [226, 192, 268, 234]]
+native = true
 
   [[screen.piece]]
   from = "upper"
   fill = "height"
   feather = [0.04, 0, 0.04, 0]
-
-  [[screen.piece]]
-  from = "lower"
-  src = [2, 4, 212, 97]
-  anchor = "left"
-  at = [14, -44]
-  scale = 0.56
-
-  [[screen.piece]]
-  from = "lower"
-  src = [2, 101, 127, 181]
-  anchor = "left"
-  at = [14, 28]
-  scale = 0.56
-
-  [[screen.piece]]
-  from = "lower"
-  src = [130, 86, 320, 176]
-  anchor = "right"
-  at = [-14, -44]
-  scale = 0.56
-
-  [[screen.piece]]
-  from = "lower"
-  src = [54, 181, 230, 240]
-  anchor = "right"
-  at = [-14, 28]
-  scale = 0.56
-
-  [[screen.piece]]
-  from = "lower"
-  src = [2, 197, 55, 240]
-  anchor = "bottom-left"
-  at = [6, -6]
-  scale = 0.7
-
-  [[screen.piece]]
-  from = "lower"
-  src = [266, 193, 320, 234]
-  anchor = "bottom-right"
-  at = [-6, -6]
-  scale = 0.7
 
 # Solo hall: the room fills the window and stays clear in the middle (its
 # door, floor and the caption under them). Move Out! hangs from the top like

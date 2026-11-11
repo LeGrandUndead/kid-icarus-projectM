@@ -33,6 +33,9 @@ pub struct ScreenRecipe {
     /// `source` holds its centre is placed; draws in no piece are left out.
     /// Nothing is cut out of the lower picture (kiu_ui::compose::Element).
     pub redraw: bool,
+    /// The screen's menu is drawn by the PC itself with the game's art
+    /// (the frontend's native_menu); the lower screen is not shown.
+    pub native: bool,
     /// Parts of the lower screen left out (3DS-only art: HOME buttons...),
     /// console pixels, left, top, right, bottom; a draw entirely inside one
     /// is skipped.
