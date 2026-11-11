@@ -1316,10 +1316,13 @@ impl App {
         self.top_menu.update(&scene, game.frame);
         if let Some(screen) = self.native_screen.and_then(|id| native_menu::SCREENS.iter().find(|s| s.id == id)) {
             if scene.top_watched != self.native_watched {
-                log::debug!("Redrawn menu: upper art {:#06b} (selected {:?})", scene.top_watched, screen.selected(scene.top_watched));
+                log::debug!("Redrawn menu: upper art {:#06b} (selected {:?}, cursor {:?})", scene.top_watched, screen.selected(scene.top_watched), self.native_live.nav.current);
                 self.native_watched = scene.top_watched;
             }
             self.native_live.nav.observe(screen.selected(scene.top_watched));
+            if self.native_live.nav.current.is_none() && game.frame % 300 == 0 {
+                log::debug!("Redrawn menu: the game's selection is not known yet (upper art {:#06b})", scene.top_watched);
+            }
         }
         self.menu_layouts.poll();
         self.menu_capture.frame(&mut game.system, &scene);

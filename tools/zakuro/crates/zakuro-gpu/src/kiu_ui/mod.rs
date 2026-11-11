@@ -252,11 +252,16 @@ fn save_select_hashes(catalog: &HashMap<u64, Source>) -> HashSet<u64> {
 }
 
 /// A draw on the upper (`top`) or lower screen sampled this original texture.
+/// A texture a draw samples, on any unit: marks it if a redrawn menu
+/// watches for it (`watch_top`).
+pub(crate) fn note_watched(hash: u64) {
+    use std::sync::atomic::Ordering::Relaxed;
+    if hash == 0 { return; }
+    if let Some(i) = TOP_WATCH.iter().position(|w| w.load(Relaxed) == hash) { TOP_WATCHED.fetch_or(1 << i, Relaxed); }
+}
+
 pub(crate) fn note_texture(hash: u64, top: bool) {
     use std::sync::atomic::Ordering::Relaxed;
-    if top && hash != 0 {
-        if let Some(i) = TOP_WATCH.iter().position(|w| w.load(Relaxed) == hash) { TOP_WATCHED.fetch_or(1 << i, Relaxed); }
-    }
     if SAVE_SELECT_HASHES.get().is_some_and(|set| set.contains(&hash)) {
         SAVE_SELECT_DRAWS.fetch_add(1, Relaxed);
     }

@@ -3218,6 +3218,9 @@ impl Hardware {
             // which menu screen is up, from the identity of the art either screen samples
             let top=draw.width==240 && draw.height==400;
             if let Some(hash)=draw.textures[0].as_ref().and_then(|t|t.source_hash) { crate::kiu_ui::note_texture(hash,top); }
+            // art a redrawn menu watches for (kiu_ui::watch_top) may be a
+            // mask on any texture unit, drawn into any buffer
+            for hash in draw.textures.iter().flatten().filter_map(|t| t.source_hash) { crate::kiu_ui::note_watched(hash); }
             if top && draw.depth.is_some() { crate::kiu_ui::note_top_depth(); }
         }
         // a menu recomposed on one screen (kiu_ui::compose): its lower screen
