@@ -21,10 +21,13 @@ def load(idol):
         texs[name]=np.fromfile(f'{tex}/{name}.rgba',dtype=np.uint8).reshape(h,w,4).astype(np.float32)/255
     return v,groups,texs
 
-def rot(yaw,pitch):
+def rot(yaw,pitch,bank=0.0):
+    # bank: a roll about the model's own forward axis (its z), like a plane
     cy,sy,cp,sp=math.cos(yaw),math.sin(yaw),math.cos(pitch),math.sin(pitch)
+    cb,sb=math.cos(bank),math.sin(bank)
     Ry=np.array([[cy,0,sy],[0,1,0],[-sy,0,cy]]); Rx=np.array([[1,0,0],[0,cp,-sp],[0,sp,cp]])
-    return Rx@Ry
+    Rz=np.array([[cb,-sb,0],[sb,cb,0],[0,0,1]])
+    return Rx@Ry@Rz
 
 def sample(t,u,v,flip=True):
     h,w=t.shape[:2]
@@ -40,10 +43,12 @@ def frame(idol,anim,k):
     if key not in FRAMES:
         v,_,_=load(idol); FRAMES[key]=np.fromfile(f'{S}/out{idol}/{anim}.frames',dtype=np.float32).reshape(-1,len(v),6)
     return FRAMES[key][k]
-def render(idol,size=1200,yaw=0.0,pitch=0.0,rim=(1,0.8,0.4),plain=False,flip=False,ss=2,anim=None,k=0,span_fix=None,glow_only=False):
+def render(idol,size=1200,yaw=0.0,pitch=0.0,rim=(1,0.8,0.4),plain=False,flip=False,ss=2,anim=None,k=0,span_fix=None,glow_only=False,bank=0.0,pose=None):
+    # pose: the vertices (positions, normals) to draw, e.g. a blend of two animations
     v,groups,texs=load(idol)
     if anim: v=v.copy(); v[:,0:6]=frame(idol,anim,k)
-    R=rot(yaw,pitch)
+    if pose is not None: v=v.copy(); v[:,0:6]=pose
+    R=rot(yaw,pitch,bank)
     P=v[:,0:3]@R.T; N=v[:,3:6]@R.T
     # models without normals (the menu's books): flat ones from each triangle
     bad=~np.isfinite(N).all(1)

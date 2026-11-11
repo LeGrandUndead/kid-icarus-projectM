@@ -51,3 +51,12 @@ Every script reads and writes its working folder from `IDOLS_WORK`
   turns (yaw and pitch, on a soft spring) to head toward the pointer, the
   camera stays put; on click he turns to the camera and flies at it, and the
   Solo hall fades in behind him as he fills the screen.
+- `render/sky.py` + `mockups/solo_sky.py`: Solo in chapter 1's sky
+  (stage a0101 textures, unpacked into `stages/tex`: sky gradient, cloud
+  wall as a scrolling sea of cloud, sun, cloud puffs shaped from the cloud
+  layer textures, streaming opposite to Pit's heading). Pit's moves blend
+  into each other: glide loop, banks (AirGrideL/R), glance back
+  (AirGrideLookB), barrel roll on hover (AirRollingGrideLA); he leans into
+  turns (`idol.render(bank=...)`, blended poses with `pose=`). On click he
+  barrel-rolls past the lens (AirRollingGrideRA) with speed lines and a
+  smear, and the next screen shows through the trail he cuts.
