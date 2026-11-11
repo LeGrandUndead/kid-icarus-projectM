@@ -46,3 +46,8 @@ Every script reads and writes its working folder from `IDOLS_WORK`
 - `mockups/solo_freeze.py`: the Solo mock-up made from them: frozen pose
   following the pointer, click, the move resumes, a 0.4 s zoom into the
   Solo hall.
+- `render/fly.py` + `mockups/solo_fly.py`: Solo at 60 fps with Pit's
+  flight animation (Pit air AirGrideFlap1, catalog #131) looping; the model
+  turns (yaw and pitch, on a soft spring) to head toward the pointer, the
+  camera stays put; on click he turns to the camera and flies at it, and the
+  Solo hall fades in behind him as he fills the screen.
