@@ -1397,13 +1397,14 @@ impl App {
         let (menus, library, settings, jobs) = (&mut self.menus, &self.library, &mut self.settings, &self.jobs);
         let mut actions = Vec::new();
         // the game's menu answered from the top screen, over the upper picture
-        let top_menu = self.top_menu.menu().filter(|_| game.is_some() && self.presentation.enabled
-            && self.presentation.access.is_none() && !self.presentation.legacy && !menus.menu_open && !menus.settings_open);
-        // a menu redrawn with the game's art (native_menu) where its layout
-        // asks for it; the plain PC buttons only without a layout file
-        let native = top_menu.filter(|_| self.native_screen)
+        let shown = self.top_menu.menu().filter(|_| game.is_some() && self.presentation.enabled
+            && !self.presentation.legacy && !menus.menu_open && !menus.settings_open);
+        // a menu redrawn with the game's art (native_menu) where its screen
+        // layout asks for it (a laid-out screen is the menus panel, open)
+        let native = shown.filter(|_| self.native_screen)
             .and_then(|m| native_menu::SCREENS.iter().copied().find(|s| s.id == m.id));
-        let top_menu = top_menu.filter(|_| !self.menu_layouts.active());
+        // the plain PC buttons only without a layout file, over the top view
+        let top_menu = shown.filter(|_| !self.menu_layouts.active() && self.presentation.access.is_none());
         if let Some(screen) = native {
             if self.native_art.as_ref().is_none_or(|a| a.id != screen.id) && !self.native_art_failed {
                 self.native_art = native_menu::Art::load(&gui.ctx, screen);
