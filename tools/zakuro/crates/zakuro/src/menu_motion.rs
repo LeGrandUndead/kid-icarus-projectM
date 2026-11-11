@@ -134,8 +134,10 @@ pub enum Dir { Up, Down, Left, Right }
 pub struct Graph { pub edges: &'static [[usize; 4]] }
 
 impl Graph {
-    /// The first press on the shortest way from `from` to `to`.
-    pub fn first_step(&self, from: usize, to: usize) -> Option<Dir> {
+    /// The first press on the shortest way from `from` to `to`, passing only
+    /// through choices for which `shown` holds (a hidden 3DS-only choice
+    /// would leave the cursor where the pointer cannot follow it).
+    pub fn first_step(&self, from: usize, to: usize, shown: impl Fn(usize) -> bool) -> Option<Dir> {
         if from == to || from >= self.edges.len() || to >= self.edges.len() { return None; }
         let mut first: Vec<Option<Dir>> = vec![None; self.edges.len()];
         let mut seen = vec![false; self.edges.len()];
@@ -144,7 +146,7 @@ impl Graph {
         const DIRS: [Dir; 4] = [Dir::Up, Dir::Down, Dir::Left, Dir::Right];
         while let Some(n) = queue.pop_front() {
             for (k, &next) in self.edges[n].iter().enumerate() {
-                if next >= self.edges.len() || seen[next] { continue; }
+                if next >= self.edges.len() || seen[next] || !shown(next) { continue; }
                 seen[next] = true;
                 first[next] = first[n].or(Some(DIRS[k]));
                 if next == to { return first[next]; }
@@ -161,9 +163,13 @@ const SETTLE: u32 = 10;
 /// Presses tried for one target before giving up until the pointer moves.
 const TRIES: u32 = 8;
 
+/// Frames without any selection art before the cursor counts as unknown.
+const UNSEEN: u32 = 20;
+
 /// Moves the game's cursor to the choice the pointer rests on.
 #[derive(Default)]
 pub struct Nav {
+    unseen: u32,
     /// the game's selected choice (index into the navigation map)
     pub current: Option<usize>,
     target: Option<usize>,
@@ -173,9 +179,14 @@ pub struct Nav {
 }
 
 impl Nav {
-    /// What the game's upper screen shows selected this frame, if it says.
-    pub fn observe(&mut self, selected: Option<usize>) {
+    /// What the game's upper screen shows selected this frame: `selected`
+    /// when it is one choice; `any` whether it showed the art of any choice
+    /// (two cross-fading still says the cursor is among them). A while with
+    /// none means the cursor is on a choice the menu does not show.
+    pub fn observe(&mut self, selected: Option<usize>, any: bool) {
         if selected.is_some() { self.current = selected; }
+        self.unseen = if any { 0 } else { self.unseen + 1 };
+        if self.unseen > UNSEEN { self.current = None; }
     }
 
     /// The choice the pointer rests on (None: leave the game's cursor be).
@@ -187,7 +198,7 @@ impl Nav {
     }
 
     /// The D-pad press to give the game this frame.
-    pub fn pad(&mut self, graph: &Graph) -> Option<Dir> {
+    pub fn pad(&mut self, graph: &Graph, shown: impl Fn(usize) -> bool) -> Option<Dir> {
         if let Some((dir, left)) = self.pressing {
             self.pressing = if left > 1 { Some((dir, left - 1)) } else { self.settle = SETTLE; None };
             return Some(dir);
@@ -195,7 +206,7 @@ impl Nav {
         if self.settle > 0 { self.settle -= 1; return None; }
         let (Some(from), Some(to)) = (self.current, self.target) else { return None };
         if self.tries >= TRIES { return None; }
-        let dir = graph.first_step(from, to)?;
+        let dir = graph.first_step(from, to, shown)?;
         self.tries += 1;
         self.pressing = Some((dir, PRESS - 1));
         Some(dir)
@@ -249,24 +260,33 @@ mod tests {
 
     #[test]
     fn the_shortest_way_through_the_game_map() {
-        assert_eq!(RING.first_step(0, 1), Some(Dir::Down));
-        assert_eq!(RING.first_step(0, 3), Some(Dir::Up));
-        assert_eq!(RING.first_step(2, 2), None);
+        assert_eq!(RING.first_step(0, 1, |_| true), Some(Dir::Down));
+        assert_eq!(RING.first_step(0, 3, |_| true), Some(Dir::Up));
+        assert_eq!(RING.first_step(2, 2, |_| true), None);
+        assert_eq!(RING.first_step(0, 2, |n| n != 1), Some(Dir::Up), "around a hidden choice");
+        assert_eq!(RING.first_step(0, 2, |n| n == 0 || n == 2), None, "no way without it");
     }
 
     #[test]
     fn the_cursor_is_walked_to_the_pointer_and_left_there() {
         let mut nav = Nav::default();
-        nav.observe(Some(0));
+        nav.observe(Some(0), true);
         nav.want(Some(1));
-        let presses: Vec<_> = (0..PRESS).map(|_| nav.pad(&RING)).collect();
+        let presses: Vec<_> = (0..PRESS).map(|_| nav.pad(&RING, |_| true)).collect();
         assert!(presses.iter().all(|p| *p == Some(Dir::Down)));
-        for _ in 0..SETTLE { assert_eq!(nav.pad(&RING), None); }
-        nav.observe(Some(1));
-        assert_eq!(nav.pad(&RING), None, "arrived");
+        for _ in 0..SETTLE { assert_eq!(nav.pad(&RING, |_| true), None); }
+        nav.observe(Some(1), true);
+        assert_eq!(nav.pad(&RING, |_| true), None, "arrived");
+        // a cursor on a choice the menu does not show is not known
+        let mut lost = Nav::default();
+        lost.observe(Some(3), true);
+        for _ in 0..UNSEEN { lost.observe(None, false); }
+        assert_eq!(lost.current, Some(3));
+        lost.observe(None, false);
+        assert_eq!(lost.current, None);
         // a cursor that does not move is not pushed forever
         nav.want(Some(0));
-        let pressed = (0..200).filter(|_| nav.pad(&RING).is_some()).count();
+        let pressed = (0..200).filter(|_| nav.pad(&RING, |_| true).is_some()).count();
         assert_eq!(pressed as u32, TRIES * PRESS);
     }
 }

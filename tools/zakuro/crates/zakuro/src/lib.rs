@@ -1272,7 +1272,7 @@ impl App {
             // pointing at a redrawn menu's button walks the game's cursor there
             if let Some(screen) = self.native_screen.and_then(|id| native_menu::SCREENS.iter().find(|s| s.id == id)) {
                 use zakuro_core::services::hid::PadState;
-                if let Some(dir) = self.native_live.nav.pad(&screen.graph) {
+                if let Some(dir) = self.native_live.nav.pad(&screen.graph, |n| screen.shows(n)) {
                     input.buttons |= match dir {
                         menu_motion::Dir::Up => PadState::UP, menu_motion::Dir::Down => PadState::DOWN,
                         menu_motion::Dir::Left => PadState::LEFT, menu_motion::Dir::Right => PadState::RIGHT,
@@ -1319,7 +1319,10 @@ impl App {
                 log::debug!("Redrawn menu: upper art {:#06b} (selected {:?}, cursor {:?})", scene.top_watched, screen.selected(scene.top_watched), self.native_live.nav.current);
                 self.native_watched = scene.top_watched;
             }
-            self.native_live.nav.observe(screen.selected(scene.top_watched));
+            // only frames whose upper screen was drawn say anything
+            if scene.top_watched != 0 || scene.fresh {
+                self.native_live.nav.observe(screen.selected(scene.top_watched), screen.any_selected(scene.top_watched));
+            }
             if self.native_live.nav.current.is_none() && game.frame % 300 == 0 {
                 log::debug!("Redrawn menu: the game's selection is not known yet (upper art {:#06b})", scene.top_watched);
             }

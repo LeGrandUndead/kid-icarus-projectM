@@ -59,6 +59,14 @@ pub struct Screen {
 }
 
 impl Screen {
+    /// Whether choice `node` of the game's map is one of the shown buttons.
+    pub fn shows(&self, node: usize) -> bool { self.buttons.iter().any(|b| b.node == node) }
+
+    /// Whether the watched upper-screen art shows any choice's art.
+    pub fn any_selected(&self, watched: u32) -> bool {
+        (0..self.selected_art.len()).any(|i| self.selected_art[i] != 0 && watched & (1 << i) != 0)
+    }
+
     /// The choice the game shows selected, from the watched upper-screen
     /// art drawn this frame (kiu_ui::watch_top, in `selected_art` order):
     /// one, or none while two cross-fade.
@@ -467,7 +475,9 @@ mod tests {
         assert_eq!(MAIN_MENU.selected(0b0010), Some(1));
         assert_eq!(MAIN_MENU.selected(0b0110), None, "two cross-fading");
         assert_eq!(MAIN_MENU.selected(0b10000), None, "not one of the choices");
-        assert_eq!(MAIN_MENU.graph.first_step(0, 2), Some(crate::menu_motion::Dir::Down), "Solo, then Vault below it");
+        assert_eq!(MAIN_MENU.graph.first_step(0, 2, |n| MAIN_MENU.shows(n)), Some(crate::menu_motion::Dir::Down), "Solo, then Vault below it");
+        // Together to Solo goes by Vault, not by the hidden StreetPass
+        assert_eq!(MAIN_MENU.graph.first_step(1, 0, |n| MAIN_MENU.shows(n)), Some(crate::menu_motion::Dir::Left));
         assert!(BACK_AT[0] >= 12.0 && BACK_AT[1] + 32.0 * BACK_SCALE <= 228.0);
     }
 }
