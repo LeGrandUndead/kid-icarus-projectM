@@ -138,7 +138,7 @@ fn start(options: cli::Options, linked: Option<Linked>) {
         land_seen: None,
         space_jump: kiu_jump::SpaceJump::default(),
         top_menu: top_menus::Shown::default(),
-        native_screen: false,
+        native_screen: None,
         native_art: None,
         native_art_failed: false,
         tap: top_menus::Tap::default(),
@@ -413,7 +413,7 @@ struct App {
     /// the game's menu answered from the top screen now (top_menus)
     top_menu: top_menus::Shown,
     /// the screen's layout has its menu redrawn by us (native_menu)
-    native_screen: bool,
+    native_screen: Option<u16>,
     /// the redrawn menu's art, loaded once from the menu art pack
     native_art: Option<native_menu::Art>,
     native_art_failed: bool,
@@ -1380,7 +1380,14 @@ impl App {
         };
         zakuro_gpu::kiu_ui::set_hidden_lower(recipe.as_ref().map_or(&[][..], |r| &r.hide[..]));
         zakuro_gpu::kiu_ui::compose::set_composing(recipe.as_ref().is_some_and(|r| r.compose));
-        self.native_screen = recipe.as_ref().is_some_and(|r| r.native);
+        // the screen drawn by the PC itself: the native_menu screen of the
+        // menu archive its layout is for
+        let native = recipe.as_ref().filter(|r| r.native).and_then(|r| native_menu::SCREENS.iter()
+            .find(|s| r.when.iter().any(|w| w.trim_start_matches("menu").parse::<u16>() == Ok(s.id))).map(|s| s.id));
+        if native != self.native_screen {
+            log::info!("Menu drawn by the PC: {}", native.map_or("none".into(), |id| format!("{id:03}")));
+            self.native_screen = native;
+        }
         // a screen that is redrawn: where each of its elements goes in this
         // window, for the renderer to draw the game's lower screen there
         let size = self.window.as_ref().map(|w| w.inner_size()).filter(|s| s.width > 0 && s.height > 0);
@@ -1401,8 +1408,9 @@ impl App {
             && !self.presentation.legacy && !menus.menu_open && !menus.settings_open);
         // a menu redrawn with the game's art (native_menu) where its screen
         // layout asks for it (a laid-out screen is the menus panel, open)
-        let native = shown.filter(|_| self.native_screen)
-            .and_then(|m| native_menu::SCREENS.iter().copied().find(|s| s.id == m.id));
+        let native = self.native_screen.filter(|_| game.is_some() && self.presentation.enabled
+            && !menus.menu_open && !menus.settings_open)
+            .and_then(|id| native_menu::SCREENS.iter().copied().find(|s| s.id == id));
         // the plain PC buttons only without a layout file, over the top view
         let top_menu = shown.filter(|_| !self.menu_layouts.active() && self.presentation.access.is_none());
         if let Some(screen) = native {
