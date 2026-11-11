@@ -56,13 +56,22 @@ class P {
     if (a.Length >= 3 && h.Models.Count > 0) {
       var model = h.Models[0];
       H3DAnimation anim = null;
-      foreach (var an in h.SkeletalAnimations) if (an.Name == a[2]) anim = an;
+      var animSource = h;
+      if (a.Length >= 5) { using var af = File.OpenRead(a[4]); animSource = Gfx.Open(af); }
+      foreach (var an in animSource.SkeletalAnimations) if (an.Name == a[2]) anim = an;
+      if (anim != null) { int hit = 0; foreach (H3DAnimationElement e in anim.Elements) if (model.Skeleton.Find(e.Name) >= 0) hit++; Console.WriteLine($"bones matched {hit}/{anim.Elements.Count}"); }
       if (anim == null) { Console.Error.WriteLine("no animation " + a[2]); return; }
       float step = a.Length >= 4 ? float.Parse(a[3]) : 1f;
       using var fb = new BinaryWriter(File.Create(Path.Combine(a[1], a[2] + ".frames")));
+      // and every bone's world matrix per frame (row-major 4x4), with the bone names
+      using var bb = new BinaryWriter(File.Create(Path.Combine(a[1], a[2] + ".bones")));
+      File.WriteAllLines(Path.Combine(a[1], "bones.txt"), System.Linq.Enumerable.Select(model.Skeleton, b => b.Name));
       int count = 0;
-      for (float f = 0; f < anim.FramesCount; f += step) {
+      // ANIM_START / ANIM_END (environment): only part of the animation
+      float f0 = float.Parse(Environment.GetEnvironmentVariable("ANIM_START") ?? "0"), f1 = float.Parse(Environment.GetEnvironmentVariable("ANIM_END") ?? anim.FramesCount.ToString());
+      for (float f = f0; f < Math.Min(f1, anim.FramesCount); f += step) {
         var pose = Animate.Pose(model.Skeleton, anim, f);
+        foreach (var m in pose) { bb.Write(m.M11); bb.Write(m.M12); bb.Write(m.M13); bb.Write(m.M14); bb.Write(m.M21); bb.Write(m.M22); bb.Write(m.M23); bb.Write(m.M24); bb.Write(m.M31); bb.Write(m.M32); bb.Write(m.M33); bb.Write(m.M34); bb.Write(m.M41); bb.Write(m.M42); bb.Write(m.M43); bb.Write(m.M44); }
         var ps = new System.Collections.Generic.List<Vector3>(); var ns = new System.Collections.Generic.List<Vector3>();
         Animate.Skin(model, pose, ps, ns);
         for (int i = 0; i < ps.Count; i++) { fb.Write(ps[i].X); fb.Write(ps[i].Y); fb.Write(ps[i].Z); fb.Write(ns[i].X); fb.Write(ns[i].Y); fb.Write(ns[i].Z); }

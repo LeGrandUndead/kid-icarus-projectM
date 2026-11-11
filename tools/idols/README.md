@@ -60,3 +60,25 @@ Every script reads and writes its working folder from `IDOLS_WORK`
   turns (`idol.render(bank=...)`, blended poses with `pose=`). On click he
   barrel-rolls past the lens (AirRollingGrideRA) with speed lines and a
   smear, and the next screen shows through the trail he cuts.
+
+### Cutscene models (higher quality)
+
+`RomFS/us/demo/NNN/demo/mdl.arc` holds each cutscene's characters, each a
+separate model with its own cutscene-long animation: `c05_040_pith00` (Pit's
+body), `c05_040_pith` (his high-detail head, facial bones), `bpith04` /
+`bpith` (Dark Pit), `paluh` (Palutena), `natur` (Viridi), `magnh`, `hadeh`,
+`meduh`, `chaph00`, `dinth`... The converter now also writes every bone's
+world matrix per frame (`<anim>.bones`, `bones.txt`) and takes
+`ANIM_START` / `ANIM_END` to export part of an animation.
+
+- `cutscenes/merge.py`: joins models into one, dropping meshes by material
+  (the body's own low face), and puts a head on its body: the head model's
+  `HeadN` bone is moved onto the body's `HeadN` every frame.
+- `cutscenes/cut.py`: the cutscenes used so far (`T05` chapter 5 fight,
+  `T06`, `T21`, `T25`, `P20`/`P82` Palutena, `V11` Viridi, `H25` Hades) and
+  `build(key, start, end, step, name)`.
+- `render/sheet.py`: a 40-pose sheet of a cutscene, to pick moments.
+- `render/cast.py` + `mockups/cast_menu.py`: Together (the chapter 5
+  grapple in slow motion, then the fight; slash split), Vault (Palutena's
+  idle, then the chapter 20 staff flourish; ring of light), Options (Viridi
+  holds, then swings; sweep with leaves).
