@@ -39,6 +39,24 @@ from the game's own art, at sizes chosen for the PC screen.
    (StreetPass, AR Cards, HOME, battery, wireless) are left out. Hover and
    press effects are light: a glow in the game's gold, a small lift.
 
+8. **Hover selects, click confirms.** Pointing at a choice selects it in
+   the game (its heading, art, caption and sound follow at once); clicking
+   confirms. Every input is acknowledged, as Sakurai asks of menus: a
+   choice reacts when pointed at, when pressed, when grabbed.
+9. **A menu you can play with.** Kid Icarus' own menus wobble and react to
+   touch; the PC menus keep that: buttons hang on a vine in the art's own
+   black silhouette style, sway, can be dragged and pushed into each other,
+   and spring back, never leaving their place (a "toy-like" interface:
+   playful, but every interactive thing still looks interactive).
+10. **Full bleed.** The art fills the whole window: no bars, borders or
+   page colour around it.
+
+From Sakurai's menu columns (Famitsu vol. 138, *Masahiro Sakurai on
+Creating Games*): pictures and colours with words, so choices read at a
+glance; size follows importance; acknowledge every input; fewer choices
+per screen; plain words over jargon; style (fonts, colours) shapes how the
+whole game feels, so menus carry the game's own look.
+
 ## Units
 
 The window is 240 units tall (a 16:9 window is 426.7 wide). The game's upper
@@ -47,14 +65,19 @@ placed at `scale` units per sheet pixel.
 
 ## Main menu (MENUID_TOP, archive 040)
 
-- Upper picture fills the height (heading, art, caption band).
-- Solo, Together, Vault, Options: one column at x 14, from y 24, scale 0.34,
-  10 units apart, ending above the caption's black ground (y 165).
+- Upper picture covers the window, held at its top.
+- Solo, Together, Vault, Options hang from a vine on the left, alternating
+  x 22 / 28, from y 22, scale 0.34, 10 units apart, tilted -2..2 degrees,
+  ending above the caption's black ground (y 165).
+- Hover: 5% larger, and the game's cursor is walked there with the D-pad
+  along its own navigation map, so the game's selection (gold glow,
+  heading, caption) follows. Click: touches the game's real button.
+  Drag: the button follows within 22 units of home, pushes the others,
+  springs back on release.
 - Back: bottom-left at (12, 210), scale 0.5.
-- Hover: gold glow and 6% larger; press: 3% smaller; click touches the
-  game's real button, so its sounds and transitions play.
-- Not yet: the game's keyboard/controller selection is not shown on the PC
-  buttons, and hovering does not move it (rule 5).
 
-Sources: Xbox Accessibility Guidelines 101 (text display), Xbox screen
-areas (title-safe), "Secretly console first" (Game Developer).
+Sources: Sakurai, "Rethinking your menus" (Famitsu vol. 138, Source
+Gaming translation) and his videos on menus and fonts; "Building context:
+toy-like interfaces in games" (Game Developer); Xbox Accessibility
+Guidelines 101 (text sizes); Xbox screen areas (title-safe); "Secretly
+console first" (Game Developer).

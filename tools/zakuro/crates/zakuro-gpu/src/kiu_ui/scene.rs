@@ -62,6 +62,9 @@ pub struct BottomScene {
     /// The menu archives whose own art the lower screen drew this frame
     /// (recipes::MenuSet): which menu screen it is.
     pub lower_menus: crate::backend::recipes::MenuSet,
+    /// Which watched upper-screen textures (kiu_ui::watch_top) were drawn
+    /// this frame, one bit each.
+    pub top_watched: u32,
     /// The land Power Palette is on screen (power icons from atlas `mr` in
     /// the action island). Air special orbs come from `gc_00` instead.
     pub palette: bool,

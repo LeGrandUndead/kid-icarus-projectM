@@ -18,6 +18,8 @@ mod kiu_launcher;
 mod rom_prefetch;
 mod top_menus;
 mod native_menu;
+mod menu_motion;
+mod menu_vine;
 mod menu_capture;
 mod menu_layouts;
 mod recompile;
@@ -141,6 +143,8 @@ fn start(options: cli::Options, linked: Option<Linked>) {
         native_screen: None,
         native_art: None,
         native_art_failed: false,
+        native_live: native_menu::Live::default(),
+        native_watched: 0,
         tap: top_menus::Tap::default(),
         released_for_menu: false,
         menu_layouts: menu_layouts::MenuLayouts::from_environment(),
@@ -417,6 +421,9 @@ struct App {
     /// the redrawn menu's art, loaded once from the menu art pack
     native_art: Option<native_menu::Art>,
     native_art_failed: bool,
+    /// the redrawn menu's moving buttons and the game's cursor
+    native_live: native_menu::Live,
+    native_watched: u32,
     /// a touch the top-screen buttons asked for, given over a few frames
     tap: top_menus::Tap,
     /// the mouse was let go for a top-screen menu, to take back for play
@@ -1262,6 +1269,16 @@ impl App {
         // a click on a top-screen menu button touches the lower screen
         if game.replay.is_none() {
             if let Some(touch) = self.tap.next() { input.touch = touch; }
+            // pointing at a redrawn menu's button walks the game's cursor there
+            if let Some(screen) = self.native_screen.and_then(|id| native_menu::SCREENS.iter().find(|s| s.id == id)) {
+                use zakuro_core::services::hid::PadState;
+                if let Some(dir) = self.native_live.nav.pad(&screen.graph) {
+                    input.buttons |= match dir {
+                        menu_motion::Dir::Up => PadState::UP, menu_motion::Dir::Down => PadState::DOWN,
+                        menu_motion::Dir::Left => PadState::LEFT, menu_motion::Dir::Right => PadState::RIGHT,
+                    };
+                }
+            }
         }
         if game.replay.is_none() {
             // While a Space jump steps through the palette, its D-pad presses
@@ -1297,6 +1314,13 @@ impl App {
         // where the screen's layout says it is redrawn natively
         // (native_menu), or everywhere without a layout file (top_menus)
         self.top_menu.update(&scene, game.frame);
+        if let Some(screen) = self.native_screen.and_then(|id| native_menu::SCREENS.iter().find(|s| s.id == id)) {
+            if scene.top_watched != self.native_watched {
+                log::debug!("Redrawn menu: upper art {:#06b} (selected {:?})", scene.top_watched, screen.selected(scene.top_watched));
+                self.native_watched = scene.top_watched;
+            }
+            self.native_live.nav.observe(screen.selected(scene.top_watched));
+        }
         self.menu_layouts.poll();
         self.menu_capture.frame(&mut game.system, &scene);
         let land = game.system.memory.kiu_land_publications();
@@ -1387,6 +1411,11 @@ impl App {
         if native != self.native_screen {
             log::info!("Menu drawn by the PC: {}", native.map_or("none".into(), |id| format!("{id:03}")));
             self.native_screen = native;
+            // a fresh screen: its buttons at home, the game's cursor unknown,
+            // and its selection art watched on the upper screen
+            self.native_live = native_menu::Live::default();
+            let screen = native.and_then(|id| native_menu::SCREENS.iter().find(|s| s.id == id));
+            zakuro_gpu::kiu_ui::watch_top(screen.map_or(&[][..], |s| s.selected_art));
         }
         // a screen that is redrawn: where each of its elements goes in this
         // window, for the renderer to draw the game's lower screen there
@@ -1423,12 +1452,15 @@ impl App {
             }
         }
         let native = native.zip(self.native_art.as_ref()).filter(|(s, a)| s.id == a.id);
+        let native_live = &mut self.native_live;
         let size = window.inner_size();
         let view = layout(size.width, size.height, self.presentation.layout(self.layout, self.experimental_wide)).0;
         let mut tapped = None;
         let overlay = gui.frame(window, |ui| {
             if let Some((screen, art)) = native {
-                tapped = native_menu::show(ui.ctx(), screen, art, ui.ctx().content_rect());
+                let out = native_menu::show(ui.ctx(), screen, art, native_live, ui.ctx().content_rect());
+                native_live.nav.want(out.pointed);
+                tapped = tapped.or(out.touch);
             }
             if let (Some(menu), Some(v)) = (top_menu, view) {
                 let ppp = ui.ctx().pixels_per_point();

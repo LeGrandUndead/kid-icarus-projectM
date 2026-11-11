@@ -231,6 +231,21 @@ static MENU_ART_HASHES: OnceLock<HashSet<u64>> = OnceLock::new();
 static MENU_ART_DRAWS: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
 static TOP_DEPTH_DRAWS: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
 
+/// Upper-screen textures the frontend watches for (`watch_top`): a redrawn
+/// menu learns which of its choices the game has selected from the art the
+/// upper screen shows for it. Bit i of `BottomScene::top_watched` is set
+/// when `TOP_WATCH[i]` was drawn on the upper screen this frame.
+const TOP_WATCHES: usize = 16;
+static TOP_WATCH: [std::sync::atomic::AtomicU64; TOP_WATCHES] = [const { std::sync::atomic::AtomicU64::new(0) }; TOP_WATCHES];
+static TOP_WATCHED: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+
+/// Watch these upper-screen textures (fingerprints), in this order; the
+/// rest of the slots are cleared.
+pub fn watch_top(hashes: &[u64]) {
+    use std::sync::atomic::Ordering::Relaxed;
+    for (i, slot) in TOP_WATCH.iter().enumerate() { slot.store(hashes.get(i).copied().unwrap_or(0), Relaxed); }
+}
+
 fn save_select_hashes(catalog: &HashMap<u64, Source>) -> HashSet<u64> {
     catalog.iter().filter(|(_, s)| s.role == Role::Screen && SAVE_SELECT_ART.contains(&s.name.as_str()))
         .map(|(&hash, _)| hash).collect()
@@ -239,6 +254,9 @@ fn save_select_hashes(catalog: &HashMap<u64, Source>) -> HashSet<u64> {
 /// A draw on the upper (`top`) or lower screen sampled this original texture.
 pub(crate) fn note_texture(hash: u64, top: bool) {
     use std::sync::atomic::Ordering::Relaxed;
+    if top && hash != 0 {
+        if let Some(i) = TOP_WATCH.iter().position(|w| w.load(Relaxed) == hash) { TOP_WATCHED.fetch_or(1 << i, Relaxed); }
+    }
     if SAVE_SELECT_HASHES.get().is_some_and(|set| set.contains(&hash)) {
         SAVE_SELECT_DRAWS.fetch_add(1, Relaxed);
     }
@@ -328,6 +346,7 @@ pub fn end_frame() -> BottomScene {
         s.scene.save_select = SAVE_SELECT_DRAWS.swap(0, Relaxed) > 0;
         s.scene.menu_screen = MENU_ART_DRAWS.swap(0, Relaxed) > 0;
         s.scene.top_3d = TOP_DEPTH_DRAWS.swap(0, Relaxed) > 0;
+        s.scene.top_watched = TOP_WATCHED.swap(0, Relaxed);
         s.scene.lower_menus = std::array::from_fn(|i| LOWER_MENUS[i].swap(0, Relaxed));
     }
     if let Some(census) = &mut s.census { census.record(s.frame, fresh, &s.shown, names); }

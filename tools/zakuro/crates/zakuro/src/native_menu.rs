@@ -3,16 +3,24 @@
 //! The lower screen is not shown at all. Each of the game's buttons is drawn
 //! by us, from the button sheet the game itself uses (in the PC menu art
 //! pack, `KIU_MENU_PACK`, rebuilt from the player's ROM at 4x), cut along
-//! its own outline, at a place laid out for a 16:9 window. Pointing at one
-//! lights it; clicking it touches the game's real button on its hidden lower
-//! screen (top_menus::Tap), so the game still decides what happens, with its
-//! own sounds, transitions and rules. Keyboard and controller keep working
-//! as they always did.
+//! its own outline, at a place laid out for a 16:9 window
+//! (doc/UI_DESIGN_RULES.md). A vine in the art's own style binds them
+//! (menu_vine); they sway, can be dragged and pushed into each other, and
+//! spring back to their place on it (menu_motion).
 //!
-//! Only coordinates live here; the art is read at run time from the pack on
-//! the player's machine.
+//! Pointing at a button selects it in the game (menu_motion::Nav walks the
+//! game's cursor there with the D-pad), so the game's heading, art, caption
+//! and sounds follow the pointer; clicking it touches the game's real
+//! button on its hidden lower screen (top_menus::Tap). The game still
+//! decides what happens; keyboard and controller keep working, and light
+//! the same buttons.
+//!
+//! Only coordinates and texture fingerprints live here; the art is read at
+//! run time from the pack on the player's machine.
 
 use std::path::{Path, PathBuf};
+
+use crate::menu_motion::{Graph, Motion, Nav};
 
 /// One button: where it is in the sheet and where it goes in the window.
 pub struct Button {
@@ -26,8 +34,12 @@ pub struct Button {
     pub at: [f32; 2],
     /// units per sheet pixel.
     pub scale: f32,
+    /// a slight tilt, degrees clockwise, so they hang like leaves.
+    pub tilt: f32,
     /// where touching the 3DS lower screen presses it.
     pub touch: (u16, u16),
+    /// its choice in the game's navigation map (`Screen::graph`).
+    pub node: usize,
 }
 
 /// A screen redrawn this way.
@@ -38,6 +50,24 @@ pub struct Screen {
     pub sheet: &'static str,
     pub sheet_size: u32,
     pub buttons: &'static [Button],
+    /// the game's navigation map between its choices (its menu parameters:
+    /// each choice's up, down, left and right neighbour).
+    pub graph: Graph,
+    /// for each choice of the map, the upper-screen art the game shows
+    /// while it is selected (texture fingerprint, 0 unknown).
+    pub selected_art: &'static [u64],
+}
+
+impl Screen {
+    /// The choice the game shows selected, from the watched upper-screen
+    /// art drawn this frame (kiu_ui::watch_top, in `selected_art` order):
+    /// one, or none while two cross-fade.
+    pub fn selected(&self, watched: u32) -> Option<usize> {
+        let known = (0..self.selected_art.len()).filter(|&i| self.selected_art[i] != 0 && watched & (1 << i) != 0);
+        let mut it = known;
+        let first = it.next()?;
+        it.next().is_none().then_some(first)
+    }
 }
 
 /// The game's Back arrow, the same on every menu screen.
@@ -45,17 +75,30 @@ pub const BACK_SHEET: &str = "64x32-230262A22CA913D6.png";
 pub const BACK_AT: [f32; 2] = [12.0, 210.0];
 pub const BACK_SCALE: f32 = 0.5;
 
-/// The main menu: Solo, Together, Vault and Options in one column on the
-/// left of the section's art, clear of its heading and of the caption's
-/// black ground. One scale for all four (the art's own proportions keep
-/// Solo first), 10 units between them, inside the safe margins
-/// (doc/UI_DESIGN_RULES.md). StreetPass and AR Cards (3DS only) are left out.
-pub const MAIN_MENU: Screen = Screen { id: 40, sheet: "256x256-701C2B1F2A647930.png", sheet_size: 256, buttons: &[
-    Button { name: "Solo", sheet: [1, 1, 193, 86], turned: false, at: [14.0, 24.0], scale: 0.34, touch: (104, 52) },
-    Button { name: "Together", sheet: [1, 91, 184, 180], turned: false, at: [14.0, 62.9], scale: 0.34, touch: (224, 128) },
-    Button { name: "Vault", sheet: [0, 182, 118, 255], turned: false, at: [14.0, 103.2], scale: 0.34, touch: (64, 140) },
-    Button { name: "Options", sheet: [203, 1, 255, 174], turned: true, at: [14.0, 138.0], scale: 0.34, touch: (142, 211) },
-] };
+/// The main menu's choices in the game's map (MENUID_TOP's SelMenuParams):
+/// 0 SinglePlay, 1 MultiPlay, 2 Collection, 3 Option, 4 Present
+/// (StreetPass), 5 Return, 6 HowToPlay, 7 Pong. Up, down, left, right.
+const MAIN_MENU_MAP: [[usize; 4]; 8] = [
+    [5, 2, 4, 4], [4, 3, 2, 2], [0, 5, 1, 1], [1, 4, 5, 7],
+    [3, 1, 0, 0], [2, 0, 6, 3], [1, 4, 7, 5], [1, 4, 3, 6],
+];
+
+/// The main menu: Solo, Together, Vault and Options hang from a vine on
+/// the left of the section's art, clear of its heading and of the
+/// caption's black ground. One scale for all four (the art's own
+/// proportions keep Solo first), 10 units between them, inside the safe
+/// margins. StreetPass and AR Cards (3DS only) are left out.
+pub const MAIN_MENU: Screen = Screen { id: 40, sheet: "256x256-701C2B1F2A647930.png", sheet_size: 256,
+    buttons: &[
+        Button { name: "Solo", sheet: [1, 1, 193, 86], turned: false, at: [22.0, 22.0], scale: 0.34, tilt: -2.0, touch: (104, 52), node: 0 },
+        Button { name: "Together", sheet: [1, 91, 184, 180], turned: false, at: [28.0, 60.9], scale: 0.34, tilt: 2.0, touch: (224, 128), node: 1 },
+        Button { name: "Vault", sheet: [0, 182, 118, 255], turned: false, at: [22.0, 101.16], scale: 0.34, tilt: -1.5, touch: (64, 140), node: 2 },
+        Button { name: "Options", sheet: [203, 1, 255, 174], turned: true, at: [28.0, 135.98], scale: 0.34, tilt: 1.5, touch: (142, 211), node: 3 },
+    ],
+    graph: Graph { edges: &MAIN_MENU_MAP },
+    // menu040/MenCmnBgUp0007Sg, 0002Ml, 0007Cl, 0007Op: the section art
+    selected_art: &[0xE6C4C19E3FFA6CBC, 0xB1AD9D130D2C0DCE, 0xA19D56343FECD3C8, 0xAD4E16B8C71A4066],
+};
 
 pub const SCREENS: [&Screen; 1] = [&MAIN_MENU];
 
@@ -251,42 +294,113 @@ impl Art {
     }
 }
 
-/// Draws a redrawn screen over the window (`window`, in egui points) and
-/// returns the touch a click asked for.
-pub fn show(ctx: &egui::Context, screen: &Screen, art: &Art, window: egui::Rect) -> Option<(u16, u16)> {
+/// A redrawn screen's moving state: its buttons' motion and the game's
+/// cursor.
+#[derive(Default)]
+pub struct Live {
+    pub motion: Motion,
+    pub nav: Nav,
+}
+
+/// What the pointer did on a redrawn screen this frame.
+#[derive(Default)]
+pub struct Output {
+    /// a click asked for this touch on the lower screen
+    pub touch: Option<(u16, u16)>,
+    /// the choice the pointer rests on (its node in the game's map)
+    pub pointed: Option<usize>,
+}
+
+/// The buttons' home rectangles, in units.
+fn homes(screen: &Screen, art: &Art) -> Vec<[f32; 4]> {
+    screen.buttons.iter().zip(&art.buttons).map(|(b, (tex, _, _))| {
+        let (w, h) = (tex.size()[0] as f32 / art.density * b.scale, tex.size()[1] as f32 / art.density * b.scale);
+        [b.at[0], b.at[1], b.at[0] + w, b.at[1] + h]
+    }).collect()
+}
+
+/// A textured quad over `rect` (points), turned `degrees` about its centre.
+fn quad(tex: egui::TextureId, rect: egui::Rect, degrees: f32, tint: egui::Color32) -> egui::Shape {
+    let mut mesh = egui::Mesh::with_texture(tex);
+    mesh.add_rect_with_uv(rect, egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)), tint);
+    mesh.rotate(egui::emath::Rot2::from_angle(degrees.to_radians()), rect.center());
+    egui::Shape::mesh(mesh)
+}
+
+/// The vine as a mesh: black, coverage as alpha, moved by `offset` points.
+fn vine_mesh(shape: &crate::menu_vine::Shape, origin: egui::Pos2, unit: f32, offset: egui::Vec2, alpha: f32) -> egui::Shape {
+    let mut mesh = egui::Mesh::default();
+    for (i, (p, coverage)) in shape.vertices.iter().enumerate() {
+        let pos = origin + egui::vec2(p[0], p[1]) * unit + offset;
+        // the art's black, very slightly warm
+        let a = (coverage * alpha * 255.0) as u8;
+        let k = coverage * alpha;
+        mesh.vertices.push(egui::epaint::Vertex { pos, uv: egui::epaint::WHITE_UV,
+            color: egui::Color32::from_rgba_premultiplied((10.0 * k) as u8, (6.0 * k) as u8, (8.0 * k) as u8, a) });
+        mesh.indices.push(i as u32);
+    }
+    egui::Shape::mesh(mesh)
+}
+
+/// Draws a redrawn screen over the window (`window`, in egui points).
+/// `selected`: the game's selected choice (its node), lit with a glow.
+pub fn show(ctx: &egui::Context, screen: &Screen, art: &Art, live: &mut Live, window: egui::Rect) -> Output {
     let unit = window.height() / 240.0;
-    let mut clicked = None;
-    let time = ctx.input(|i| i.time) as f32;
+    let mut out = Output::default();
+    let (time, dt, pointer) = ctx.input(|i| (i.time as f32, i.stable_dt, i.pointer.latest_pos()));
+    let pointer_units = pointer.map(|p| [(p.x - window.min.x) / unit, (p.y - window.min.y) / unit]);
+    let homes = homes(screen, art);
+    live.motion.step(dt, &homes, pointer_units);
+    let selected = live.nav.current;
     egui::Area::new(egui::Id::new(("kiu-native-menu", screen.id))).order(egui::Order::Foreground).fixed_pos(window.min).show(ctx, |ui| {
         let painter = ui.painter().clone();
-        let draw = |id: egui::Id, tex: &egui::TextureHandle, glow: &egui::TextureHandle, pad: f32, at: [f32; 2], size: egui::Vec2| -> bool {
-            let rect = egui::Rect::from_min_size(window.min + egui::vec2(at[0], at[1]) * unit, size);
-            let response = ui.interact(rect, id, egui::Sense::click());
-            let lit = response.hovered();
-            let grow = if response.is_pointer_button_down_on() { 0.97 } else if lit { 1.06 } else { 1.0 };
+        let to_points = |r: [f32; 4]| egui::Rect::from_min_max(window.min + egui::vec2(r[0], r[1]) * unit, window.min + egui::vec2(r[2], r[3]) * unit);
+        let now: Vec<[f32; 4]> = (0..homes.len()).map(|i| live.motion.rect(i, homes[i])).collect();
+        // the vine, its soft shadow first
+        let vine = crate::menu_vine::vine(&now, 1.2 / unit);
+        painter.add(vine_mesh(&vine, window.min, unit, egui::vec2(1.0, 1.6) * unit, 0.3));
+        painter.add(vine_mesh(&vine, window.min, unit, egui::Vec2::ZERO, 1.0));
+        // the buttons, the held one on top
+        let mut order: Vec<usize> = (0..screen.buttons.len()).collect();
+        if let Some(held) = live.motion.held() { order.retain(|&i| i != held); order.push(held); }
+        for i in order {
+            let (b, (tex, glow, pad)) = (&screen.buttons[i], &art.buttons[i]);
+            let rect = to_points(now[i]);
+            let response = ui.interact(rect, egui::Id::new(("kiu-native", screen.id, i)), egui::Sense::click_and_drag());
+            if response.drag_started() { if let Some(p) = pointer_units { live.motion.grab(i, p, homes[i]); } }
+            if response.drag_stopped() { live.motion.release(); }
+            if response.clicked() { out.touch = Some(b.touch); }
+            let pointed = response.hovered() || live.motion.held() == Some(i);
+            if pointed { out.pointed = Some(b.node); }
+            let lit = selected == Some(b.node);
+            let grow = if response.is_pointer_button_down_on() && !response.dragged() { 0.97 } else if pointed { 1.05 } else { 1.0 };
             let rect = egui::Rect::from_center_size(rect.center(), rect.size() * grow);
-            let uv = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0));
             let px = rect.width() / tex.size()[0] as f32;
-            // a soft shadow under it
-            let shadow = rect.translate(egui::vec2(rect.height() * 0.03, rect.height() * 0.05)).expand(pad * px * 0.6);
-            painter.image(glow.id(), shadow, uv, egui::Color32::from_black_alpha(120));
+            let lift = if live.motion.held() == Some(i) { 2.0 } else { 1.0 };
+            let shadow = rect.translate(egui::vec2(0.9, 1.4) * unit * lift).expand(pad * px * 0.6);
+            painter.add(quad(glow.id(), shadow, b.tilt, egui::Color32::from_black_alpha(110)));
             if lit {
-                let pulse = 0.8 + 0.2 * (time * 4.0).sin();
-                painter.image(glow.id(), rect.expand(pad * px), uv, egui::Color32::from_white_alpha((255.0 * pulse) as u8));
+                let pulse = 0.78 + 0.22 * (time * 3.5).sin();
+                painter.add(quad(glow.id(), rect.expand(pad * px), b.tilt, egui::Color32::from_white_alpha((255.0 * pulse) as u8)));
             }
-            painter.image(tex.id(), rect, uv, egui::Color32::WHITE);
-            response.clicked()
-        };
-        for (i, (b, (tex, glow, pad))) in screen.buttons.iter().zip(&art.buttons).enumerate() {
-            let size = egui::vec2(tex.size()[0] as f32, tex.size()[1] as f32) / art.density * b.scale * unit;
-            if draw(egui::Id::new(("kiu-native", screen.id, i)), tex, glow, *pad, b.at, size) { clicked = Some(b.touch); }
+            painter.add(quad(tex.id(), rect, b.tilt, egui::Color32::WHITE));
         }
         if let Some((tex, glow, pad, k)) = &art.back {
             let size = egui::vec2(tex.size()[0] as f32, tex.size()[1] as f32) / *k * BACK_SCALE * unit;
-            if draw(egui::Id::new(("kiu-native-back", screen.id)), tex, glow, *pad, BACK_AT, size) { clicked = Some(back_touch(screen.id)); }
+            let rect = egui::Rect::from_min_size(window.min + egui::vec2(BACK_AT[0], BACK_AT[1]) * unit, size);
+            let response = ui.interact(rect, egui::Id::new(("kiu-native-back", screen.id)), egui::Sense::click());
+            let grow = if response.is_pointer_button_down_on() { 0.97 } else if response.hovered() { 1.06 } else { 1.0 };
+            let rect = egui::Rect::from_center_size(rect.center(), rect.size() * grow);
+            if response.hovered() {
+                let px = rect.width() / tex.size()[0] as f32;
+                painter.add(quad(glow.id(), rect.expand(pad * px), 0.0, egui::Color32::from_white_alpha(230)));
+            }
+            painter.add(quad(tex.id(), rect, 0.0, egui::Color32::WHITE));
+            if response.clicked() { out.touch = Some(back_touch(screen.id)); }
         }
     });
-    clicked
+    if !ctx.input(|i| i.pointer.any_down()) { live.motion.release(); }
+    out
 }
 
 #[cfg(test)]
@@ -305,7 +419,8 @@ mod tests {
         let (_, bounds) = shapes(&p);
         assert_eq!(bounds.len(), 3);
         let screen = Screen { id: 0, sheet: "", sheet_size: 8, buttons: &[
-            Button { name: "a", sheet: [0, 0, 4, 2], turned: false, at: [0.0; 2], scale: 1.0, touch: (0, 0) }] };
+            Button { name: "a", sheet: [0, 0, 4, 2], turned: false, at: [0.0; 2], scale: 1.0, tilt: 0.0, touch: (0, 0), node: 0 }],
+            graph: Graph { edges: &[] }, selected_art: &[] };
         let cut = &cut_buttons(&p, &screen)[0];
         assert_eq!((cut.width, cut.height), (4, 2));
         assert_eq!(cut.alpha(1, 1), 255);
@@ -349,6 +464,10 @@ mod tests {
             assert!(b.at[0] >= 12.0 && b.at[1] >= 12.0);
         }
         assert!(bottom.unwrap() < 165.0);
+        assert_eq!(MAIN_MENU.selected(0b0010), Some(1));
+        assert_eq!(MAIN_MENU.selected(0b0110), None, "two cross-fading");
+        assert_eq!(MAIN_MENU.selected(0b10000), None, "not one of the choices");
+        assert_eq!(MAIN_MENU.graph.first_step(0, 2), Some(crate::menu_motion::Dir::Down), "Solo, then Vault below it");
         assert!(BACK_AT[0] >= 12.0 && BACK_AT[1] + 32.0 * BACK_SCALE <= 228.0);
     }
 }
