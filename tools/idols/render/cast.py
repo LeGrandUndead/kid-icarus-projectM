@@ -8,9 +8,10 @@ from multiprocessing import Pool
 B=1150; CLICK=150
 MODES={
  # key, yaw, pitch, rim colour, idle spec, action spec, end
- 'together':dict(key='T05',yaw=-45,pitch=5,rim=(1.0,0.78,0.35),idle=('clash',4,8/150),act=('clash',12,1.0),end=CLICK+110,wipe=CLICK+64,close=True),
- 'vault':dict(key='P20',yaw=20,pitch=3,rim=(0.55,0.95,1.0),idle=('idle',0,1.0),act=('clip',20,1.25),end=CLICK+120,wipe=CLICK+78),
- 'options':dict(key='V11',yaw=300,pitch=-20,rim=(0.6,1.0,0.5),idle=('clip',30,0.25),act=('clip',67,1.3),end=CLICK+110,wipe=CLICK+66),
+ 'together':dict(key='T05',yaw=-45,pitch=5,rim=(1.0,0.85,0.65),idle=('clash',4,8/150),act=('clash',12,1.0),end=CLICK+110,wipe=CLICK+64,close=True),
+ 'vault':dict(key='P20',yaw=20,pitch=3,rim=(0.8,1.0,0.95),idle=('idle',0,1.0),act=('clip',20,1.25),end=CLICK+120,wipe=CLICK+78),
+ # Options: Viridi's idol (full body), her Wait, then her Action00
+ 'options':dict(key='V12',yaw=-20,pitch=3,rim=(1.0,0.82,0.92),idle=('DolNatur00Wait',0,1.0),act=('DolNatur00Action00',0,1.0),end=CLICK+110,wipe=CLICK+66),
 }
 F={}
 def clip(key,a):
@@ -81,6 +82,9 @@ def one(job):
     if os.path.exists(out): return
     spec=[(a,x,w,None if s is None else np.array(s)) for a,x,w,s in e['spec']]
     fr=frame_at(m,e['f'],fr)
+    # cutscene-style shading: side key, shadows tinted with the mode's colour, rim
+    idol.POST=dict(rim=M['rim'],light=(-0.85,0.45,0.28),dark=0.55,rim_strength=0.8,
+                   shadow={'together':(0.75,0.6,1.0),'vault':(0.7,0.85,1.0),'options':(0.95,0.7,0.95)}[m])
     idol.render(M['key'],B,math.radians(M['yaw']),math.radians(M['pitch']),rim=M['rim'],pose=pose(M['key'],spec),span_fix=(fr[0],tuple(fr[1])),ss=2).save(out)
 if __name__=='__main__':
     jobs=[]

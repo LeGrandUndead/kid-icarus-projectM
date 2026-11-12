@@ -31,7 +31,14 @@ NATU = dict(ENV, light_ambient=np.array([0.15, 0.27, 0.40]), light_diffuse=np.ar
             # light (from above and behind); the rest keeps the front key light
             eye_dir=np.array([0.0, 0.5455, -0.838]))
 # which light each converted model gets (by its name); the rest: Chr_Light01
-LIGHTS = {'Viri': NATU, 'V11': NATU, 'ViriH': NATU, 'PitHF': CH1, '000': CH1, 'T05': CH1, 'PitH': CH1, 'DPitH': CH1}
+# The idol viewer's light (menu 130, where the game shows the idols): a key
+# light from the front, a little up and right, flat ambient and diffuse, a
+# warm second specular, a bright hemisphere.
+IDOL = dict(ENV, light_dir=np.array([0.276, 0.276, 0.92]),
+            light_ambient=np.array([0.30, 0.30, 0.30]), light_diffuse=np.array([0.30, 0.30, 0.30]),
+            light_specular1=np.array([0.60, 0.55, 0.50]),
+            hemi_sky=np.array([0.75, 0.75, 0.80]), hemi_ground=np.array([0.60, 0.55, 0.50]))
+LIGHTS = {'V12': IDOL, 'G08': IDOL, 'Viri': NATU, 'V11': NATU, 'ViriH': NATU, 'PitHF': CH1, '000': CH1, 'T05': CH1, 'PitH': CH1, 'DPitH': CH1}
 
 def in_view(env, R):
     """The lights seen from the camera. The key light stays where the

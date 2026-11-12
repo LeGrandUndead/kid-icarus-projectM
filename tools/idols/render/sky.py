@@ -70,6 +70,8 @@ def one(e):
     if os.path.exists(out): return
     R=idol.rot(math.radians(e['yaw']),math.radians(e['pitch']),math.radians(e['bank'])); c=R@CENTRE
     px=B*e['z']; n=int(min(px,2300)); span=SPAN*n/px
+    # cutscene-style shading: sun from the side, cool sky-tinted shadows, rim
+    idol.POST=dict(rim=(0.9,0.95,1.0),light=(-0.85,0.45,0.28),dark=0.6,rim_strength=0.8,shadow=(0.75,0.82,1.0))
     idol.render(MODEL,n,math.radians(e['yaw']),math.radians(e['pitch']),rim=(1.0,0.55,0.7),bank=math.radians(e['bank']),
                 pose=pose(e['f']),span_fix=(span,tuple(c)),ss=2 if n<=1200 else 1).save(out)
 if __name__=='__main__':

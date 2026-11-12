@@ -30,6 +30,8 @@ def load(idol):
     return v,groups,texs
 LOADED={}
 ENV=None   # the lights; None: pica.ENV (the game's character rig)
+# extra cutscene-style shading after the game's (post_shade.py settings), or None
+POST=None
 # the game's shared light tables (RomFS/us/0.arc resident/shared.arc 00.bcres: CrvChr00)
 SHARED_LUTS=os.path.join(os.path.dirname(S),'common','shared_luts.json')
 
@@ -231,6 +233,7 @@ def _render_game(v,groups,texs,mats,luts,P,N,sx,sy,sz,W,H,size,span_fix,R,key=No
         return pica.passes_alpha_test(m,a)
     colour=np.zeros((H,W,3),np.float32); cover=np.zeros((H,W),np.float32)
     depth=np.full((H,W),-1e9,np.float32)
+    nbuf=np.zeros((H,W,3),np.float32)        # normals of the opaque surfaces, for POST
     layers=sorted(set(m['layer'] for m in mats))
     for layer in layers:
         tris=[(g['start'],g['count'],gi) for gi,g in enumerate(groups) if mats[gi]['layer']==layer and not mats[gi]['name'].startswith('Effect')]
@@ -243,7 +246,7 @@ def _render_game(v,groups,texs,mats,luts,P,N,sx,sy,sz,W,H,size,span_fix,R,key=No
             blend=m['blend']
             dst=np.c_[colour[sel],cover[sel]]
             if blend[1]=='One' and blend[2]=='Zero':
-                colour[sel]=src[:,:3]; cover[sel]=1
+                colour[sel]=src[:,:3]; cover[sel]=1; nbuf[sel]=n
             else:
                 sf=pica.blend_factor(blend[1],src,dst); df=pica.blend_factor(blend[2],src,dst)
                 colour[sel]=np.clip(src[:,:3]*sf+dst[:,:3]*df,0,1)
@@ -251,6 +254,9 @@ def _render_game(v,groups,texs,mats,luts,P,N,sx,sy,sz,W,H,size,span_fix,R,key=No
                 cover[sel]=np.clip(a+dst[:,3]*(1-a),0,1)
             if m['depth_write']:
                 dw=sel.copy(); depth[dw]=np.maximum(depth[dw],z[dw])
+    if POST:
+        from post_shade import post_shade
+        colour=post_shade(colour,nbuf,cover,**POST)
     out=np.dstack([colour,cover])
     img=Image.fromarray((np.clip(out,0,1)*255).astype(np.uint8),'RGBA')
     img=img.resize((size,size),Image.LANCZOS)
