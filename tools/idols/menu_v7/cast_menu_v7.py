@@ -12,7 +12,7 @@ import sys
 lib = {'__name__': 'lib'}; exec(open('menu_anim.py').read(), lib)
 g = globals(); g.update({k: v for k, v in lib.items() if not k.startswith('__')})
 exec(open('ui_v3.py').read()); exec(open('ui_v4.py').read()); exec(open('ui_v7.py').read())
-exec(open('still_v5.py').read().split('SHOTS = {')[0].split('from PIL import ImageChops, ImageEnhance')[1])   # dream_bg, heading_only
+exec(open('still_v7.py').read().split('SHOTS = {')[0].split('from PIL import ImageChops, ImageEnhance')[1])   # dream_bg, heading_only
 import json, random
 import grade as G
 from PIL import ImageChops, ImageEnhance

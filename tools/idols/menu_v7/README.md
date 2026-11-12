@@ -1,9 +1,20 @@
 # Main menu v6/v7 ("Dream" layout, cutscene light, game-menu focus)
 
-Recovered after the work folder was lost (2026-11-12): the scripts below are
-exact copies; `ui_v3.py`, `ui_v4.py`, `still_v5.py`, `solo_sky_v5.py`, the
-font decoder (`bcfnt.py`), the stage merger (`stack.py`) and SPICA's
-textures-only reader were not committed and must be rewritten.
+After the work folder was lost (2026-11-12), the committed scripts were
+recovered word for word; `ui_v4.py`, `still_v7.py`, `bg.py`,
+`../stg/stack.py`, `solo_sky_v7.py` and the converter's textures-only mode
+were rewritten. The game's caption font is drawn from Montserrat Regular
+(the 3DS shared font's source, from the PC build's `font-source`), so the
+old CFNU bitmap decoder is no longer needed.
+
+Run from a work folder (`IDOLS_WORK`) laid out as: `x/` (RomFS archives
+unpacked), `idols/`, `fx/` (effect textures), `mock/Montserrat-Regular.otf`,
+`render/` (frames), `redraw/` (these scripts, `all/040/` menu art, `bg/`).
+
+- `ui_v4.py`: heading flourish, ground band with laurels, caption,
+  controls, soft glow, the game's particle images and their drift.
+- `bg.py`: the three stage backgrounds (cameras per mode).
+- `still_v7.py`: one still per mode.
 
 - `grade.py`: cutscene light on a finished page: backlight rays, bloom,
   the four-point star flare, warm/cool grade with vignette.
