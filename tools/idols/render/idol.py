@@ -1,6 +1,6 @@
-# Renders a posed idol (exported by the SPICA converter) with its own
-# textures, plus a stylised look: soft two-tone light, a rim light in a
-# chosen colour, a thin ink outline. Software rasteriser (numpy).
+# Renders a posed model (exported by the SPICA converter). With its
+# materials.json it shades as the game does (pica.py: the 3DS GPU's
+# fragment lighting and colour combiner); otherwise a plain look. numpy.
 import os; WORK=os.environ.get('IDOLS_WORK','work')  # the folder with the extracted models and renders
 import numpy as np, math, sys, os
 from PIL import Image
@@ -19,7 +19,19 @@ def load(idol):
     for line in open(f'{tex}/textures.txt'):
         name,w,h=line.split('\t'); w,h=int(w),int(h)
         texs[name]=np.fromfile(f'{tex}/{name}.rgba',dtype=np.uint8).reshape(h,w,4).astype(np.float32)/255
+    mats=None; luts={}
+    if os.path.exists(f'{out}/materials.json'):
+        import json
+        mats=json.load(open(f'{out}/materials.json'))
+        for f in (SHARED_LUTS, f'{out}/luts.json'):
+            if os.path.exists(f): luts.update(json.load(open(f)))
+        if len(mats)!=len(groups): mats=None
+    LOADED[idol]=(mats,luts)
     return v,groups,texs
+LOADED={}
+ENV=None   # the lights; None: pica.ENV (the game's character rig)
+# the game's shared light tables (RomFS/us/0.arc resident/shared.arc 00.bcres: CrvChr00)
+SHARED_LUTS=os.path.join(os.path.dirname(S),'common','shared_luts.json')
 
 def rot(yaw,pitch,bank=0.0):
     # bank: a roll about the model's own forward axis (its z), like a plane
@@ -60,6 +72,9 @@ def render(idol,size=1200,yaw=0.0,pitch=0.0,rim=(1,0.8,0.4),plain=False,flip=Fal
     lo,hi=P.min(0),P.max(0); span=max(hi[0]-lo[0],hi[1]-lo[1])*1.06; c=(lo+hi)/2
     if span_fix: span,c=span_fix[0],np.array(span_fix[1])
     sx=(P[:,0]-c[0])/span*W+W/2; sy=H/2-(P[:,1]-c[1])/span*H; sz=P[:,2]
+    mats,luts=LOADED.get(idol,(None,{}))
+    if mats is not None and not plain and not glow_only:
+        return _render_game(v,groups,texs,mats,luts,P,N,sx,sy,sz,W,H,size,span_fix,R,idol)
     def colour_tex(g):
         maps=g['maps'].split('/'); names=[g['t0'],g['t1'],g['t2']]
         for nm,mp in zip(names,maps):
@@ -167,3 +182,77 @@ def render(idol,size=1200,yaw=0.0,pitch=0.0,rim=(1,0.8,0.4),plain=False,flip=Fal
 if __name__=='__main__':
     idol=sys.argv[1]; yaw=float(sys.argv[2]) if len(sys.argv)>2 else 0
     render(idol,600,math.radians(yaw),0,plain=True).save(f'plain_{idol}.png')
+
+
+def _raster(v,N,sx,sy,sz,W,H,tris,depth,test):
+    """Nearest fragment of the triangles in `tris` (start, count, group index)
+    in front of `depth`. test(group, attrs) -> which fragments are kept."""
+    gid=np.full((H,W),-1,np.int32); attr=np.zeros((H,W,13),np.float32); z=np.full((H,W),-1e9,np.float32)
+    for start,count,g_i in tris:
+        for t in range(start,start+count,3):
+            i=np.arange(t,t+3)
+            x,y,zz3=sx[i],sy[i],sz[i]
+            x0,x1=int(max(0,math.floor(x.min()))),int(min(W-1,math.ceil(x.max())))
+            y0,y1=int(max(0,math.floor(y.min()))),int(min(H-1,math.ceil(y.max())))
+            if x1<x0 or y1<y0: continue
+            d=(y[1]-y[2])*(x[0]-x[2])+(x[2]-x[1])*(y[0]-y[2])
+            if abs(d)<1e-9: continue
+            gx,gy=np.meshgrid(np.arange(x0,x1+1)+0.5,np.arange(y0,y1+1)+0.5)
+            a=((y[1]-y[2])*(gx-x[2])+(x[2]-x[1])*(gy-y[2]))/d
+            b=((y[2]-y[0])*(gx-x[2])+(x[0]-x[2])*(gy-y[2]))/d
+            cc=1-a-b
+            inside=(a>=0)&(b>=0)&(cc>=0)
+            if not inside.any(): continue
+            zz=a*zz3[0]+b*zz3[1]+cc*zz3[2]
+            win=inside&(zz>z[y0:y1+1,x0:x1+1])&(zz>depth[y0:y1+1,x0:x1+1])
+            if not win.any(): continue
+            at=np.concatenate([N[i],v[i,6:16]],1)
+            vals=(a[win][:,None]*at[0][None,:13]+b[win][:,None]*at[1][None,:13]+cc[win][:,None]*at[2][None,:13])
+            keep=test(g_i,vals)
+            if keep is not None:
+                full=np.zeros_like(win); full[win]=keep; win=full; vals=vals[keep]
+                if not win.any(): continue
+            z[y0:y1+1,x0:x1+1][win]=zz[win]; gid[y0:y1+1,x0:x1+1][win]=g_i
+            attr[y0:y1+1,x0:x1+1][win]=vals
+    return gid,attr,z
+
+def _render_game(v,groups,texs,mats,luts,P,N,sx,sy,sz,W,H,size,span_fix,R,key=None):
+    import pica
+    env=pica.in_view(ENV if ENV else pica.LIGHTS.get(key,pica.ENV),R)
+    def unpack(vals):
+        n=vals[:,0:3]; n=n/np.maximum(np.linalg.norm(n,axis=1,keepdims=True),1e-6)
+        uvs=[(vals[:,3],vals[:,4]),(vals[:,5],vals[:,6]),(vals[:,7],vals[:,8])]
+        return n,uvs,vals[:,9:13]
+    def test(g_i,vals):
+        m=mats[g_i]
+        if not m.get('alpha_test'): return None
+        n,uvs,vc=unpack(vals)
+        a=pica.shade(m,n,uvs,vc,texs,luts,env,need_light=False)[:,3]
+        return pica.passes_alpha_test(m,a)
+    colour=np.zeros((H,W,3),np.float32); cover=np.zeros((H,W),np.float32)
+    depth=np.full((H,W),-1e9,np.float32)
+    layers=sorted(set(m['layer'] for m in mats))
+    for layer in layers:
+        tris=[(g['start'],g['count'],gi) for gi,g in enumerate(groups) if mats[gi]['layer']==layer and not mats[gi]['name'].startswith('Effect')]
+        if not tris: continue
+        gid,attr,z=_raster(v,N,sx,sy,sz,W,H,tris,depth,test)
+        for gi in set(np.unique(gid))-{-1}:
+            m=mats[gi]; sel=gid==gi
+            n,uvs,vc=unpack(attr[sel])
+            src=pica.shade(m,n,uvs,vc,texs,luts,env)
+            blend=m['blend']
+            dst=np.c_[colour[sel],cover[sel]]
+            if blend[1]=='One' and blend[2]=='Zero':
+                colour[sel]=src[:,:3]; cover[sel]=1
+            else:
+                sf=pica.blend_factor(blend[1],src,dst); df=pica.blend_factor(blend[2],src,dst)
+                colour[sel]=np.clip(src[:,:3]*sf+dst[:,:3]*df,0,1)
+                a=src[:,3] if 'SourceAlpha' in blend[1] else np.ones(len(src))
+                cover[sel]=np.clip(a+dst[:,3]*(1-a),0,1)
+            if m['depth_write']:
+                dw=sel.copy(); depth[dw]=np.maximum(depth[dw],z[dw])
+    out=np.dstack([colour,cover])
+    img=Image.fromarray((np.clip(out,0,1)*255).astype(np.uint8),'RGBA')
+    img=img.resize((size,size),Image.LANCZOS)
+    bb=img.getbbox()
+    return img if (span_fix or not bb) else img.crop(bb)

@@ -9,6 +9,7 @@ sys.path.insert(0,'.')
 import numpy as np, idol
 from multiprocessing import Pool
 P='ChrPit00'
+MODEL='PitHF'    # the cutscene Pit (high detail head) on his gameplay flight moves
 W,H=1920,1080; FPS=60
 B=1000; PIT=(0.66*W,0.50*H)
 SOLO=(18*H/240+120,22*H/240+70)
@@ -26,7 +27,7 @@ ACTS=[(8,'AirGrideR',1.0),(78,'AirGrideL',1.0),(150,'AirGrideLookB',1.1),(288,'A
 LOOP='AirGrideFlap1'; FADE=10
 N={}
 def clip(a):
-    if a not in N: N[a]=np.fromfile(f'{idol.S}/out000/{P}{a}.frames',dtype=np.float32).reshape(-1,len(idol.load('000')[0]),6)
+    if a not in N: N[a]=np.fromfile(f'{idol.S}/out{MODEL}/{P}{a}.frames',dtype=np.float32).reshape(-1,len(idol.load(MODEL)[0]),6)
     return N[a]
 def pose(f):
     loop=clip(LOOP)
@@ -46,8 +47,8 @@ def timeline():
     for f in range(END):
         px,py=pointer(f); g=f-CLICK
         if g<0:
-            dx,dy=px-PIT[0],py-PIT[1]
-            wy=max(-80,min(80,math.degrees(math.atan2(dx,650))*1.45)); wp=max(-25,min(25,dy/H*60))
+            # he flies his own way, not after the pointer: slow swings of heading
+            wy=-28+30*math.sin(2*math.pi*f/330)+8*math.sin(2*math.pi*f/127); wp=7+6*math.sin(2*math.pi*f/240)
             k,d=0.012,0.17
         else:
             wy,wp=-25.0,18.0; k,d=0.06,0.38        # whips round toward the camera, heading down-left past it
@@ -60,7 +61,7 @@ def timeline():
         out.append(dict(f=f,pointer=(px,py),yaw=yaw,pitch=pitch,bank=bank,z=z,at=at,hover=pointer(f)==SOLO))
     return out
 def setup():
-    v,_,_=idol.load('000'); Pp=clip(LOOP)[:,:,0:3].reshape(-1,3)
+    v,_,_=idol.load(MODEL); Pp=clip(LOOP)[:,:,0:3].reshape(-1,3)
     c=Pp.mean(0); r=np.percentile(np.linalg.norm(Pp-c,axis=1),99.8)
     return c,r*2.0
 CENTRE,SPAN=setup()
@@ -69,7 +70,7 @@ def one(e):
     if os.path.exists(out): return
     R=idol.rot(math.radians(e['yaw']),math.radians(e['pitch']),math.radians(e['bank'])); c=R@CENTRE
     px=B*e['z']; n=int(min(px,2300)); span=SPAN*n/px
-    idol.render('000',n,math.radians(e['yaw']),math.radians(e['pitch']),rim=(1.0,0.55,0.7),bank=math.radians(e['bank']),
+    idol.render(MODEL,n,math.radians(e['yaw']),math.radians(e['pitch']),rim=(1.0,0.55,0.7),bank=math.radians(e['bank']),
                 pose=pose(e['f']),span_fix=(span,tuple(c)),ss=2 if n<=1200 else 1).save(out)
 if __name__=='__main__':
     os.makedirs('frames/sky',exist_ok=True)

@@ -82,3 +82,30 @@ world matrix per frame (`<anim>.bones`, `bones.txt`) and takes
   grapple in slow motion, then the fight; slash split), Vault (Palutena's
   idle, then the chapter 20 staff flourish; ring of light), Options (Viridi
   holds, then swings; sweep with leaves).
+
+### Game shading (2026-11-12)
+
+The renderer used to invent a look (two-tone light, ink outline, rim
+light). It now shades each mesh the way the 3DS GPU does, from the model's
+own material (`render/pica.py`, after SPICA.Rendering's shader generator):
+texture coordinates per unit (UV sets, sphere reflection maps), vertex
+colour with the hemisphere light, fragment lighting with the material's
+look-up tables (distribution, Fresnel, reflection; output scale; absolute
+or signed input), the six combiner stages with the combiner buffer, alpha
+test, and the mesh layers (opaque, translucent, additive) with their blend
+modes. No outline.
+
+- The converter writes `materials.json` (per mesh), `luts.json` and, for
+  files that have them, `lights.json` (`convert/Material.cs`).
+- Pit's material uses the shared tables `CrvChr00` from `RomFS/us/0.arc`
+  `resident/shared.arc` `00.bcres` (put as `common/shared_luts.json`).
+  Note: materials name a table `sampler/table`, the file `table/sampler`.
+- Lights are the game's: each cutscene's `00.bcres` and each stage's
+  `mdl 00.bcres` hold its light rig (`Chr_Light01`, `HemiSphereLight01`,
+  `Natu_Light`...). `pica.ENV` (cutscene characters), `pica.CH1` (chapter 1
+  stage, for Pit in the sky), `pica.NATU` (Viridi). The key light is kept
+  where the cutscene cameras have it (front left), the hemisphere follows
+  the world's up.
+- The cutscene Pit (`demo/098` body 21 + head 22) plays Pit's gameplay
+  moves (26/29 bones match); his head rides the body's `HeadN`
+  (`outPitHF`, used by `render/sky.py`).

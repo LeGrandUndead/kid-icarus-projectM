@@ -8,7 +8,7 @@ from multiprocessing import Pool
 B=1150; CLICK=150
 MODES={
  # key, yaw, pitch, rim colour, idle spec, action spec, end
- 'together':dict(room=1.45,key='T05',yaw=25,pitch=5,rim=(1.0,0.78,0.35),idle=('clip',5,0.08),act=('clip',17,1.15),end=CLICK+110,wipe=CLICK+62),
+ 'together':dict(key='T05',yaw=-45,pitch=5,rim=(1.0,0.78,0.35),idle=('clash',4,8/150),act=('clash',12,1.0),end=CLICK+110,wipe=CLICK+64,close=True),
  'vault':dict(key='P20',yaw=20,pitch=3,rim=(0.55,0.95,1.0),idle=('idle',0,1.0),act=('clip',20,1.25),end=CLICK+120,wipe=CLICK+78),
  'options':dict(key='V11',yaw=300,pitch=-20,rim=(0.6,1.0,0.5),idle=('clip',30,0.25),act=('clip',67,1.3),end=CLICK+110,wipe=CLICK+66),
 }
@@ -52,11 +52,35 @@ def framing(m,T):
         P=pose(M['key'],e['spec'])[:,:3]@R.T; pts.append(P[np.isfinite(P).all(1)])
     P=np.concatenate(pts); lo,hi=np.percentile(P,0.5,axis=0),np.percentile(P,99.5,axis=0)
     return float(max(hi[0]-lo[0],hi[1]-lo[1])*M.get('room',1.18)), ((lo+hi)/2).tolist()
+def robust(P):
+    c0=np.median(P,0); d=np.linalg.norm(P-c0,axis=1); return P[d<np.percentile(d,97)*1.2]
+def close_framing(m,T):
+    # close: the heads and arms during the clash; after the click the camera
+    # pulls back to twice that, following the two of them
+    M=MODES[m]; R=idol.rot(math.radians(M['yaw']),math.radians(M['pitch']))
+    sp=lambda e:[(a,x,w,None if s is None else np.array(s)) for a,x,w,s in e['spec']]
+    P=robust(pose(M['key'],sp(T[75]))[:,:3]@R.T); lo,hi=P.min(0),P.max(0); h=hi[1]-lo[1]
+    top=P[P[:,1]>hi[1]-0.42*h]; tl,th=top.min(0),top.max(0)
+    span=float(max(th[0]-tl[0],th[1]-tl[1])*1.02)
+    close=[float((tl[0]+th[0])/2),float((tl[1]+th[1])/2-0.03*h),0.0]
+    centres={}
+    for e in T[CLICK:]:
+        Q=robust(pose(M['key'],sp(e))[:,:3]@R.T); centres[e['f']]=[float(v) for v in np.median(Q,0)]
+    return dict(span=span,close=close,centres=centres)
+def frame_at(m,f,fr):
+    M=MODES[m]
+    if not M.get('close'): return fr
+    k=min(1,max(0,(f-CLICK-6)/50)); k=k*k*(3-2*k)
+    c=fr['centres'].get(str(f),fr['centres'].get(f,fr['close']))
+    # the camera eases from the clash toward the middle of the fight, a little behind it
+    cen=[fr['close'][i]+(c[i]-fr['close'][i])*k*0.85 for i in range(3)]
+    return (fr['span']*(1+1.1*k),cen)
 def one(job):
     m,e,fr=job; M=MODES[m]
     out=f'frames/{m}/{e["f"]:04d}.png'
     if os.path.exists(out): return
     spec=[(a,x,w,None if s is None else np.array(s)) for a,x,w,s in e['spec']]
+    fr=frame_at(m,e['f'],fr)
     idol.render(M['key'],B,math.radians(M['yaw']),math.radians(M['pitch']),rim=M['rim'],pose=pose(M['key'],spec),span_fix=(fr[0],tuple(fr[1])),ss=2).save(out)
 if __name__=='__main__':
     jobs=[]
@@ -64,7 +88,7 @@ if __name__=='__main__':
         os.makedirs(f'frames/{m}',exist_ok=True)
         T=plan(m)
         for e in T: e['spec']=[(a,x,w,None if s is None else [float(v) for v in s]) for a,x,w,s in e['spec']]
-        fr=framing(m,[dict(f=e['f'],spec=[(a,x,w,None if s is None else np.array(s)) for a,x,w,s in e['spec']]) for e in T])
+        fr=close_framing(m,T) if MODES[m].get('close') else framing(m,[dict(f=e['f'],spec=[(a,x,w,None if s is None else np.array(s)) for a,x,w,s in e['spec']]) for e in T])
         json.dump(dict(timeline=T,click=CLICK,wipe=MODES[m]['wipe'],end=MODES[m]['end'],framing=fr),open(f'frames/{m}.json','w'))
         jobs+=[(m,e,fr) for e in T]
     with Pool(2) as p: p.map(one,jobs,chunksize=1)

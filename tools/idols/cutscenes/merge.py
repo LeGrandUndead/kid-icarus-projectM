@@ -16,18 +16,24 @@ def attach(fr, body, head, bone):
     return out
 def merge(out, parts, anim_out):
     os.makedirs(out, exist_ok=True)
-    verts=[]; lines=[]; texl=[]; frames=[]
+    import json
+    verts=[]; lines=[]; texl=[]; frames=[]; mats=[]; luts={}
     for part in parts:
         d, anim, drop = part[:3]
         v=np.fromfile(f'{d}/mesh.bin',dtype=np.float32).reshape(-1,16)
         fr=np.fromfile(f'{d}/{anim}.frames',dtype=np.float32).reshape(-1,len(v),6)
         if len(part)>3: fr=attach(fr, bones(*part[3]), bones(d, anim), part[4])
         at=0; keep=[]
+        M=json.load(open(f'{d}/materials.json')) if os.path.exists(f'{d}/materials.json') else None
+        if os.path.exists(f'{d}/luts.json'): luts.update(json.load(open(f'{d}/luts.json')))
+        mi=0
         for line in open(f'{d}/meshes.txt'):
             if line.startswith('#'): continue
             p=line.rstrip('\n').split('\t'); n=int(p[1])
-            if p[2] not in drop: keep.append(np.arange(at,at+n)); lines.append(line.rstrip('\n'))
-            at+=n
+            if p[2] not in drop:
+                keep.append(np.arange(at,at+n)); lines.append(line.rstrip('\n'))
+                if M is not None: mats.append(M[mi])
+            at+=n; mi+=1
         k=np.concatenate(keep); verts.append(v[k]); frames.append(fr[:,k])
         for t in open(f'{d}/textures.txt'):
             name=t.split('\t')[0]
@@ -35,6 +41,7 @@ def merge(out, parts, anim_out):
             if not os.path.lexists(f'{out}/{name}.rgba'): os.symlink(os.path.abspath(f'{d}/{name}.rgba'),f'{out}/{name}.rgba')
             texl.append(t.rstrip('\n'))
     np.concatenate(verts).tofile(f'{out}/mesh.bin')
+    if len(mats)==len(lines): json.dump(mats,open(f'{out}/materials.json','w')); json.dump(luts,open(f'{out}/luts.json','w'))
     open(f'{out}/meshes.txt','w').write('\n'.join(lines)+'\n')
     open(f'{out}/textures.txt','w').write('\n'.join(texl)+'\n')
     n=min(f.shape[0] for f in frames)

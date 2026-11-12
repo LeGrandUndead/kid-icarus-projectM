@@ -11,6 +11,7 @@ class P {
     Console.WriteLine($"models {h.Models.Count} textures {h.Textures.Count} skeletal anims {h.SkeletalAnimations.Count} material anims {h.MaterialAnimations.Count}");
     foreach (var an in h.SkeletalAnimations) Console.WriteLine($"  anim {an.Name} frames {an.FramesCount} elements {an.Elements.Count}");
     var meshes = new StreamWriter(Path.Combine(a[1], "meshes.txt"));
+    var mats = new System.Collections.Generic.List<object>();
     using var bin = new BinaryWriter(File.Create(Path.Combine(a[1], "mesh.bin")));
     foreach (H3DModel m in h.Models) {
       meshes.WriteLine($"# model {m.Name} bones {m.Skeleton?.Count}");
@@ -34,10 +35,12 @@ class P {
             n++;
           }
         }
+        mats.Add(Material.Describe(mat, mesh));
         var mp = mat.MaterialParams; meshes.WriteLine($"{mat.Texture0Name ?? "-"}\t{n}\t{mat.Name}\t{mesh.Layer}\t{mesh.Priority}\t{mat.Texture1Name ?? "-"}\t{mat.Texture2Name ?? "-"}\t{mp.TextureCoords[0].MappingType}/{mp.TextureCoords[1].MappingType}/{mp.TextureCoords[2].MappingType}\t{mp.DiffuseColor}\t{TC(mp.TextureCoords[0])}|{TC(mp.TextureCoords[1])}|{TC(mp.TextureCoords[2])}\t{string.Join(",", mp.TextureSources)}\t{(mp.AlphaTest.Enabled ? mp.AlphaTest.Function + ":" + mp.AlphaTest.Reference : "-")}\t{mp.BlendFunction.ColorSrcFunc}/{mp.BlendFunction.ColorDstFunc}/{mp.ColorOperation.BlendMode}");
       }
     }
     meshes.Close();
+    Material.Write(h, mats, a[1]);
     var texs = new StreamWriter(Path.Combine(a[1], "textures.txt"));
     foreach (var t in h.Textures) {
       try { File.WriteAllBytes(Path.Combine(a[1], t.Name + ".rgba"), t.ToRGBA()); texs.WriteLine($"{t.Name}\t{t.Width}\t{t.Height}"); }
