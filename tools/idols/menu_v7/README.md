@@ -15,6 +15,7 @@ unpacked), `idols/`, `fx/` (effect textures), `mock/Montserrat-Regular.otf`,
   controls, soft glow, the game's particle images and their drift.
 - `bg.py`: the three stage backgrounds (cameras per mode).
 - `still_v7.py`: one still per mode.
+- `d1_poster.py`, `d2_skyworld.py`: direction tests after Kevin found v7 too stiff and generic (2026-11-12): an action poster (Together; uses a large re-render of the kick, cast.pose frame 190 at yaw -30 pitch -12, 1700 px) and a world of floating islands (Vault; chapter 20 temple island rendered from outside with its sky meshes skipped).
 
 - `grade.py`: cutscene light on a finished page: backlight rays, bloom,
   the four-point star flare, warm/cool grade with vignette.
