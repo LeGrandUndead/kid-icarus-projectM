@@ -5,6 +5,8 @@ import sys, os, math, json
 sys.path.insert(0,'.')
 import numpy as np, idol
 from multiprocessing import Pool
+BUFS_ONLY=os.environ.get('BUFS')=='1'   # BUFS=1: re-render only to get the relighting buffers
+LIMIT=int(os.environ.get('LIMIT','100000')); START=int(os.environ.get('START','0'))
 B=1150; CLICK=150
 MODES={
  # key, yaw, pitch, rim colour, idle spec, action spec, end
@@ -79,12 +81,14 @@ def frame_at(m,f,fr):
 def one(job):
     m,e,fr=job; M=MODES[m]
     out=f'frames/{m}/{e["f"]:04d}.png'
-    if os.path.exists(out): return
+    if os.path.exists(out) and (not BUFS_ONLY or os.path.exists(f'frames/{m}_buf/{e["f"]:04d}_nrm.png')): return
+    if BUFS_ONLY: out=f'frames/{m}_buf/{e["f"]:04d}_post.png'
     spec=[(a,x,w,None if s is None else np.array(s)) for a,x,w,s in e['spec']]
     fr=frame_at(m,e['f'],fr)
     # cutscene-style shading: side key, shadows tinted with the mode's colour, rim
     idol.POST=dict(rim=M['rim'],light=(-0.85,0.45,0.28),dark=0.55,rim_strength=0.8,
                    shadow={'together':(0.75,0.6,1.0),'vault':(0.7,0.85,1.0),'options':(0.95,0.7,0.95)}[m])
+    os.makedirs(f'frames/{m}_buf',exist_ok=True); idol.BUFS=f'frames/{m}_buf/{e["f"]:04d}'
     idol.render(M['key'],B,math.radians(M['yaw']),math.radians(M['pitch']),rim=M['rim'],pose=pose(M['key'],spec),span_fix=(fr[0],tuple(fr[1])),ss=2).save(out)
 if __name__=='__main__':
     jobs=[]
@@ -94,6 +98,6 @@ if __name__=='__main__':
         for e in T: e['spec']=[(a,x,w,None if s is None else [float(v) for v in s]) for a,x,w,s in e['spec']]
         fr=close_framing(m,T) if MODES[m].get('close') else framing(m,[dict(f=e['f'],spec=[(a,x,w,None if s is None else np.array(s)) for a,x,w,s in e['spec']]) for e in T])
         json.dump(dict(timeline=T,click=CLICK,wipe=MODES[m]['wipe'],end=MODES[m]['end'],framing=fr),open(f'frames/{m}.json','w'))
-        jobs+=[(m,e,fr) for e in T]
+        jobs+=[(m,e,fr) for e in T if START<=e['f']<LIMIT]
     with Pool(2) as p: p.map(one,jobs,chunksize=1)
     print('ok',len(jobs))

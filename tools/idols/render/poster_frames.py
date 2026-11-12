@@ -14,11 +14,12 @@ pts = np.concatenate([cast.pose('T05', spec(e))[:, :3] @ R.T for e in T[::5]])
 lo, hi = np.percentile(pts, 0.5, axis=0), np.percentile(pts, 99.5, axis=0)
 FRAMING = (float(max(hi[0] - lo[0], hi[1] - lo[1]) * 1.06), tuple(((lo + hi) / 2).tolist()))
 def one(e):
-    out = f'frames/poster_tog/{e["f"]:04d}.png'
-    if os.path.exists(out): return
+    out = f'frames/poster_tog_buf/{e["f"]:04d}_post.png'
+    if os.path.exists(f'frames/poster_tog_buf/{e["f"]:04d}_nrm.png'): return
+    idol.BUFS = f'frames/poster_tog_buf/{e["f"]:04d}'
     idol.POST = dict(rim=(1.0, 0.85, 0.65), light=(-0.85, 0.45, 0.28), dark=0.55, rim_strength=0.8, shadow=(0.75, 0.6, 1.0))
     idol.render('T05', SIZE, math.radians(YAW), math.radians(PITCH), pose=cast.pose('T05', spec(e)), span_fix=FRAMING, ss=2).save(out)
 if __name__ == '__main__':
-    os.makedirs('frames/poster_tog', exist_ok=True)
+    os.makedirs('frames/poster_tog_buf', exist_ok=True)
     with Pool(2) as p: p.map(one, T, chunksize=1)
     print('ok', len(T))

@@ -32,6 +32,7 @@ LOADED={}
 ENV=None   # the lights; None: pica.ENV (the game's character rig)
 # extra cutscene-style shading after the game's (post_shade.py settings), or None
 POST=None
+BUFS=None        # path prefix: also save <prefix>_base.png and <prefix>_nrm.png (see the end of _render_game)
 # the game's shared light tables (RomFS/us/0.arc resident/shared.arc 00.bcres: CrvChr00)
 SHARED_LUTS=os.path.join(os.path.dirname(S),'common','shared_luts.json')
 
@@ -254,6 +255,12 @@ def _render_game(v,groups,texs,mats,luts,P,N,sx,sy,sz,W,H,size,span_fix,R,key=No
                 cover[sel]=np.clip(a+dst[:,3]*(1-a),0,1)
             if m['depth_write']:
                 dw=sel.copy(); depth[dw]=np.maximum(depth[dw],z[dw])
+    if BUFS:
+        # for relighting later in 2D: the colour before POST, and the normals
+        # (x,y,z in -1..1 stored as 0..255), both at the output size
+        base=Image.fromarray((np.dstack([np.clip(colour,0,1),cover])*255).astype(np.uint8),'RGBA').resize((size,size),Image.LANCZOS)
+        nrm=Image.fromarray(((np.clip(nbuf,-1,1)+1)/2*255).astype(np.uint8),'RGB').resize((size,size),Image.LANCZOS)
+        base.save(BUFS+'_base.png'); nrm.save(BUFS+'_nrm.png')
     if POST:
         from post_shade import post_shade
         colour=post_shade(colour,nbuf,cover,**POST)
