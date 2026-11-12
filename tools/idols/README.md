@@ -109,3 +109,24 @@ modes. No outline.
 - The cutscene Pit (`demo/098` body 21 + head 22) plays Pit's gameplay
   moves (26/29 bones match); his head rides the body's `HeadN`
   (`outPitHF`, used by `render/sky.py`).
+
+### Texture wrap modes and eye light (2026-11-12)
+
+- The converter also writes each texture unit's wrap mode (`wrap`: Repeat,
+  Mirror, ClampToEdge, ClampToBorder per axis) and border colour
+  (`border`); `pica.sample` honours them. Without them, eyes tile (Pit's,
+  Dark Pit's and Palutena's iris UVs run from -3 to 3 on a clamped
+  texture), Viridi's eye highlight smears white, and Palutena's mirrored
+  body texture comes out wrong.
+- `cutscenes/matfix.py`: re-exports only the materials of the parts in use
+  after a converter change (the animation exports stay as they are).
+- The `Wpn` mesh (material `ParmH00`) of the cutscene Pit and Dark Pit is
+  their high-detail hands, not a weapon: keep it.
+  `cutscenes/dropmesh.py` removes meshes by name from a converted model
+  (geometry, materials, every `.frames`) if one ever has to go.
+- Viridi's eye material multiplies its colour by 8; under the menu's front
+  key light it saturates to white. `pica.NATU['eye_dir']` lights her eye
+  meshes only from her cutscene's own light direction (above and behind);
+  everything else keeps the front light. A known compromise.
+- `render/cast.py` and `render/sky.py` skip frames that already exist:
+  move the old frames aside before re-rendering after a model change.

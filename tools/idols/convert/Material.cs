@@ -42,6 +42,8 @@ static class Material
             ["textures"] = new[] { mat.Texture0Name, mat.Texture1Name, mat.Texture2Name },
             ["mapping"] = p.TextureCoords.Select(t => t.MappingType.ToString()).ToArray(),
             ["texcoord_config"] = p.TexCoordConfig.ToString(),
+            ["wrap"] = mat.TextureMappers.Select(t => new[] { t.WrapU.ToString(), t.WrapV.ToString() }).ToArray(),
+            ["border"] = mat.TextureMappers.Select(t => C(t.BorderColor)).ToArray(),
             ["texture_sources"] = p.TextureSources,
             ["flags"] = p.Flags.ToString(),
             ["fragment_flags"] = p.FragmentFlags.ToString(),

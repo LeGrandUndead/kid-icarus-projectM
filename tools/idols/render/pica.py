@@ -26,7 +26,10 @@ CH1 = dict(ENV, light_ambient=np.array([0.30, 0.30, 0.30]), light_diffuse=np.arr
            light_specular0=np.array([0.30, 0.30, 0.30]), light_specular1=np.array([0.60, 0.55, 0.50]))
 # Viridi's own light in her chapter 11 cutscene (demo/051 00.bcres: Natu_Light)
 NATU = dict(ENV, light_ambient=np.array([0.15, 0.27, 0.40]), light_diffuse=np.array([0.42, 0.51, 0.55]),
-            light_specular0=np.array([0.51, 0.65, 0.71]), light_specular1=np.array([0.62, 0.65, 0.68]))
+            light_specular0=np.array([0.51, 0.65, 0.71]), light_specular1=np.array([0.62, 0.65, 0.68]),
+            # her eyes' shader boosts the colour x8, tuned for the cutscene's own
+            # light (from above and behind); the rest keeps the front key light
+            eye_dir=np.array([0.0, 0.5455, -0.838]))
 # which light each converted model gets (by its name); the rest: Chr_Light01
 LIGHTS = {'Viri': NATU, 'V11': NATU, 'ViriH': NATU, 'PitHF': CH1, '000': CH1, 'T05': CH1, 'PitH': CH1, 'DPitH': CH1}
 
@@ -39,13 +42,30 @@ def in_view(env, R):
     e['hemi_dir'] = R @ (env['hemi_dir'] / np.linalg.norm(env['hemi_dir']))
     return e
 
-def sample(t, u, v):
+def _wrap(i, n, mode):
+    # texel index -> texel inside the texture, by the unit's wrap mode
+    if mode == 'Mirror':
+        i = i % (2 * n); return np.where(i >= n, 2 * n - 1 - i, i)
+    if mode in ('ClampToEdge', 'ClampToBorder'):
+        return np.clip(i, 0, n - 1)
+    return i % n                                     # Repeat
+
+def sample(t, u, v, wrap=('Repeat', 'Repeat'), border=None):
+    """Bilinear look-up, with the hardware's wrap modes (Repeat, Mirror,
+    ClampToEdge, ClampToBorder) per axis."""
     h, w = t.shape[:2]
-    x = (u % 1) * w - 0.5; y = (v % 1) * h - 0.5
+    x = u * w - 0.5; y = v * h - 0.5
     x0 = np.floor(x).astype(int); y0 = np.floor(y).astype(int)
     fx = (x - x0)[:, None]; fy = (y - y0)[:, None]
-    x0 %= w; y0 %= h; x1 = (x0 + 1) % w; y1 = (y0 + 1) % h
-    return t[y0, x0] * (1 - fx) * (1 - fy) + t[y0, x1] * fx * (1 - fy) + t[y1, x0] * (1 - fx) * fy + t[y1, x1] * fx * fy
+    xa, xb = _wrap(x0, w, wrap[0]), _wrap(x0 + 1, w, wrap[0])
+    ya, yb = _wrap(y0, h, wrap[1]), _wrap(y0 + 1, h, wrap[1])
+    out = t[ya, xa] * (1 - fx) * (1 - fy) + t[ya, xb] * fx * (1 - fy) + t[yb, xa] * (1 - fx) * fy + t[yb, xb] * fx * fy
+    if border is not None and 'ClampToBorder' in wrap:
+        outside = np.zeros(len(u), bool)
+        if wrap[0] == 'ClampToBorder': outside |= (u < 0) | (u > 1)
+        if wrap[1] == 'ClampToBorder': outside |= (v < 0) | (v > 1)
+        out[outside] = np.asarray(border, float) * (255 if t.max() > 1.5 else 1)
+    return out
 
 def lut(table, x, absolute):
     # the hardware's 256-entry tables: |x| over 0..1 when the input is
@@ -80,7 +100,8 @@ def fragment_colours(m, n, luts, env=ENV):
     """The lit primary (diffuse) and secondary (specular) colours."""
     k = len(n)
     V = np.array([0.0, 0.0, 1.0])
-    L = env['light_dir'] / np.linalg.norm(env['light_dir'])
+    d = env['eye_dir'] if ('eye_dir' in env and 'Eye' in m['name']) else env['light_dir']
+    L = d / np.linalg.norm(d)
     Hh = (V + L); Hh /= np.linalg.norm(Hh)
     cos = dict(
         CosNormalHalf=n @ Hh, CosViewHalf=np.full(k, float(V @ Hh)), CosNormalView=n @ V,
@@ -198,7 +219,9 @@ def shade(m, n, uvs, vcol, textures, luts, env=ENV, need_light=True):
         name = m['textures'][unit]
         if name and name in textures:
             u, v = texcoord(m, coord_unit(m, unit), uvs, n)
-            tex.append(sample(textures[name], u, v))
+            wrap = m.get('wrap', [['Repeat', 'Repeat']] * 3)[unit]
+            border = m.get('border', [None] * 3)[unit]
+            tex.append(sample(textures[name], u, v, wrap, border))
         else:
             tex.append(np.ones((k, 4)))
     S = dict(tex=tex, primary=vertex_colour(m, n, vcol, env))

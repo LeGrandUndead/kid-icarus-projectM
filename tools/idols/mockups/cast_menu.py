@@ -67,11 +67,12 @@ def run(mode):
             u=ui60(sel,t)
             if 0<=gg<6: u=u.resize((int(W*0.995),int(H*0.995)))
             page.alpha_composite(u,(int(-760*leave),0))
-            c=CTRL.copy(); c.putalpha(c.split()[3].point(lambda a:int(a*(1-leave)))); page.alpha_composite(c)
         ch=Image.open(f'{R}/{mode}/{f:04d}.png').convert('RGBA')
         z=1+0.06*ease(gg/40) if gg>0 else 1          # the camera leans in on the move
         if z!=1: ch=ch.resize((int(ch.width*z),int(ch.height*z)),Image.BILINEAR)
         over(page,GLOW,PX-450,PY-430); over(page,ch,PX-ch.width/2,PY-ch.height/2)
+        if leave<1:   # the controls panel sits above the characters so it stays readable
+            c=CTRL.copy(); c.putalpha(c.split()[3].point(lambda a:int(a*(1-leave)))); page.alpha_composite(c)
         if 0<=gg<26 and mode=='together': page.alpha_composite(speed_lines(f,PX,PY-60,ease(gg/6)*(1-ease((gg-14)/12))))
         # the pointer: comes in, hovers the button, clicks
         if gg<5:
