@@ -37,8 +37,6 @@ MASK = Image.new('L', (W + 1000, H)); ImageDraw.Draw(MASK).polygon(PANEL, fill=2
 st = Image.open('bg/together.png').convert('RGB').resize((W + 80, H + 45), Image.LANCZOS)
 st = ImageEnhance.Brightness(ImageEnhance.Color(st).enhance(1.25)).enhance(1.15)
 STAGE = Image.blend(st, Image.new('RGB', st.size, ORANGE), 0.25).convert('RGBA')
-IMPACT = (1300, 500)
-RAYS = G.backlight_rays((W, H), *IMPACT, (255, 220, 160), n=26, length=1600, strength=0.6)
 def panel_layer(dx, v):
     """The stage panel, slid right by dx: the stage drifting slowly inside, a black and gold edge."""
     lay = Image.new('RGBA', (W, H))
@@ -60,12 +58,11 @@ def speed_lines(seed, strength, mk):
 
 # the characters: one fixed placement for the whole move
 CH = f'{R}/poster_tog'
-bb = None
-for f in (0, 100, 150, 190, 215):
-    b = Image.open(f'{CH}/{f:04d}.png').getbbox()
-    bb = b if bb is None else (min(bb[0], b[0]), min(bb[1], b[1]), max(bb[2], b[2]), max(bb[3], b[3]))
-CK = 1180 / (bb[3] - bb[1])
-CX0, CY0 = W + 40 - bb[2] * CK, H + 130 - bb[3] * CK
+b100 = Image.open(f'{CH}/0100.png').getbbox(); b190 = Image.open(f'{CH}/0190.png').getbbox()
+CK = 1060 / (b100[3] - b100[1])                                     # the grapple about 1060 px tall
+CX0, CY0 = 1400 - (b100[0] + b100[2]) / 2 * CK, H + 70 - b100[3] * CK  # centred on the right, feet just below the edge
+IMPACT = (int(CX0 + (b190[0] + b190[2]) / 2 * CK), int(CY0 + (b190[1] + 0.45 * (b190[3] - b190[1])) * CK))
+RAYS = G.backlight_rays((W, H), *IMPACT, (255, 220, 160), n=26, length=1600, strength=0.6)
 def char_frame(v):
     if v < HIT: return v
     if v < HIT + HOLD: return HIT
