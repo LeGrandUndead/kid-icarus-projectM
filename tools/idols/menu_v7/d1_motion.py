@@ -146,7 +146,7 @@ def frame(v):
     if w >= 0:
         a = math.radians(-58); ddx, ddy = math.cos(a), math.sin(a); nx, ny = -ddy, ddx
         msk = Image.new('L', (W, H)); ImageDraw.Draw(msk).polygon([(W/2-ddx*3000-ddy*3000, H/2-ddy*3000+ddx*3000), (W/2+ddx*3000-ddy*3000, H/2+ddy*3000+ddx*3000), (W/2+ddx*3000, H/2+ddy*3000), (W/2-ddx*3000, H/2-ddy*3000)], fill=255)
-        gap = 1100 * ease(w / 20)
+        gap = 2600 * ease(w / 22) ** 1.3
         A = Image.new('RGBA', (W, H)); A.paste(page, (0, 0), msk); B = Image.new('RGBA', (W, H)); B.paste(page, (0, 0), ImageChops.invert(msk))
         base = CARD.copy()
         base.alpha_composite(A.transform((W, H), Image.AFFINE, (1, 0, nx * gap, 0, 1, ny * gap)))
@@ -160,7 +160,7 @@ def frame(v):
 
 if __name__ == '__main__':
     out = 'd1_frames'; os.makedirs(out, exist_ok=True)
-    frames = [STILL] if STILL >= 0 else range(N)
+    frames = [STILL] if STILL >= 0 else range(int(os.environ.get('FROM', '0')), N)
     for v in frames:
         p = frame(v)
         if STILL >= 0: p.convert('RGB').save(f'check/d1m_{v:04d}.png')
