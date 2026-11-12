@@ -183,12 +183,13 @@ def frame(v):
         cx_, by = BPOS[i]
         if i == 1:
             sel = A.track(v, [(48, 0), (60, 1, 'spring')])
-            b = BIG[1] if sel > 0.5 else SMALL[1]
-            sc = (0.6 + 0.4 * sel) if sel <= 0.5 else (0.55 + 0.45 * sel)
+            b = BIG[1] if sel > 0.5 else step_back(BIG[1], 1 - sel * 2)        # grows from the same size as its siblings
+            sc = 1.5 / 2.7 + (1 - 1.5 / 2.7) * sel
             sqx, sqy = A.squash(v, CLICK)
             hov = 1 + 0.04 * (A.track(v, [(110, 0), (122, 1, 'spring')]) - A.track(v, [(110, 0), (122, 1)]))
             b = scaled(glint(b, v / 60) if sel > 0.5 else b, sc * sqx * hov, sc * sqy * hov)
-            if CLICK <= v < CLICK + 4: b = Image.composite(Image.new('RGBA', b.size, (255, 255, 255, 255)), b, b.getchannel('A'))
+            if CLICK <= v < CLICK + 4:                                          # confirm: a quick brighten
+                w_ = Image.new('RGBA', b.size, (255, 250, 230, 0)); w_.putalpha(b.getchannel('A').point(lambda q: int(q * 0.45))); b = b.copy(); b.alpha_composite(w_)
             glow = (13, 14, GOLD, 0.9 * sel) if sel > 0.05 else None
             put(page, faded(b, ba), cx_ + bx, by, anchor='c', sh=(10, 0.6, 10, 14), gl=glow, rot=-6)
         else:
@@ -232,7 +233,7 @@ def frame(v):
 
 if __name__ == '__main__':
     out = 'd1v2_frames'; os.makedirs(out, exist_ok=True)
-    frames = [STILL] if STILL >= 0 else range(int(os.environ.get('FROM', '0')), N)
+    frames = [STILL] if STILL >= 0 else range(int(os.environ.get('FROM', '0')), int(os.environ.get('TO', N)))
     for v in frames:
         p = frame(v)
         if STILL >= 0: p.convert('RGB').save(f'check/d1v2_{v:04d}.png')
