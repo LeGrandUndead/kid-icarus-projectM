@@ -15,6 +15,14 @@ SCENES={
  'V11':('051',[('23','c11_030_natur',{'Effect'})],1550),
  'H25':('119',[('22','c25_030_hadeh',set())],1760),
 }
+# The clips the main menu plays (render/cast.py), chosen from pose sheets:
+#   T05 clash: the chapter 5 grapple, from the moment they lock (frame 258)
+#              through the throw and the kick
+#   P20 idle:  Palutena's calm opening pose (head bowed, staff in hand)
+#   P20 clip:  her staff flourish at the end of the chapter 20 scene
+CLIPS={'clash':('T05',258,392,1),'idle':('P20',0,166,1),'clip':('P20',650,836,1)}
+def clips():
+    for name,(key,a,b,step) in CLIPS.items(): build(key,start=a,end=b,step=step,name=name)
 def build(key, n=40, start=None, end=None, step=None, name='scene'):
     d,parts,frames=SCENES[key]
     if step is None: step=frames/n
@@ -34,4 +42,6 @@ def build(key, n=40, start=None, end=None, step=None, name='scene'):
         else: mparts.append((out,anim,p[2]))
     merge.merge(f'{S}/idols/out{key}',mparts,name)
 if __name__=='__main__':
-    for k in sys.argv[1:]: build(k)
+    if sys.argv[1:]==['clips']: clips()
+    else:
+        for k in sys.argv[1:]: build(k)
