@@ -149,7 +149,8 @@ def frame(v):
         b = fit(BTN[mode], w=max(4, size))
         if mode == 2:
             sqx, sqy = A.squash(v, CLICK); b = scaled(b, sqx, sqy)
-            if CLICK <= v < CLICK + 4: b = Image.composite(Image.new('RGBA', b.size, (255, 255, 255, 255)), b, b.getchannel('A'))
+            if CLICK <= v < CLICK + 4:                                          # confirm: a quick brighten
+                w_ = Image.new('RGBA', b.size, (255, 250, 230, 0)); w_.putalpha(b.getchannel('A').point(lambda q: int(q * 0.45))); b = b.copy(); b.alpha_composite(w_)
         b = glint(b, v / 60) if on > 0.6 else step_back(b, max(0, 1 - on))
         if on > 0.05:
             beam = Image.new('L', (W, H)); bw = 64 * on
@@ -184,12 +185,13 @@ def frame(v):
     # the menu: heading and caption, entering, swapping on hover, leaving after the click
     leave = [A.track(A.stagger(v, CLICK + 4, i, 3), [(0, 0), (9, 1, 'in')]) for i in range(3)]
     for i in (1, 2):
-        if i == 1: k_in = A.track(v, [(30, 0), (45, 1, 'out_back')]); k_out = A.track(v, [(HOVER, 0), (HOVER + 9, 1, 'in')])
-        else: k_in = A.track(v, [(HOVER + 3, 0), (HOVER + 18, 1, 'out_back')]); k_out = leave[0]
+        # the old heading is gone (7 f) before the new one lands (from HOVER + 6)
+        if i == 1: k_in = A.track(v, [(30, 0), (45, 1, 'out_back')]); k_out = A.track(v, [(HOVER, 0), (HOVER + 7, 1, 'in')])
+        else: k_in = A.track(v, [(HOVER + 6, 0), (HOVER + 20, 1, 'out_back')]); k_out = leave[0]
         a_ = min(1, k_in) * (1 - k_out)
         if a_ <= 0.01: continue
         y_ = -90 * (1 - k_in) - 120 * k_out
-        page.alpha_composite(faded(HEAD[i], a_), (70, int(50 + y_)))
+        page.alpha_composite(faded(HEAD[i], a_ if i == 2 else a_ ** 2), (70, int(50 + y_)))
         cy_ = 120 * (1 - A.track(v, [(33 if i == 1 else HOVER + 6, 0), (48 if i == 1 else HOVER + 18, 1, 'out')])) + 160 * (k_out if i == 1 and v < CLICK else leave[1])
         page.alpha_composite(faded(CAP[i], a_), (0, int(cy_)))
     cy_ = 120 * (1 - A.track(v, [(36, 0), (52, 1, 'out')])) + 160 * leave[2]
@@ -213,7 +215,7 @@ def frame(v):
 
 if __name__ == '__main__':
     out = 'd2v2_frames'; os.makedirs(out, exist_ok=True)
-    frames = [STILL] if STILL >= 0 else range(int(os.environ.get('FROM', '0')), N)
+    frames = [STILL] if STILL >= 0 else range(int(os.environ.get('FROM', '0')), int(os.environ.get('TO', N)))
     for v in frames:
         p = frame(v)
         if STILL >= 0: p.convert('RGB').save(f'check/d2v2_{v:04d}.png')
