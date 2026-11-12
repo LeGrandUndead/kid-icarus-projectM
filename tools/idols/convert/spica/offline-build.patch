@@ -1,0 +1,3408 @@
+diff --git a/Directory.Build.props b/Directory.Build.props
+index 31a2aca..664cfad 100644
+--- a/Directory.Build.props
++++ b/Directory.Build.props
+@@ -1,6 +1,6 @@
+ <Project>
+   <PropertyGroup>
+-    <TargetFramework>net8.0-windows</TargetFramework>
++    <TargetFramework>net8.0</TargetFramework>
+     <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
+     <ImplicitUsings>disable</ImplicitUsings>
+     <Nullable>disable</Nullable>
+diff --git a/SPICA/Formats/CtrGfx/Gfx.cs b/SPICA/Formats/CtrGfx/Gfx.cs
+index dc2dfc4..c962857 100644
+--- a/SPICA/Formats/CtrGfx/Gfx.cs
++++ b/SPICA/Formats/CtrGfx/Gfx.cs
+@@ -658,7 +658,7 @@ namespace SPICA.Formats.CtrGfx
+             }
+         }
+ 
+-        private static SerializationOptions GetSerializationOptions()
++        internal static SerializationOptions GetSerializationOptions()
+         {
+             return new SerializationOptions(LengthPos.BeforePtr, PointerType.SelfRelative);
+         }
+diff --git a/SPICA/Formats/CtrH3D/Texture/H3DTexture.cs b/SPICA/Formats/CtrH3D/Texture/H3DTexture.cs
+index d8c5d9f..6d9c678 100644
+--- a/SPICA/Formats/CtrH3D/Texture/H3DTexture.cs
++++ b/SPICA/Formats/CtrH3D/Texture/H3DTexture.cs
+@@ -7,8 +7,10 @@ using SPICA.Serialization.Attributes;
+ using SPICA.Serialization.Serializer;
+ 
+ using System;
++#if DRAWING
+ using System.Drawing;
+ using System.Drawing.Imaging;
++#endif
+ using System.IO;
+ 
+ namespace SPICA.Formats.CtrH3D.Texture
+@@ -57,6 +59,7 @@ namespace SPICA.Formats.CtrH3D.Texture
+ 
+         public H3DTexture() { }
+ 
++#if DRAWING
+         public H3DTexture(string FileName)
+         {
+             Bitmap Img = new Bitmap(FileName);
+@@ -109,16 +112,19 @@ namespace SPICA.Formats.CtrH3D.Texture
+             }
+         }
+ 
++#endif
+         public byte[] ToRGBA(int Face = 0)
+         {
+             return TextureConverter.DecodeBuffer(BufferFromFace(Face), Width, Height, Format);
+         }
+ 
++#if DRAWING
+         public Bitmap ToBitmap(int Face = 0)
+         {
+             return TextureConverter.DecodeBitmap(BufferFromFace(Face), Width, Height, Format);
+         }
+ 
++#endif
+         private byte[] BufferFromFace(int Face)
+         {
+             switch (Face)
+diff --git a/SPICA/Formats/Generic/COLLADA/DAE.cs b/SPICA/Formats/Generic/COLLADA/DAE.cs
+deleted file mode 100644
+index f7d93fa..0000000
+--- a/SPICA/Formats/Generic/COLLADA/DAE.cs
++++ /dev/null
+@@ -1,77 +0,0 @@
+-using SPICA.Formats.CtrH3D;
+-using SPICA.Formats.CtrH3D.Texture;
+-
+-using System;
+-using System.Collections.Generic;
+-using System.IO;
+-using System.Xml.Serialization;
+-
+-namespace SPICA.Formats.Generic.COLLADA
+-{
+-    [XmlRoot("COLLADA", Namespace = "http://www.collada.org/2005/11/COLLADASchema")]
+-    public class DAE
+-    {
+-        [XmlAttribute] public string version = "1.4.1";
+-
+-        public DAEAsset asset = new DAEAsset();
+-
+-        [XmlArrayItem("animation")]    public List<DAEAnimation>   library_animations;
+-        [XmlArrayItem("image")]        public List<DAEImage>       library_images;
+-        [XmlArrayItem("material")]     public List<DAEMaterial>    library_materials;
+-        [XmlArrayItem("effect")]       public List<DAEEffect>      library_effects;
+-        [XmlArrayItem("geometry")]     public List<DAEGeometry>    library_geometries;
+-        [XmlArrayItem("controller")]   public List<DAEController>  library_controllers;
+-        [XmlArrayItem("visual_scene")] public List<DAEVisualScene> library_visual_scenes;
+-
+-        public DAEScene scene = new DAEScene();
+-
+-        public DAE() { }
+-
+-        [XmlIgnore] public List<string> ExportWarnings { get; } = new List<string>();
+-        [XmlIgnore] internal readonly List<Tuple<H3DTexture, string>> ExportTextures = new List<Tuple<H3DTexture, string>>();
+-        [XmlIgnore] internal readonly List<Tuple<H3DTexture, string, int>> ExportTextureFaces = new List<Tuple<H3DTexture, string, int>>();
+-        [XmlElement("extra")] public List<DAEExtra> extra = new List<DAEExtra>();
+-
+-        public DAE(H3D Scene, int MdlIndex, int AnimIndex = -1)
+-            : this(Scene, MdlIndex, AnimIndex, new DAEExportOptions()) { }
+-
+-        public DAE(H3D Scene, int MdlIndex, int AnimIndex, DAEExportOptions Options)
+-        {
+-            new DAEExporter(this, Scene, MdlIndex, AnimIndex, Options).Export();
+-        }
+-
+-        public void Save(string FileName)
+-        {
+-            string DirectoryName = Path.GetDirectoryName(Path.GetFullPath(FileName));
+-
+-            foreach (Tuple<H3DTexture, string> Texture in ExportTextures)
+-            {
+-                using (System.Drawing.Bitmap Bitmap = Texture.Item1.ToBitmap())
+-                {
+-                    Bitmap.Save(Path.Combine(DirectoryName, Texture.Item2), System.Drawing.Imaging.ImageFormat.Png);
+-                }
+-            }
+-
+-            foreach (Tuple<H3DTexture, string, int> Texture in ExportTextureFaces)
+-            {
+-                using (System.Drawing.Bitmap Bitmap = Texture.Item1.ToBitmap(Texture.Item3))
+-                {
+-                    Bitmap.Save(Path.Combine(DirectoryName, Texture.Item2), System.Drawing.Imaging.ImageFormat.Png);
+-                }
+-            }
+-
+-            using (FileStream FS = new FileStream(FileName, FileMode.Create))
+-            {
+-                XmlSerializer Serializer = new XmlSerializer(typeof(DAE));
+-
+-                Serializer.Serialize(FS, this);
+-            }
+-
+-            if (ExportWarnings.Count > 0)
+-            {
+-                File.WriteAllLines(FileName + ".warnings.txt", ExportWarnings);
+-            }
+-        }
+-
+-    }
+-}
+diff --git a/SPICA/Formats/Generic/COLLADA/DAEAccessor.cs b/SPICA/Formats/Generic/COLLADA/DAEAccessor.cs
+deleted file mode 100644
+index f807e7a..0000000
+--- a/SPICA/Formats/Generic/COLLADA/DAEAccessor.cs
++++ /dev/null
+@@ -1,38 +0,0 @@
+-﻿using System.Collections.Generic;
+-using System.Xml.Serialization;
+-
+-namespace SPICA.Formats.Generic.COLLADA
+-{
+-    public class DAEAccessor
+-    {
+-        [XmlAttribute] public string source;
+-
+-        [XmlAttribute] public uint count;
+-        [XmlAttribute] public uint stride;
+-
+-        [XmlElement("param")] public List<DAEAccessorParam> param = new List<DAEAccessorParam>();
+-
+-        public void AddParam(string name, string type)
+-        {
+-            param.Add(new DAEAccessorParam()
+-            {
+-                name = name,
+-                type = type
+-            });
+-        }
+-
+-        public void AddParams(string type, params string[] names)
+-        {
+-            foreach (string name in names)
+-            {
+-                AddParam(name, type);
+-            }
+-        }
+-    }
+-
+-    public class DAEAccessorParam
+-    {
+-        [XmlAttribute] public string name;
+-        [XmlAttribute] public string type;
+-    }
+-}
+diff --git a/SPICA/Formats/Generic/COLLADA/DAEAnimation.cs b/SPICA/Formats/Generic/COLLADA/DAEAnimation.cs
+deleted file mode 100644
+index c38e8b3..0000000
+--- a/SPICA/Formats/Generic/COLLADA/DAEAnimation.cs
++++ /dev/null
+@@ -1,38 +0,0 @@
+-﻿using System.Collections.Generic;
+-using System.Xml.Serialization;
+-
+-namespace SPICA.Formats.Generic.COLLADA
+-{
+-    public class DAEAnimation
+-    {
+-        [XmlAttribute] public string id;
+-        [XmlAttribute] public string name;
+-
+-        [XmlElement("source")] public List<DAESource> src = new List<DAESource>();
+-
+-        public DAESamplers sampler = new DAESamplers();
+-        public DAEChannel  channel = new DAEChannel();
+-    }
+-
+-    public class DAESamplers
+-    {
+-        [XmlAttribute] public string id;
+-
+-        [XmlElement("input")] public List<DAEInput> input = new List<DAEInput>();
+-
+-        public void AddInput(string semantic, string source)
+-        {
+-            input.Add(new DAEInput()
+-            {
+-                semantic = semantic,
+-                source   = source
+-            });
+-        }
+-    }
+-
+-    public class DAEChannel
+-    {
+-        [XmlAttribute] public string source;
+-        [XmlAttribute] public string target;
+-    }
+-}
+diff --git a/SPICA/Formats/Generic/COLLADA/DAEArray.cs b/SPICA/Formats/Generic/COLLADA/DAEArray.cs
+deleted file mode 100644
+index f0aead3..0000000
+--- a/SPICA/Formats/Generic/COLLADA/DAEArray.cs
++++ /dev/null
+@@ -1,13 +0,0 @@
+-﻿using System.Xml.Serialization;
+-
+-namespace SPICA.Formats.Generic.COLLADA
+-{
+-    public class DAEArray
+-    {
+-        [XmlAttribute] public string id;
+-
+-        [XmlAttribute] public uint count;
+-
+-        [XmlText] public string data;
+-    }
+-}
+diff --git a/SPICA/Formats/Generic/COLLADA/DAEAsset.cs b/SPICA/Formats/Generic/COLLADA/DAEAsset.cs
+deleted file mode 100644
+index 2704f3f..0000000
+--- a/SPICA/Formats/Generic/COLLADA/DAEAsset.cs
++++ /dev/null
+@@ -1,17 +0,0 @@
+-﻿using System;
+-
+-namespace SPICA.Formats.Generic.COLLADA
+-{
+-    public class DAEAsset
+-    {
+-        public DateTime created;
+-        public DateTime modified;
+-        public string up_axis = "Y_UP";
+-
+-        public DAEAsset()
+-        {
+-            created = DateTime.Now;
+-            modified = DateTime.Now;
+-        }
+-    }
+-}
+diff --git a/SPICA/Formats/Generic/COLLADA/DAEController.cs b/SPICA/Formats/Generic/COLLADA/DAEController.cs
+deleted file mode 100644
+index b507155..0000000
+--- a/SPICA/Formats/Generic/COLLADA/DAEController.cs
++++ /dev/null
+@@ -1,12 +0,0 @@
+-﻿using System.Xml.Serialization;
+-
+-namespace SPICA.Formats.Generic.COLLADA
+-{
+-    public class DAEController
+-    {
+-        [XmlAttribute] public string id;
+-        [XmlAttribute] public string name;
+-
+-        public DAESkin skin = new DAESkin();
+-    }
+-}
+diff --git a/SPICA/Formats/Generic/COLLADA/DAEEffect.cs b/SPICA/Formats/Generic/COLLADA/DAEEffect.cs
+deleted file mode 100644
+index 793da0a..0000000
+--- a/SPICA/Formats/Generic/COLLADA/DAEEffect.cs
++++ /dev/null
+@@ -1,144 +0,0 @@
+-﻿using SPICA.Formats.CtrH3D.Model.Material;
+-using SPICA.PICA.Commands;
+-
+-using System;
+-using System.Collections.Generic;
+-using System.Xml.Serialization;
+-
+-namespace SPICA.Formats.Generic.COLLADA
+-{
+-    public class DAEEffect
+-    {
+-        [XmlAttribute] public string id;
+-        [XmlAttribute] public string name;
+-
+-        public DAEProfileCOMMON profile_COMMON = new DAEProfileCOMMON();
+-        [XmlElement("extra")] public List<DAEExtra> extra = new List<DAEExtra>();
+-    }
+-
+-    public class DAEProfileCOMMON
+-    {
+-        [XmlAttribute] public string sid;
+-
+-        [XmlElement("newparam")] public List<DAEEffectParam> newparam = new List<DAEEffectParam>();
+-
+-        public DAEEffectProfileCOMMONTechnique technique = new DAEEffectProfileCOMMONTechnique();
+-    }
+-
+-    public class DAEEffectParam
+-    {
+-        [XmlAttribute] public string sid;
+-
+-        [XmlElement(IsNullable = false)] public DAEEffectParamSurfaceElement surface;
+-        [XmlElement(IsNullable = false)] public DAEEffectParamSampler2DElement sampler2D;
+-    }
+-
+-    public class DAEEffectParamSurfaceElement
+-    {
+-        [XmlAttribute] public string type;
+-
+-        public string init_from;
+-        public string format;
+-    }
+-
+-    public class DAEEffectParamSampler2DElement
+-    {
+-        public string source;
+-        public DAEWrap wrap_s;
+-        public DAEWrap wrap_t;
+-        public DAEFilter minfilter;
+-        public DAEFilter magfilter;
+-        public DAEFilter mipfilter;
+-    }
+-
+-    public enum DAEWrap
+-    {
+-        NONE,
+-        WRAP,
+-        MIRROR,
+-        CLAMP,
+-        BORDER
+-    }
+-
+-    public enum DAEFilter
+-    {
+-        NONE,
+-        NEAREST,
+-        LINEAR,
+-        NEAREST_MIPMAP_NEAREST,
+-        LINEAR_MIPMAP_NEAREST,
+-        NEAREST_MIPMAP_LINEAR,
+-        LINEAR_MIPMAP_LINEAR
+-    }
+-
+-    public static class DAEH3DTextureWrapExtensions
+-    {
+-        public static DAEWrap ToDAEWrap(this PICATextureWrap Wrap)
+-        {
+-            switch (Wrap)
+-            {
+-                default:
+-                case PICATextureWrap.ClampToEdge:   return DAEWrap.CLAMP;
+-                case PICATextureWrap.ClampToBorder: return DAEWrap.BORDER;
+-                case PICATextureWrap.Repeat:        return DAEWrap.WRAP;
+-                case PICATextureWrap.Mirror:        return DAEWrap.MIRROR;
+-            }
+-        }
+-    }
+-
+-    public static class DAEH3DTextureFilterExtensions
+-    {
+-        public static DAEFilter ToDAEFilter(this H3DTextureMinFilter Filter)
+-        {
+-            switch (Filter)
+-            {
+-                default:
+-                case H3DTextureMinFilter.Nearest:              return DAEFilter.NEAREST;
+-                case H3DTextureMinFilter.NearestMipmapNearest: return DAEFilter.NEAREST_MIPMAP_NEAREST;
+-                case H3DTextureMinFilter.NearestMipmapLinear:  return DAEFilter.NEAREST_MIPMAP_LINEAR;
+-                case H3DTextureMinFilter.Linear:               return DAEFilter.LINEAR;
+-                case H3DTextureMinFilter.LinearMipmapNearest:  return DAEFilter.LINEAR_MIPMAP_NEAREST;
+-                case H3DTextureMinFilter.LinearMipmapLinear:   return DAEFilter.LINEAR_MIPMAP_LINEAR;
+-            }
+-        }
+-
+-        public static DAEFilter ToDAEFilter(this H3DTextureMagFilter Filter)
+-        {
+-            switch (Filter)
+-            {
+-                default:
+-                case H3DTextureMagFilter.Nearest: return DAEFilter.NEAREST;
+-                case H3DTextureMagFilter.Linear:  return DAEFilter.LINEAR;
+-            }
+-        }
+-    }
+-
+-    public class DAEEffectProfileCOMMONTechnique
+-    {
+-        [XmlAttribute] public string sid;
+-
+-        public DAEPhong phong = new DAEPhong();
+-    }
+-
+-    public class DAEPhong
+-    {
+-        public DAEPhongDiffuse emission;
+-        public DAEPhongDiffuse ambient;
+-        public DAEPhongDiffuse diffuse = new DAEPhongDiffuse();
+-        public DAEPhongDiffuse specular;
+-        public DAEPhongDiffuse transparent;
+-    }
+-
+-    public class DAEPhongDiffuse
+-    {
+-        [XmlAttribute] public string opaque;
+-        public DAEVector4 color;
+-        public DAEPhongDiffuseTexture texture;
+-    }
+-
+-    public class DAEPhongDiffuseTexture
+-    {
+-        [XmlAttribute] public string texture;
+-        [XmlAttribute] public string texcoord = "uv";
+-    }
+-}
+diff --git a/SPICA/Formats/Generic/COLLADA/DAEExportOptions.cs b/SPICA/Formats/Generic/COLLADA/DAEExportOptions.cs
+deleted file mode 100644
+index 28bcc39..0000000
+--- a/SPICA/Formats/Generic/COLLADA/DAEExportOptions.cs
++++ /dev/null
+@@ -1,53 +0,0 @@
+-using System;
+-using System.Collections.Generic;
+-using System.Xml;
+-using System.Xml.Serialization;
+-
+-namespace SPICA.Formats.Generic.COLLADA
+-{
+-    public sealed class DAEExportOptions
+-    {
+-        public float FramesPerSecond { get; set; } = 30;
+-        public int SamplesPerFrame { get; set; } = 4;
+-        public float MatrixTolerance { get; set; } = 0.0001f;
+-        public int MaxSubdivisionDepth { get; set; } = 10;
+-        public bool ExportTextures { get; set; } = true;
+-        public bool ExportSkinning { get; set; }
+-
+-        internal void Validate()
+-        {
+-            if (!float.IsFinite(FramesPerSecond) || FramesPerSecond <= 0)
+-            {
+-                throw new ArgumentOutOfRangeException(nameof(FramesPerSecond));
+-            }
+-
+-            if (SamplesPerFrame < 1 || SamplesPerFrame > 64)
+-            {
+-                throw new ArgumentOutOfRangeException(nameof(SamplesPerFrame));
+-            }
+-
+-            if (!float.IsFinite(MatrixTolerance) || MatrixTolerance <= 0)
+-            {
+-                throw new ArgumentOutOfRangeException(nameof(MatrixTolerance));
+-            }
+-
+-            if (MaxSubdivisionDepth < 0 || MaxSubdivisionDepth > 16)
+-            {
+-                throw new ArgumentOutOfRangeException(nameof(MaxSubdivisionDepth));
+-            }
+-        }
+-    }
+-
+-    public class DAEExtra
+-    {
+-        public DAEExtraTechnique technique = new DAEExtraTechnique();
+-    }
+-
+-    public class DAEExtraTechnique
+-    {
+-        [XmlAttribute] public string profile = "SPICA";
+-        [XmlAnyElement] public List<XmlElement> data = new List<XmlElement>();
+-    }
+-}
+-
+-
+diff --git a/SPICA/Formats/Generic/COLLADA/DAEExporter.Animation.cs b/SPICA/Formats/Generic/COLLADA/DAEExporter.Animation.cs
+deleted file mode 100644
+index 6ebf3ed..0000000
+--- a/SPICA/Formats/Generic/COLLADA/DAEExporter.Animation.cs
++++ /dev/null
+@@ -1,392 +0,0 @@
+-using SPICA.Formats.Common;
+-using SPICA.Formats.CtrH3D.Animation;
+-using SPICA.Formats.CtrH3D.Model;
+-
+-using System;
+-using System.Collections.Generic;
+-using System.Globalization;
+-using System.IO;
+-using System.Linq;
+-using System.Numerics;
+-
+-namespace SPICA.Formats.Generic.COLLADA
+-{
+-    internal sealed partial class DAEExporter
+-    {
+-        private sealed class Pose
+-        {
+-            public Matrix4x4[] Local;
+-            public Matrix4x4[] World;
+-        }
+-
+-        private void ExportMatrixAnimation(H3DAnimation Animation)
+-        {
+-            if (!float.IsFinite(Animation.FramesCount) || Animation.FramesCount < 0)
+-            {
+-                throw new InvalidDataException("Invalid animation duration.");
+-            }
+-
+-            H3DAnimationElement[] Elements = new H3DAnimationElement[BoneNodes.Length];
+-            foreach (H3DAnimationElement Element in Animation.Elements)
+-            {
+-                int Index = Enumerable.Range(0, BoneNodes.Length).FirstOrDefault(I => Model.Skeleton[I].Name == Element.Name, -1);
+-                if (Index < 0)
+-                {
+-                    Warn("Animation track '" + Element.Name + "' does not match a bone of model '" + Model.Name + "'.");
+-                    continue;
+-                }
+-
+-                if (Element.Content is not H3DAnimTransform && Element.Content is not H3DAnimQuatTransform && Element.Content is not H3DAnimMtxTransform)
+-                {
+-                    Warn("Animation track '" + Element.Name + "' has an unsupported skeletal primitive: " + Element.PrimitiveType + ".");
+-                    continue;
+-                }
+-
+-                if (Elements[Index] != null)
+-                {
+-                    throw new InvalidDataException("Duplicate animation track for bone '" + Element.Name + "'.");
+-                }
+-
+-                Elements[Index] = Element;
+-            }
+-
+-            Output.extra.Add(Extra("source_animation", new
+-            {
+-                Animation.Name,
+-                Animation.FramesCount,
+-                Animation.AnimationFlags,
+-                tracks = Animation.Elements.Select(E => new { E.Name, E.TargetType, E.PrimitiveType, E.Content }).ToArray()
+-            }));
+-            SortedSet<float> Frames = new SortedSet<float>
+-            {
+-                0,
+-                Animation.FramesCount
+-            };
+-            HashSet<float> Steps = new HashSet<float>();
+-            for (int I = 1; I < Math.Ceiling((double)Animation.FramesCount * Options.SamplesPerFrame); I++)
+-            {
+-                Frames.Add((float)I / Options.SamplesPerFrame);
+-            }
+-
+-            void AddStep(float Frame)
+-            {
+-                if (Frame <= 0 || Frame > Animation.FramesCount)
+-                {
+-                    return;
+-                }
+-
+-                Steps.Add(Frame);
+-                Frames.Add(Frame);
+-                Frames.Add(MathF.BitDecrement(Frame));
+-            }
+-
+-            foreach (H3DAnimationElement Element in Elements.Where(E => E != null))
+-            {
+-                if (Element.Content is H3DAnimTransform Transform)
+-                {
+-                    foreach (H3DFloatKeyFrameGroup Group in Groups(Transform))
+-                    {
+-                        foreach (KeyFrame Key in Group.KeyFrames)
+-                        {
+-                            if (Key.Frame < 0 || Key.Frame > Animation.FramesCount)
+-                            {
+-                                continue;
+-                            }
+-
+-                            Frames.Add(Key.Frame);
+-                            if (Group.InterpolationType == H3DInterpolationType.Step)
+-                            {
+-                                AddStep(Key.Frame);
+-                            }
+-                        }
+-
+-                        if (Group.PreRepeat != H3DLoopType.None || Group.PostRepeat != H3DLoopType.None)
+-                        {
+-                            Warn("Curve repeat modes use SPICA's current evaluator within the exported clip; their original metadata is preserved in extras.");
+-                        }
+-                    }
+-                }
+-
+-                if (Element.Content is H3DAnimMtxTransform Matrix)
+-                {
+-                    for (int I = 1; I < Matrix.Frames.Count && I <= Animation.FramesCount; I++)
+-                    {
+-                        AddStep(I);
+-                    }
+-                }
+-            }
+-
+-            SortedDictionary<float, Pose> Poses = new SortedDictionary<float, Pose>();
+-            Pose Evaluate(float Frame)
+-            {
+-                if (!Poses.TryGetValue(Frame, out Pose Pose))
+-                {
+-                    Poses.Add(Frame, Pose = EvaluatePose(Elements, Frame));
+-                }
+-
+-                return Pose;
+-            }
+-
+-            foreach (float Frame in Frames)
+-            {
+-                Evaluate(Frame);
+-            }
+-
+-            void Refine(float A, float B, int Depth)
+-            {
+-                if (Steps.Contains(B) && A == MathF.BitDecrement(B))
+-                {
+-                    return;
+-                }
+-
+-                float Mid = A + (B - A) * 0.5f;
+-                if (Mid <= A || Mid >= B)
+-                {
+-                    return;
+-                }
+-
+-                Pose Lhs = Evaluate(A), Rhs = Evaluate(B), Truth = EvaluatePose(Elements, Mid);
+-                Matrix4x4[] Interpolated = new Matrix4x4[BoneNodes.Length];
+-                Matrix4x4[] World = new Matrix4x4[BoneNodes.Length];
+-                bool[] Done = new bool[BoneNodes.Length];
+-                for (int I = 0; I < Interpolated.Length; I++)
+-                {
+-                    Interpolated[I] = Matrix4x4.Lerp(Lhs.Local[I], Rhs.Local[I], 0.5f);
+-                }
+-
+-                Matrix4x4 Resolve(int I)
+-                {
+-                    if (Done[I])
+-                    {
+-                        return World[I];
+-                    }
+-
+-                    int Parent = Model.Skeleton[I].ParentIndex;
+-                    World[I] = Parent < 0 ? Interpolated[I] : Interpolated[I] * Resolve(Parent);
+-                    Done[I] = true;
+-                    return World[I];
+-                }
+-
+-                bool Acceptable = true;
+-                for (int I = 0; I < BoneNodes.Length; I++)
+-                {
+-                    Acceptable &= Error(Interpolated[I], Truth.Local[I]) <= Options.MatrixTolerance && Error(Resolve(I), Truth.World[I]) <= Options.MatrixTolerance;
+-                }
+-
+-                if (Acceptable)
+-                {
+-                    return;
+-                }
+-
+-                if (Depth >= Options.MaxSubdivisionDepth)
+-                {
+-                    Warn("Animation bake reached the subdivision limit; increase MaxSubdivisionDepth or relax MatrixTolerance for this clip.");
+-                    return;
+-                }
+-
+-                Poses.Add(Mid, Truth);
+-                Refine(A, Mid, Depth + 1);
+-                Refine(Mid, B, Depth + 1);
+-            }
+-
+-            float[] Initial = Frames.ToArray();
+-            for (int I = 1; I < Initial.Length; I++)
+-            {
+-                Refine(Initial[I - 1], Initial[I], 0);
+-            }
+-
+-            float[] Samples = Poses.Keys.ToArray();
+-            Output.library_animations = new List<DAEAnimation>();
+-            for (int Bone = 0; Bone < BoneNodes.Length; Bone++)
+-            {
+-                DAEAnimation Track = new DAEAnimation
+-                {
+-                    id = Prefix + "animation_" + Bone,
+-                    name = System.Xml.XmlConvert.EncodeLocalName(Animation.Name + "_" + Model.Skeleton[Bone].Name)
+-                };
+-                string[] Interpolation = Samples.Select((Frame, I) => I + 1 < Samples.Length && Steps.Contains(Samples[I + 1]) && Frame == MathF.BitDecrement(Samples[I + 1]) ? "STEP" : "LINEAR").ToArray();
+-                Track.src.Add(new DAESource(Track.id + "_time", 1, Samples.Select(F => ((double)F / Options.FramesPerSecond).ToString("R", CultureInfo.InvariantCulture)).ToArray(), "TIME", "float"));
+-                Track.src.Add(new DAESource(Track.id + "_pose", 16, Samples.Select(F => MatrixText(Poses[F].Local[Bone])).ToArray(), "TRANSFORM", "float4x4"));
+-                Track.src.Add(new DAESource(Track.id + "_interpolation", 1, Interpolation, "INTERPOLATION", "Name"));
+-                Track.sampler.id = Track.id + "_sampler";
+-                Track.sampler.AddInput("INPUT", "#" + Track.src[0].id);
+-                Track.sampler.AddInput("OUTPUT", "#" + Track.src[1].id);
+-                Track.sampler.AddInput("INTERPOLATION", "#" + Track.src[2].id);
+-                Track.channel.source = "#" + Track.sampler.id;
+-                Track.channel.target = BoneId(Bone) + "/transform";
+-                Output.library_animations.Add(Track);
+-            }
+-
+-            Output.extra.Add(Extra("animation_bake", new
+-            {
+-                Options.FramesPerSecond,
+-                Options.SamplesPerFrame,
+-                Options.MatrixTolerance,
+-                Options.MaxSubdivisionDepth,
+-                sampleCount = Samples.Length,
+-                interpolation = "matrix",
+-                endTime = Animation.FramesCount / Options.FramesPerSecond
+-            }));
+-        }
+-
+-        private Pose EvaluatePose(H3DAnimationElement[] Elements, float Frame)
+-        {
+-            int Count = BoneNodes.Length;
+-            Vector3[] Scales = new Vector3[Count];
+-            Vector3[] Translations = new Vector3[Count];
+-            Matrix4x4[] Rotations = new Matrix4x4[Count];
+-            bool[] MatrixWorld = new bool[Count];
+-            Pose Pose = new Pose
+-            {
+-                Local = new Matrix4x4[Count],
+-                World = new Matrix4x4[Count]
+-            };
+-            for (int I = 0; I < Count; I++)
+-            {
+-                H3DBone Bone = Model.Skeleton[I];
+-                Scales[I] = Bone.Scale;
+-                Translations[I] = Bone.Translation;
+-                Vector3 Euler = Bone.Rotation;
+-                if (Elements[I]?.Content is H3DAnimTransform Transform)
+-                {
+-                    Scales[I] = new Vector3(Value(Transform.ScaleX, Frame, Scales[I].X), Value(Transform.ScaleY, Frame, Scales[I].Y), Value(Transform.ScaleZ, Frame, Scales[I].Z));
+-                    Translations[I] = new Vector3(Value(Transform.TranslationX, Frame, Translations[I].X), Value(Transform.TranslationY, Frame, Translations[I].Y), Value(Transform.TranslationZ, Frame, Translations[I].Z));
+-                    Euler = new Vector3(Value(Transform.RotationX, Frame, Euler.X), Value(Transform.RotationY, Frame, Euler.Y), Value(Transform.RotationZ, Frame, Euler.Z));
+-                }
+-
+-                Rotations[I] = Matrix4x4.CreateRotationX(Euler.X) * Matrix4x4.CreateRotationY(Euler.Y) * Matrix4x4.CreateRotationZ(Euler.Z);
+-                if (Elements[I]?.Content is H3DAnimQuatTransform Quaternion)
+-                {
+-                    int F = (int)Frame;
+-                    float Weight = Frame - F;
+-                    if (Quaternion.HasScale)
+-                    {
+-                        Scales[I] = Vector3.Lerp(Quaternion.GetScaleValue(F), Quaternion.GetScaleValue(F + 1), Weight);
+-                    }
+-
+-                    if (Quaternion.HasTranslation)
+-                    {
+-                        Translations[I] = Vector3.Lerp(Quaternion.GetTranslationValue(F), Quaternion.GetTranslationValue(F + 1), Weight);
+-                    }
+-
+-                    if (Quaternion.HasRotation)
+-                    {
+-                        Quaternion Rotation = System.Numerics.Quaternion.Slerp(Quaternion.GetRotationValue(F), Quaternion.GetRotationValue(F + 1), Weight);
+-                        if (Rotation.LengthSquared() == 0)
+-                        {
+-                            throw new InvalidDataException("Zero-length quaternion in animation.");
+-                        }
+-
+-                        Rotations[I] = Matrix4x4.CreateFromQuaternion(System.Numerics.Quaternion.Normalize(Rotation));
+-                    }
+-                }
+-
+-                if (Elements[I]?.Content is H3DAnimMtxTransform Matrix)
+-                {
+-                    if (Matrix.Frames.Count == 0)
+-                    {
+-                        throw new InvalidDataException("Empty matrix animation track.");
+-                    }
+-
+-                    Pose.World[I] = Affine(Matrix.GetTransform((int)Frame));
+-                    MatrixWorld[I] = true;
+-                }
+-            }
+-
+-            bool[] Done = new bool[Count];
+-            Matrix4x4 Resolve(int I)
+-            {
+-                if (Done[I])
+-                {
+-                    return Pose.World[I];
+-                }
+-
+-                H3DBone Bone = Model.Skeleton[I];
+-                int Parent = Bone.ParentIndex;
+-                Matrix4x4 ParentWorld = Parent < 0 ? Matrix4x4.Identity : Resolve(Parent);
+-                if (!MatrixWorld[I])
+-                {
+-                    bool Compensate = Parent >= 0 && (Bone.Flags & H3DBoneFlags.IsSegmentScaleCompensate) != 0;
+-                    Pose.Local[I] = Matrix4x4.CreateScale(Scales[I]) * Rotations[I] * Matrix4x4.CreateTranslation(Compensate ? Translations[I] * Scales[Parent] : Translations[I]);
+-                    if (Compensate)
+-                    {
+-                        if (Scales[Parent].X == 0 || Scales[Parent].Y == 0 || Scales[Parent].Z == 0)
+-                        {
+-                            throw new InvalidDataException("Segment scale compensation has a zero parent scale.");
+-                        }
+-
+-                        Pose.Local[I] *= Matrix4x4.CreateScale(Vector3.One / Scales[Parent]);
+-                    }
+-
+-                    Pose.World[I] = Pose.Local[I] * ParentWorld;
+-                }
+-                else
+-                {
+-                    if (!Matrix4x4.Invert(ParentWorld, out Matrix4x4 InverseParent))
+-                    {
+-                        throw new InvalidDataException("Cannot convert world-space matrix animation through a singular parent transform.");
+-                    }
+-
+-                    Pose.Local[I] = Pose.World[I] * InverseParent;
+-                }
+-
+-                Done[I] = true;
+-                return Pose.World[I];
+-            }
+-
+-            for (int I = 0; I < Count; I++)
+-            {
+-                Resolve(I);
+-            }
+-
+-            return Pose;
+-        }
+-
+-        private static float Value(H3DFloatKeyFrameGroup Group, float Frame, float Fallback)
+-        {
+-            return Group.Exists ? Group.GetFrameValue(Frame) : Fallback;
+-        }
+-
+-        private static IEnumerable<H3DFloatKeyFrameGroup> Groups(H3DAnimTransform T)
+-        {
+-            return new[]
+-            {
+-                T.ScaleX,
+-                T.ScaleY,
+-                T.ScaleZ,
+-                T.RotationX,
+-                T.RotationY,
+-                T.RotationZ,
+-                T.TranslationX,
+-                T.TranslationY,
+-                T.TranslationZ
+-            };
+-        }
+-
+-        private static float Error(Matrix4x4 A, Matrix4x4 B)
+-        {
+-            Matrix4x4 D = A - B;
+-            return new[]
+-            {
+-                D.M11,
+-                D.M12,
+-                D.M13,
+-                D.M14,
+-                D.M21,
+-                D.M22,
+-                D.M23,
+-                D.M24,
+-                D.M31,
+-                D.M32,
+-                D.M33,
+-                D.M34,
+-                D.M41,
+-                D.M42,
+-                D.M43,
+-                D.M44
+-            }.Max(Math.Abs);
+-        }
+-    }
+-}
+-
+-
+diff --git a/SPICA/Formats/Generic/COLLADA/DAEExporter.cs b/SPICA/Formats/Generic/COLLADA/DAEExporter.cs
+deleted file mode 100644
+index 256484e..0000000
+--- a/SPICA/Formats/Generic/COLLADA/DAEExporter.cs
++++ /dev/null
+@@ -1,908 +0,0 @@
+-using SPICA.Formats.CtrH3D;
+-using SPICA.Formats.CtrH3D.Animation;
+-using SPICA.Formats.CtrH3D.Model;
+-using SPICA.Formats.CtrH3D.Model.Material;
+-using SPICA.Formats.CtrH3D.Model.Mesh;
+-using SPICA.Formats.CtrH3D.Texture;
+-using SPICA.Math3D;
+-using SPICA.PICA.Commands;
+-using SPICA.PICA.Converters;
+-
+-using System;
+-using System.Collections.Generic;
+-using System.Globalization;
+-using System.IO;
+-using System.Linq;
+-using System.Numerics;
+-using System.Text.Json;
+-using System.Text.Json.Serialization;
+-using System.Xml;
+-
+-namespace SPICA.Formats.Generic.COLLADA
+-{
+-    internal sealed partial class DAEExporter
+-    {
+-        private readonly DAE Output;
+-        private readonly H3D Scene;
+-        private readonly H3DModel Model;
+-        private readonly int AnimationIndex;
+-        private readonly DAEExportOptions Options;
+-        private readonly string Prefix;
+-        private readonly Dictionary<string, string> ImageIds = new Dictionary<string, string>();
+-        private Matrix4x4[] BindWorld;
+-        private Matrix4x4[] InverseBind;
+-        private DAENode[] BoneNodes;
+-        private DAENode ModelNode;
+-        public DAEExporter(DAE Output, H3D Scene, int ModelIndex, int AnimationIndex, DAEExportOptions Options)
+-        {
+-            this.Output = Output;
+-            this.Scene = Scene ?? throw new ArgumentNullException(nameof(Scene));
+-            this.Options = Options ?? throw new ArgumentNullException(nameof(Options));
+-            Options.Validate();
+-            if (ModelIndex == -1 && AnimationIndex >= 0 && Scene.Models.Count > 0)
+-            {
+-                ModelIndex = 0;
+-            }
+-
+-            if (ModelIndex < 0 || ModelIndex >= Scene.Models.Count)
+-            {
+-                throw new ArgumentOutOfRangeException(nameof(ModelIndex), "Choose the model to export, including for animation exports.");
+-            }
+-
+-            if (AnimationIndex < -1 || AnimationIndex >= Scene.SkeletalAnimations.Count)
+-            {
+-                throw new ArgumentOutOfRangeException(nameof(AnimationIndex));
+-            }
+-
+-            Model = Scene.Models[ModelIndex];
+-            this.AnimationIndex = AnimationIndex;
+-            Prefix = "m" + ModelIndex.ToString(CultureInfo.InvariantCulture) + "_";
+-        }
+-
+-        public void Export()
+-        {
+-            DAEVisualScene Visual = new DAEVisualScene
+-            {
+-                id = Prefix + "scene",
+-                name = XmlConvert.EncodeLocalName(Model.Name)
+-            };
+-            ModelNode = new DAENode
+-            {
+-                id = Prefix + "model",
+-                name = XmlConvert.EncodeLocalName(Model.Name),
+-                matrix = CreateMatrix(Model.WorldTransform),
+-                Nodes = new List<DAENode>()
+-            };
+-            if (Model.WorldTransform.Equals(default(Matrix3x4)))
+-            {
+-                ModelNode.matrix = DAEMatrix.Identity;
+-            }
+-
+-            Visual.node.Add(ModelNode);
+-            Output.library_visual_scenes = new List<DAEVisualScene>
+-            {
+-                Visual
+-            };
+-            Output.scene.instance_visual_scene.url = "#" + Visual.id;
+-            ExportImages();
+-            ExportMaterials();
+-            ExportSkeleton();
+-            ExportMeshes();
+-            if (AnimationIndex >= 0 && Options.ExportSkinning)
+-            {
+-                ExportAnimation(Scene.SkeletalAnimations[AnimationIndex]);
+-            }
+-
+-            if (AnimationIndex >= 0 && !Options.ExportSkinning)
+-            {
+-                Warn("Blender-compatible export writes static meshes. Enable ExportSkinning to include the skeleton and animation.");
+-            }
+-
+-            if (Scene.MaterialAnimations.Count > 0 || Scene.VisibilityAnimations.Count > 0)
+-            {
+-                Warn("Material and visibility animations are not represented by this skeletal DAE export.");
+-            }
+-
+-            Output.extra.Add(Extra("export_report", new
+-            {
+-                version = 1,
+-                model = Model.Name,
+-                Options.FramesPerSecond,
+-                Options.SamplesPerFrame,
+-                warnings = Output.ExportWarnings.ToArray()
+-            }));
+-            if (Output.library_images.Count == 0)
+-            {
+-                Output.library_images = null;
+-            }
+-
+-            if (Output.library_materials.Count == 0)
+-            {
+-                Output.library_materials = null;
+-            }
+-
+-            if (Output.library_effects.Count == 0)
+-            {
+-                Output.library_effects = null;
+-            }
+-
+-            if (Output.library_geometries.Count == 0)
+-            {
+-                Output.library_geometries = null;
+-            }
+-
+-            if (Output.library_controllers.Count == 0)
+-            {
+-                Output.library_controllers = null;
+-            }
+-
+-            if (Output.library_animations?.Count == 0)
+-            {
+-                Output.library_animations = null;
+-            }
+-        }
+-
+-        private void ExportImages()
+-        {
+-            Output.library_images = new List<DAEImage>();
+-            for (int I = 0; I < Scene.Textures.Count; I++)
+-            {
+-                H3DTexture Texture = Scene.Textures[I];
+-                string Id = Prefix + "image_" + I;
+-                ImageIds.Add(Texture.Name, Id);
+-                string File = Id + ".png";
+-                Output.library_images.Add(new DAEImage { id = Id, init_from = File });
+-                if (Options.ExportTextures)
+-                {
+-                    Output.ExportTextures.Add(Tuple.Create(Texture, File));
+-                }
+-
+-                if (Texture.IsCubeTexture)
+-                {
+-                    Warn("Cubemap '" + Texture.Name + "' uses its +X face in standard COLLADA; the other faces are exported separately.");
+-                }
+-
+-                if (Texture.IsCubeTexture && Options.ExportTextures)
+-                {
+-                    for (int Face = 1; Face < 6; Face++)
+-                    {
+-                        Output.ExportTextureFaces.Add(Tuple.Create(Texture, Id + "_face" + Face + ".png", Face));
+-                    }
+-                }
+-            }
+-        }
+-
+-        private static DAEPhongDiffuse Color(RGBA Color)
+-        {
+-            return new DAEPhongDiffuse
+-            {
+-                color = new DAEVector4
+-                {
+-                    data = DAEUtils.VectorStr(new Vector4(Color.R / 255f, Color.G / 255f, Color.B / 255f, Color.A / 255f))
+-                }
+-            };
+-        }
+-
+-        private void ExportMaterials()
+-        {
+-            Output.library_materials = new List<DAEMaterial>();
+-            Output.library_effects = new List<DAEEffect>();
+-            foreach (H3DMaterial Material in Model.Materials)
+-            {
+-                int Index = Output.library_materials.Count;
+-                DAEEffect Effect = new DAEEffect
+-                {
+-                    id = Prefix + "effect_" + Index,
+-                    name = XmlConvert.EncodeLocalName(Material.Name)
+-                };
+-                H3DMaterialParams Parameters = Material.MaterialParams;
+-                DAEPhong Phong = Effect.profile_COMMON.technique.phong;
+-                Effect.profile_COMMON.technique.sid = "common";
+-                Phong.emission = Color(Parameters.EmissionColor);
+-                Phong.ambient = Color(Parameters.AmbientColor);
+-                Phong.diffuse = Color(Parameters.DiffuseColor);
+-                Phong.specular = Color(Parameters.Specular0Color);
+-                string[] Names =
+-                {
+-                    Material.Texture0Name,
+-                    Material.Texture1Name,
+-                    Material.Texture2Name
+-                };
+-                int FirstTexture = -1;
+-                for (int Slot = 0; Slot < 3; Slot++)
+-                {
+-                    if (string.IsNullOrEmpty(Names[Slot]))
+-                    {
+-                        continue;
+-                    }
+-
+-                    if (!ImageIds.TryGetValue(Names[Slot], out string Image))
+-                    {
+-                        Warn("Material '" + Material.Name + "' references missing texture '" + Names[Slot] + "'.");
+-                        continue;
+-                    }
+-
+-                    string Surface = "surface_" + Slot, Sampler = "sampler_" + Slot;
+-                    H3DTextureMapper Mapper = Material.TextureMappers[Slot];
+-                    Effect.profile_COMMON.newparam.Add(new DAEEffectParam
+-                    {
+-                        sid = Surface,
+-                        surface = new DAEEffectParamSurfaceElement
+-                        {
+-                            type = "2D",
+-                            init_from = Image,
+-                            format = "PNG"
+-                        }
+-                    });
+-
+-                    Effect.profile_COMMON.newparam.Add(new DAEEffectParam
+-                    {
+-                        sid = Sampler,
+-                        sampler2D = new DAEEffectParamSampler2DElement
+-                        {
+-                            source = Surface,
+-                            wrap_s = Mapper.WrapU.ToDAEWrap(),
+-                            wrap_t = Mapper.WrapV.ToDAEWrap(),
+-                            minfilter = Mapper.MinFilter.ToDAEFilter(),
+-                            magfilter = Mapper.MagFilter.ToDAEFilter(),
+-                            mipfilter = DAEFilter.LINEAR
+-                        }
+-                    });
+-                    if (Material.EnabledTextures[Slot] && FirstTexture < 0)
+-                    {
+-                        FirstTexture = Slot;
+-                    }
+-                }
+-
+-                if (FirstTexture >= 0)
+-                {
+-                    Phong.diffuse = new DAEPhongDiffuse
+-                    {
+-                        texture = new DAEPhongDiffuseTexture
+-                        {
+-                            texture = "sampler_" + FirstTexture,
+-                            texcoord = "UV" + FirstTexture
+-                        }
+-                    };
+-                    if (Parameters.AlphaTest.Enabled || Parameters.DiffuseColor.A < 255)
+-                    {
+-                        Phong.transparent = new DAEPhongDiffuse
+-                        {
+-                            opaque = "A_ONE",
+-                            texture = new DAEPhongDiffuseTexture
+-                            {
+-                                texture = "sampler_" + FirstTexture,
+-                                texcoord = "UV" + FirstTexture
+-                            }
+-                        };
+-                    }
+-                }
+-                else if (Parameters.DiffuseColor.A < 255)
+-                {
+-                    Phong.transparent = Color(Parameters.DiffuseColor);
+-                    Phong.transparent.opaque = "A_ONE";
+-                }
+-
+-                Effect.extra.Add(Extra("pica_material", new
+-                {
+-                    Material.Name,
+-                    textureNames = Names,
+-                    Material.EnabledTextures,
+-                    Material.TextureMappers,
+-                    Parameters.TextureCoords,
+-                    Parameters.TextureSources,
+-                    Parameters.TexCoordConfig,
+-                    Parameters.EmissionColor,
+-                    Parameters.AmbientColor,
+-                    Parameters.DiffuseColor,
+-                    Parameters.Specular0Color,
+-                    Parameters.Specular1Color,
+-                    Parameters.Constant0Color,
+-                    Parameters.Constant1Color,
+-                    Parameters.Constant2Color,
+-                    Parameters.Constant3Color,
+-                    Parameters.Constant4Color,
+-                    Parameters.Constant5Color,
+-                    Parameters.ColorScale,
+-                    Parameters.TexEnvStages,
+-                    Parameters.TexEnvBufferColor,
+-                    Parameters.ColorOperation,
+-                    Parameters.BlendFunction,
+-                    Parameters.BlendColor,
+-                    Parameters.AlphaTest,
+-                    Parameters.DepthColorMask,
+-                    Parameters.StencilTest,
+-                    Parameters.StencilOperation,
+-                    Parameters.FaceCulling,
+-                    Parameters.BumpMode,
+-                    Parameters.BumpTexture,
+-                    Parameters.ShaderReference,
+-                    Parameters.VtxShaderUniforms,
+-                    Parameters.GeoShaderUniforms,
+-                    Parameters.LUTDist0TableName,
+-                    Parameters.LUTDist1TableName,
+-                    Parameters.LUTFresnelTableName,
+-                    Parameters.LUTReflecRTableName,
+-                    Parameters.LUTReflecGTableName,
+-                    Parameters.LUTReflecBTableName
+-                }));
+-                Warn("Material '" + Material.Name + "' uses a standard shading fallback. Original PICA material state is stored in SPICA extras; generic importers do not reproduce the game shader.");
+-                Output.library_effects.Add(Effect);
+-                Output.library_materials.Add(new DAEMaterial
+-                {
+-                    id = Prefix + "material_" + Index,
+-                    name = XmlConvert.EncodeLocalName(Material.Name),
+-                    instance_effect = new DAEInstanceEffect
+-                    {
+-                        url = "#" + Effect.id
+-                    }
+-                });
+-            }
+-        }
+-
+-        private void ExportSkeleton()
+-        {
+-            int Count = Model.Skeleton.Count;
+-            BindWorld = new Matrix4x4[Count];
+-            InverseBind = new Matrix4x4[Count];
+-            BoneNodes = new DAENode[Count];
+-            byte[] State = new byte[Count];
+-            Matrix4x4 Resolve(int I)
+-            {
+-                if (State[I] == 2)
+-                {
+-                    return BindWorld[I];
+-                }
+-
+-                if (State[I] == 1)
+-                {
+-                    throw new InvalidDataException("Skeleton contains a parent cycle at '" + Model.Skeleton[I].Name + "'.");
+-                }
+-
+-                State[I] = 1;
+-                H3DBone Bone = Model.Skeleton[I];
+-                int Parent = Bone.ParentIndex;
+-                if (Parent < -1 || Parent >= Count)
+-                {
+-                    throw new InvalidDataException("Invalid parent for bone '" + Bone.Name + "'.");
+-                }
+-
+-                Matrix4x4 ParentWorld = Parent < 0 ? Matrix4x4.Identity : Resolve(Parent);
+-                InverseBind[I] = Affine(Bone.InverseTransform);
+-                if (!Matrix4x4.Invert(InverseBind[I], out BindWorld[I]))
+-                {
+-                    BindWorld[I] = Bone.Transform * ParentWorld;
+-                    if (!Matrix4x4.Invert(BindWorld[I], out InverseBind[I]))
+-                    {
+-                        throw new InvalidDataException("Singular bind transform for bone '" + Bone.Name + "'.");
+-                    }
+-
+-                    Warn("Bone '" + Bone.Name + "' has no usable inverse bind matrix; its bind pose was reconstructed from local transforms.");
+-                }
+-
+-                State[I] = 2;
+-                return BindWorld[I];
+-            }
+-
+-            for (int I = 0; I < Count; I++)
+-            {
+-                Resolve(I);
+-            }
+-
+-            if (!Options.ExportSkinning)
+-            {
+-                return;
+-            }
+-
+-            for (int I = 0; I < Count; I++)
+-            {
+-                H3DBone Bone = Model.Skeleton[I];
+-                Matrix4x4 Local = BindWorld[I];
+-                if (Bone.ParentIndex >= 0)
+-                {
+-                    Local *= InverseBind[Bone.ParentIndex];
+-                }
+-
+-                BoneNodes[I] = new DAENode
+-                {
+-                    id = BoneId(I),
+-                    sid = "joint_" + I,
+-                    name = XmlConvert.EncodeLocalName(Bone.Name),
+-                    type = DAENodeType.JOINT,
+-                    matrix = CreateMatrix(Local),
+-                    Nodes = new List<DAENode>()
+-                };
+-                BoneNodes[I].matrix.sid = "transform";
+-                if (Bone.BillboardMode != H3DBillboardMode.Off)
+-                {
+-                    Warn("Bone '" + Bone.Name + "' is camera-facing; COLLADA exports its bind/animated transform without a runtime billboard constraint.");
+-                }
+-
+-                BoneNodes[I].extra.Add(Extra("bone", new
+-                {
+-                    originalName = Bone.Name,
+-                    Bone.Flags,
+-                    Bone.BillboardMode
+-                }));
+-            }
+-
+-            for (int I = 0; I < Count; I++)
+-            {
+-                int Parent = Model.Skeleton[I].ParentIndex;
+-                if (Parent < 0)
+-                {
+-                    ModelNode.Nodes.Add(BoneNodes[I]);
+-                }
+-                else
+-                {
+-                    BoneNodes[Parent].Nodes.Add(BoneNodes[I]);
+-                }
+-            }
+-        }
+-
+-        private void ExportMeshes()
+-        {
+-            Output.library_geometries = new List<DAEGeometry>();
+-            Output.library_controllers = new List<DAEController>();
+-            for (int M = 0; M < Model.Meshes.Count; M++)
+-            {
+-                H3DMesh Mesh = Model.Meshes[M];
+-                PICAVertex[] Decoded = Mesh.GetVertices();
+-                ApplyFixedAttributes(Mesh, Decoded);
+-                for (int S = 0; S < Mesh.SubMeshes.Count; S++)
+-                {
+-                    H3DSubMesh Sub = Mesh.SubMeshes[S];
+-                    ushort[] Triangles = Triangulate(Sub);
+-                    if (Triangles.Length == 0)
+-                    {
+-                        continue;
+-                    }
+-
+-                    ushort[] Original = Triangles.Distinct().ToArray();
+-                    if (Original.Any(I => I >= Decoded.Length))
+-                    {
+-                        throw new InvalidDataException("Mesh contains an out-of-range vertex index.");
+-                    }
+-
+-                    Dictionary<ushort, ushort> Remap = Original.Select((V, I) => (V, I)).ToDictionary(Pair => Pair.V, Pair => (ushort)Pair.I);
+-                    PICAVertex[] Vertices = Original.Select(I => Decoded[I]).ToArray();
+-                    bool HasBones = Sub.BoneIndicesCount > 0 && BoneNodes.Length > 0;
+-                    bool Skinned = HasBones && Options.ExportSkinning;
+-                    bool Smooth = Sub.Skinning == H3DSubMeshSkinning.Smooth;
+-                    if (HasBones && !Smooth)
+-                    {
+-                        for (int I = 0; I < Vertices.Length; I++)
+-                        {
+-                            int Bone = PaletteBone(Sub, Vertices[I].Indices[0]);
+-                            PICAVertex V = Vertices[I];
+-                            V.Position = Vector4.Transform(new Vector4(V.Position.X, V.Position.Y, V.Position.Z, 1), BindWorld[Bone]);
+-                            V.Normal = Direction(V.Normal, Matrix4x4.Transpose(InverseBind[Bone]));
+-                            V.Tangent = Direction(V.Tangent, BindWorld[Bone]);
+-                            Vertices[I] = V;
+-                        }
+-                    }
+-
+-                    string Id = Prefix + "mesh_" + M + "_" + S;
+-                    DAEGeometry Geometry = new DAEGeometry
+-                    {
+-                        id = Id,
+-                        name = XmlConvert.EncodeLocalName(MeshName(Mesh, M, S))
+-                    };
+-                    Geometry.mesh.vertices.id = Id + "_vertices";
+-                    Geometry.mesh.triangles.AddInput("VERTEX", "#" + Geometry.mesh.vertices.id);
+-                    Geometry.mesh.triangles.Set_p(Triangles.Select(I => Remap[I]).ToArray());
+-                    HashSet<PICAAttributeName> Attributes = new HashSet<PICAAttributeName>(Mesh.Attributes.Select(A => A.Name));
+-                    Attributes.UnionWith(Mesh.FixedAttributes.Select(A => A.Name));
+-                    if (!Attributes.Contains(PICAAttributeName.Position))
+-                    {
+-                        throw new InvalidDataException("Mesh has no position attribute.");
+-                    }
+-
+-                    AddAttribute(Geometry, "position", Vertices.Select(V => DAEUtils.Vector3Str(V.Position)), "POSITION", 3);
+-                    if (Attributes.Contains(PICAAttributeName.Normal))
+-                    {
+-                        AddAttribute(Geometry, "normal", Vertices.Select(V => DAEUtils.Vector3Str(V.Normal)), "NORMAL", 3);
+-                    }
+-
+-                    if (Attributes.Contains(PICAAttributeName.Tangent))
+-                    {
+-                        AddAttribute(Geometry, "tangent", Vertices.Select(V => DAEUtils.Vector3Str(V.Tangent)), "TEXTANGENT", 3);
+-                    }
+-
+-                    if (Attributes.Contains(PICAAttributeName.Color))
+-                    {
+-                        AddAttribute(Geometry, "color", Vertices.Select(V => DAEUtils.Vector4Str(V.Color)), "COLOR", 4);
+-                    }
+-
+-                    for (int Uv = 0; Uv < 3; Uv++)
+-                    {
+-                        PICAAttributeName Attribute = PICAAttributeName.TexCoord0 + (uint)Uv;
+-                        if (Attributes.Contains(Attribute))
+-                        {
+-                            AddAttribute(Geometry, "uv" + Uv, Vertices.Select(V => DAEUtils.Vector2Str(UV(V, Uv))), "TEXCOORD", 2, (uint)Uv);
+-                        }
+-                    }
+-
+-                    if (Mesh.MaterialIndex >= Output.library_materials.Count)
+-                    {
+-                        throw new InvalidDataException("Mesh '" + Geometry.name + "' references a missing material.");
+-                    }
+-
+-                    string Symbol = "material_" + Mesh.MaterialIndex;
+-                    Geometry.mesh.triangles.material = Symbol;
+-                    DAENode Node = new DAENode
+-                    {
+-                        id = Id + "_node",
+-                        name = Geometry.name,
+-                        matrix = DAEMatrix.Identity
+-                    };
+-                    DAENodeInstance Instance = new DAENodeInstance();
+-                    Instance.bind_material.technique_common.instance_material.symbol = Symbol;
+-                    Instance.bind_material.technique_common.instance_material.target = "#" + Output.library_materials[Mesh.MaterialIndex].id;
+-                    BindTextureCoordinates(Mesh, Vertices, Geometry, Instance);
+-                    if (Skinned)
+-                    {
+-                        DAEController Controller = ExportController(Id, Sub, Vertices);
+-                        Output.library_controllers.Add(Controller);
+-                        Instance.url = "#" + Controller.id;
+-                        Instance.skeleton.AddRange(Enumerable.Range(0, BoneNodes.Length).Where(I => Model.Skeleton[I].ParentIndex < 0).Select(I => "#" + BoneId(I)));
+-                        Node.instance_controller = Instance;
+-                    }
+-                    else
+-                    {
+-                        Instance.url = "#" + Id;
+-                        Node.instance_geometry = Instance;
+-                    }
+-
+-                    Node.extra.Add(Extra("mesh", new
+-                    {
+-                        Mesh.Type,
+-                        Mesh.Layer,
+-                        Mesh.Priority,
+-                        Mesh.NodeIndex,
+-                        Sub.Skinning,
+-                        visible = Mesh.NodeIndex >= Model.MeshNodesVisibility.Count || Model.MeshNodesVisibility[Mesh.NodeIndex]
+-                    }));
+-                    Output.library_geometries.Add(Geometry);
+-                    ModelNode.Nodes.Add(Node);
+-                }
+-            }
+-        }
+-
+-        private void BindTextureCoordinates(H3DMesh Mesh, PICAVertex[] Vertices, DAEGeometry Geometry, DAENodeInstance Instance)
+-        {
+-            H3DMaterial Material = Model.Materials[Mesh.MaterialIndex];
+-            for (int Slot = 0; Slot < 3; Slot++)
+-            {
+-                string Name = Slot == 0 ? Material.Texture0Name : Slot == 1 ? Material.Texture1Name : Material.Texture2Name;
+-                if (string.IsNullOrEmpty(Name))
+-                {
+-                    continue;
+-                }
+-
+-                int Coordinate = Slot;
+-                H3DTexCoordConfig Config = Material.MaterialParams.TexCoordConfig;
+-                if (Slot == 2 && (Config == H3DTexCoordConfig.Config0110 || Config == H3DTexCoordConfig.Config0111 || Config == H3DTexCoordConfig.Config0112))
+-                {
+-                    Coordinate = 1;
+-                }
+-
+-                int Source = (int)Material.MaterialParams.TextureSources[Coordinate];
+-                H3DTextureCoord Coord = Material.MaterialParams.TextureCoords[Coordinate];
+-                if (Source < 0 || Source > 2 || Coord.MappingType != H3DTextureMappingType.UvCoordinateMap)
+-                {
+-                    Warn("Material '" + Material.Name + "' texture " + Slot + " uses generated coordinates; its mapping is preserved in SPICA extras.");
+-                    continue;
+-                }
+-
+-                uint Set = (uint)(3 + Slot);
+-                Matrix4x4 Transform = Affine(Coord.GetTransform());
+-                AddAttribute(Geometry, "mapped_uv" + Slot, Vertices.Select(V => DAEUtils.Vector2Str(Vector4.Transform(new Vector4(UV(V, Source).X, UV(V, Source).Y, 0, 1), Transform))), "TEXCOORD", 2, Set);
+-                Instance.bind_material.technique_common.instance_material.bind_vertex_input.Add(new DAEBindVertexInput { semantic = "UV" + Slot, input_set = Set });
+-            }
+-        }
+-
+-        private DAEController ExportController(string Id, H3DSubMesh Sub, PICAVertex[] Vertices)
+-        {
+-            DAEController Controller = new DAEController
+-            {
+-                id = Id + "_skin",
+-                name = Id + "_skin"
+-            };
+-            DAESkin Skin = Controller.skin;
+-            Skin.source = "#" + Id;
+-            List<string> Weights = new List<string>();
+-            List<int> Pairs = new List<int>();
+-            List<int> Counts = new List<int>();
+-            foreach (PICAVertex Vertex in Vertices)
+-            {
+-                int Count = 0;
+-                float Total = 0;
+-                for (int Influence = 0; Influence < (Sub.Skinning == H3DSubMeshSkinning.Smooth ? 4 : 1); Influence++)
+-                {
+-                    float Weight = Sub.Skinning == H3DSubMeshSkinning.Smooth ? Vertex.Weights[Influence] : 1;
+-                    if (!float.IsFinite(Weight) || Weight < 0)
+-                    {
+-                        throw new InvalidDataException("Invalid skin weight.");
+-                    }
+-
+-                    if (Weight == 0)
+-                    {
+-                        continue;
+-                    }
+-
+-                    Pairs.Add(PaletteBone(Sub, Vertex.Indices[Influence]));
+-                    Pairs.Add(Weights.Count);
+-                    Weights.Add(F(Weight));
+-                    Total += Weight;
+-                    Count++;
+-                }
+-
+-                if (Count == 0)
+-                {
+-                    throw new InvalidDataException("Smooth-skinned vertex has no nonzero bone weights.");
+-                }
+-
+-                if (Math.Abs(Total - 1) > 0.0001f)
+-                {
+-                    Warn("Non-normalized skin weights were preserved; an importing application may normalize them.");
+-                }
+-
+-                Counts.Add(Count);
+-            }
+-
+-            Skin.src.Add(new DAESource(Id + "_joints", 1, BoneNodes.Select(N => N.sid).ToArray(), "JOINT", "Name"));
+-            Skin.src.Add(new DAESource(Id + "_binds", 16, InverseBind.Select(MatrixText).ToArray(), "TRANSFORM", "float4x4"));
+-            Skin.src.Add(new DAESource(Id + "_weights", 1, Weights.ToArray(), "WEIGHT", "float"));
+-            Skin.joints.AddInput("JOINT", "#" + Skin.src[0].id);
+-            Skin.joints.AddInput("INV_BIND_MATRIX", "#" + Skin.src[1].id);
+-            Skin.vertex_weights.count = (uint)Vertices.Length;
+-            Skin.vertex_weights.AddInput("JOINT", "#" + Skin.src[0].id, 0);
+-            Skin.vertex_weights.AddInput("WEIGHT", "#" + Skin.src[2].id, 1);
+-            Skin.vertex_weights.vcount = string.Join(" ", Counts);
+-            Skin.vertex_weights.v = string.Join(" ", Pairs);
+-            return Controller;
+-        }
+-
+-        private int PaletteBone(H3DSubMesh Sub, int Index)
+-        {
+-            if (Index < 0 || Index >= Sub.BoneIndicesCount || Sub.BoneIndices[Index] >= BoneNodes.Length)
+-            {
+-                throw new InvalidDataException("Submesh references an invalid bone palette entry.");
+-            }
+-
+-            return Sub.BoneIndices[Index];
+-        }
+-
+-        private static void AddAttribute(DAEGeometry Geometry, string Name, IEnumerable<string> Values, string Semantic, int Stride, uint Set = 0)
+-        {
+-            string[] Parameters = Stride == 2 ? new[]
+-            {
+-                "S",
+-                "float",
+-                "T",
+-                "float"
+-            }
+-
+-            : Stride == 3 ? new[]
+-            {
+-                "X",
+-                "float",
+-                "Y",
+-                "float",
+-                "Z",
+-                "float"
+-            }
+-
+-            : new[]
+-            {
+-                "R",
+-                "float",
+-                "G",
+-                "float",
+-                "B",
+-                "float",
+-                "A",
+-                "float"
+-            };
+-            DAESource Source = new DAESource(Geometry.id + "_" + Name, Stride, Values.ToArray(), Parameters);
+-            Geometry.mesh.source.Add(Source);
+-            if (Semantic == "POSITION")
+-            {
+-                Geometry.mesh.vertices.AddInput(Semantic, "#" + Source.id);
+-            }
+-            else
+-            {
+-                Geometry.mesh.triangles.AddInput(Semantic, "#" + Source.id, 0, Set);
+-            }
+-        }
+-
+-        private static Vector4 UV(PICAVertex Vertex, int Set)
+-        {
+-            return Set == 0 ? Vertex.TexCoord0 : Set == 1 ? Vertex.TexCoord1 : Vertex.TexCoord2;
+-        }
+-
+-        private static Vector4 Direction(Vector4 Value, Matrix4x4 Transform)
+-        {
+-            Vector3 Result = Vector3.TransformNormal(new Vector3(Value.X, Value.Y, Value.Z), Transform);
+-            if (Result.LengthSquared() > 0)
+-            {
+-                Result = Vector3.Normalize(Result);
+-            }
+-
+-            return new Vector4(Result, 0);
+-        }
+-
+-        private static void ApplyFixedAttributes(H3DMesh Mesh, PICAVertex[] Vertices)
+-        {
+-            for (int I = 0; I < Vertices.Length; I++)
+-            {
+-                PICAVertex V = Vertices[I];
+-                foreach (PICAFixedAttribute Attribute in Mesh.FixedAttributes)
+-                {
+-                    PICAVectorFloat24 A = Attribute.Value;
+-                    Vector4 Value = new Vector4(A.X, A.Y, A.Z, A.W);
+-                    switch (Attribute.Name)
+-                    {
+-                        case PICAAttributeName.Position:
+-                            V.Position = Value + Mesh.PositionOffset;
+-                            break;
+-                        case PICAAttributeName.Normal:
+-                            V.Normal = Value;
+-                            break;
+-                        case PICAAttributeName.Tangent:
+-                            V.Tangent = Value;
+-                            break;
+-                        case PICAAttributeName.Color:
+-                            V.Color = Value;
+-                            break;
+-                        case PICAAttributeName.TexCoord0:
+-                            V.TexCoord0 = Value;
+-                            break;
+-                        case PICAAttributeName.TexCoord1:
+-                            V.TexCoord1 = Value;
+-                            break;
+-                        case PICAAttributeName.TexCoord2:
+-                            V.TexCoord2 = Value;
+-                            break;
+-                        case PICAAttributeName.BoneIndex:
+-                            for (int J = 0; J < 4; J++)
+-                            {
+-                                V.Indices[J] = (int)Value[J];
+-                            }
+-
+-                            break;
+-                        case PICAAttributeName.BoneWeight:
+-                            for (int J = 0; J < 4; J++)
+-                            {
+-                                V.Weights[J] = Value[J];
+-                            }
+-
+-                            break;
+-                    }
+-                }
+-
+-                Vertices[I] = V;
+-            }
+-        }
+-
+-        private static ushort[] Triangulate(H3DSubMesh Sub)
+-        {
+-            if (Sub.Indices == null)
+-            {
+-                throw new InvalidDataException("Submesh has no index buffer.");
+-            }
+-
+-            if (Sub.PrimitiveMode == PICAPrimitiveMode.Triangles)
+-            {
+-                if (Sub.Indices.Length % 3 != 0)
+-                {
+-                    throw new InvalidDataException("Triangle index count is not divisible by three.");
+-                }
+-
+-                return Sub.Indices;
+-            }
+-
+-            if (Sub.PrimitiveMode != PICAPrimitiveMode.TriangleStrip && Sub.PrimitiveMode != PICAPrimitiveMode.TriangleFan)
+-            {
+-                throw new NotSupportedException("Geometry shader primitives require evaluating the original shader before COLLADA export.");
+-            }
+-
+-            List<ushort> Result = new List<ushort>();
+-            for (int I = 2; I < Sub.Indices.Length; I++)
+-            {
+-                ushort A = Sub.PrimitiveMode == PICAPrimitiveMode.TriangleFan ? Sub.Indices[0] : Sub.Indices[I - 2];
+-                ushort B = Sub.Indices[I - 1], C = Sub.Indices[I];
+-                if (Sub.PrimitiveMode == PICAPrimitiveMode.TriangleStrip && I % 2 != 0)
+-                {
+-                    (A, B) = (B, A);
+-                }
+-
+-                if (A == B || B == C || A == C)
+-                {
+-                    continue;
+-                }
+-
+-                Result.Add(A);
+-                Result.Add(B);
+-                Result.Add(C);
+-            }
+-
+-            return Result.ToArray();
+-        }
+-
+-        private string MeshName(H3DMesh Mesh, int M, int S)
+-        {
+-            string Name = Model.MeshNodesTree != null && Mesh.NodeIndex < Model.MeshNodesTree.Count ? Model.MeshNodesTree.Find(Mesh.NodeIndex) : "Mesh";
+-            return Name + "_" + M + "_" + S;
+-        }
+-
+-        private string BoneId(int I)
+-        {
+-            return Prefix + "bone_" + I;
+-        }
+-
+-        private void Warn(string Message)
+-        {
+-            if (!Output.ExportWarnings.Contains(Message))
+-            {
+-                Output.ExportWarnings.Add(Message);
+-            }
+-        }
+-
+-        private static string F(float Value)
+-        {
+-            if (!float.IsFinite(Value))
+-            {
+-                throw new InvalidDataException("Non-finite value cannot be exported to COLLADA.");
+-            }
+-
+-            return Value.ToString("R", CultureInfo.InvariantCulture);
+-        }
+-
+-        private static Matrix4x4 Affine(Matrix3x4 M)
+-        {
+-            return new Matrix4x4(M.M11, M.M12, M.M13, 0, M.M21, M.M22, M.M23, 0, M.M31, M.M32, M.M33, 0, M.M41, M.M42, M.M43, 1);
+-        }
+-
+-        private static DAEMatrix CreateMatrix(Matrix3x4 Matrix)
+-        {
+-            return CreateMatrix(Affine(Matrix));
+-        }
+-
+-        private static DAEMatrix CreateMatrix(Matrix4x4 Matrix)
+-        {
+-            return new DAEMatrix
+-            {
+-                data = MatrixText(Matrix)
+-            };
+-        }
+-
+-        private static string MatrixText(Matrix4x4 M)
+-        {
+-            return string.Join(" ", new[] { M.M11, M.M21, M.M31, M.M41, M.M12, M.M22, M.M32, M.M42, M.M13, M.M23, M.M33, M.M43, M.M14, M.M24, M.M34, M.M44 }.Select(F));
+-        }
+-
+-        private static DAEExtra Extra(string Name, object Value)
+-        {
+-            XmlDocument Document = new XmlDocument();
+-            XmlElement Element = Document.CreateElement(Name, "urn:spica:collada:1");
+-            Element.SetAttribute("encoding", "json");
+-            Element.InnerText = JsonSerializer.Serialize(Value, new JsonSerializerOptions
+-            {
+-                IncludeFields = true,
+-                Converters = { new JsonStringEnumConverter() }
+-            });
+-            DAEExtra Extra = new DAEExtra();
+-            Extra.technique.data.Add(Element);
+-            return Extra;
+-        }
+-
+-        private void ExportAnimation(H3DAnimation Animation)
+-        {
+-            ExportMatrixAnimation(Animation);
+-        }
+-    }
+-}
+-
+-
+diff --git a/SPICA/Formats/Generic/COLLADA/DAEGeometry.cs b/SPICA/Formats/Generic/COLLADA/DAEGeometry.cs
+deleted file mode 100644
+index 31e442e..0000000
+--- a/SPICA/Formats/Generic/COLLADA/DAEGeometry.cs
++++ /dev/null
+@@ -1,12 +0,0 @@
+-﻿using System.Xml.Serialization;
+-
+-namespace SPICA.Formats.Generic.COLLADA
+-{
+-    public class DAEGeometry
+-    {
+-        [XmlAttribute] public string id;
+-        [XmlAttribute] public string name;
+-
+-        public DAEMesh mesh = new DAEMesh();
+-    }
+-}
+diff --git a/SPICA/Formats/Generic/COLLADA/DAEImage.cs b/SPICA/Formats/Generic/COLLADA/DAEImage.cs
+deleted file mode 100644
+index 7728e5b..0000000
+--- a/SPICA/Formats/Generic/COLLADA/DAEImage.cs
++++ /dev/null
+@@ -1,12 +0,0 @@
+-﻿using System.Xml.Serialization;
+-
+-namespace SPICA.Formats.Generic.COLLADA
+-{
+-    public class DAEImage
+-    {
+-        [XmlAttribute] public string id;
+-        [XmlAttribute] public string name;
+-
+-        public string init_from;
+-    }
+-}
+diff --git a/SPICA/Formats/Generic/COLLADA/DAEInput.cs b/SPICA/Formats/Generic/COLLADA/DAEInput.cs
+deleted file mode 100644
+index a77855a..0000000
+--- a/SPICA/Formats/Generic/COLLADA/DAEInput.cs
++++ /dev/null
+@@ -1,10 +0,0 @@
+-﻿using System.Xml.Serialization;
+-
+-namespace SPICA.Formats.Generic.COLLADA
+-{
+-    public class DAEInput
+-    {
+-        [XmlAttribute] public string semantic;
+-        [XmlAttribute] public string source;
+-    }
+-}
+diff --git a/SPICA/Formats/Generic/COLLADA/DAEInputOffset.cs b/SPICA/Formats/Generic/COLLADA/DAEInputOffset.cs
+deleted file mode 100644
+index 4228f95..0000000
+--- a/SPICA/Formats/Generic/COLLADA/DAEInputOffset.cs
++++ /dev/null
+@@ -1,14 +0,0 @@
+-﻿using System.Xml.Serialization;
+-
+-namespace SPICA.Formats.Generic.COLLADA
+-{
+-    public class DAEInputOffset
+-    {
+-        [XmlAttribute] public string semantic;
+-        [XmlAttribute] public string source;
+-        [XmlAttribute] public uint   offset;
+-        [XmlAttribute] public uint   set;
+-
+-        public bool ShouldSerializeset() { return semantic == "TEXCOORD" || set != 0; }
+-    }
+-}
+diff --git a/SPICA/Formats/Generic/COLLADA/DAEMaterial.cs b/SPICA/Formats/Generic/COLLADA/DAEMaterial.cs
+deleted file mode 100644
+index ad00e2e..0000000
+--- a/SPICA/Formats/Generic/COLLADA/DAEMaterial.cs
++++ /dev/null
+@@ -1,17 +0,0 @@
+-﻿using System.Xml.Serialization;
+-
+-namespace SPICA.Formats.Generic.COLLADA
+-{
+-    public class DAEMaterial
+-    {
+-        [XmlAttribute] public string id;
+-        [XmlAttribute] public string name;
+-
+-        public DAEInstanceEffect instance_effect = new DAEInstanceEffect();
+-    }
+-
+-    public class DAEInstanceEffect
+-    {
+-        [XmlAttribute] public string url;
+-    }
+-}
+diff --git a/SPICA/Formats/Generic/COLLADA/DAEMatrix.cs b/SPICA/Formats/Generic/COLLADA/DAEMatrix.cs
+deleted file mode 100644
+index bec003c..0000000
+--- a/SPICA/Formats/Generic/COLLADA/DAEMatrix.cs
++++ /dev/null
+@@ -1,34 +0,0 @@
+-﻿using SPICA.Math3D;
+-
+-using System.Text;
+-using System.Xml.Serialization;
+-
+-namespace SPICA.Formats.Generic.COLLADA
+-{
+-    public class DAEMatrix
+-    {
+-        [XmlAttribute] public string sid;
+-
+-        [XmlText] public string data;
+-
+-        public static DAEMatrix Identity
+-        {
+-            get => new DAEMatrix() { data = "1 0 0 0 0 1 0 0 0 0 1 0 0 0 0 1" };
+-        }
+-
+-        public void Set(params Matrix3x4[] Matrices)
+-        {
+-            StringBuilder SB = new StringBuilder();
+-            
+-            for (int i = 0; i < Matrices.Length; i++)
+-            {
+-                if (i < Matrices.Length - 1)
+-                    SB.Append(DAEUtils.MatrixStr(Matrices[i]) + " ");
+-                else
+-                    SB.Append(DAEUtils.MatrixStr(Matrices[i]));
+-            }
+-
+-            data = SB.ToString();
+-        }
+-    }
+-}
+diff --git a/SPICA/Formats/Generic/COLLADA/DAEMesh.cs b/SPICA/Formats/Generic/COLLADA/DAEMesh.cs
+deleted file mode 100644
+index 5a8fe88..0000000
+--- a/SPICA/Formats/Generic/COLLADA/DAEMesh.cs
++++ /dev/null
+@@ -1,70 +0,0 @@
+-﻿using System.Collections.Generic;
+-using System.Globalization;
+-using System.Text;
+-using System.Xml.Serialization;
+-
+-namespace SPICA.Formats.Generic.COLLADA
+-{
+-    public class DAEMesh
+-    {
+-        [XmlElement("source")] public List<DAESource> source = new List<DAESource>();
+-
+-        public DAEVertices vertices = new DAEVertices();
+-        public DAETriangles triangles = new DAETriangles();
+-    }
+-
+-    public class DAEVertices
+-    {
+-        [XmlAttribute] public string id;
+-
+-        [XmlElement("input")] public List<DAEInput> input = new List<DAEInput>();
+-
+-        public void AddInput(string semantic, string source)
+-        {
+-            input.Add(new DAEInput()
+-            {
+-                semantic = semantic,
+-                source   = source
+-            });
+-        }
+-    }
+-
+-    public class DAETriangles
+-    {
+-        [XmlAttribute] public string material;
+-
+-        [XmlAttribute] public uint count;
+-
+-        [XmlElement("input")] public List<DAEInputOffset> input = new List<DAEInputOffset>();
+-
+-        public string p;
+-
+-        public void AddInput(string semantic, string source, uint offset = 0, uint set = 0)
+-        {
+-            input.Add(new DAEInputOffset()
+-            {
+-                semantic = semantic,
+-                source   = source,
+-                offset   = offset,
+-                set      = set
+-            });
+-        }
+-
+-        public void Set_p(ushort[] Indices)
+-        {
+-            StringBuilder SB = new StringBuilder();
+-
+-            for (int i = 0; i < Indices.Length; i++)
+-            {
+-                if (i < Indices.Length - 1)
+-                    SB.Append($"{Indices[i].ToString(CultureInfo.InvariantCulture)} ");
+-                else
+-                    SB.Append(Indices[i].ToString(CultureInfo.InvariantCulture));
+-            }
+-
+-            count = (uint)(Indices.Length / 3);
+-
+-            p = SB.ToString();
+-        }
+-    }
+-}
+diff --git a/SPICA/Formats/Generic/COLLADA/DAENode.cs b/SPICA/Formats/Generic/COLLADA/DAENode.cs
+deleted file mode 100644
+index a03a6de..0000000
+--- a/SPICA/Formats/Generic/COLLADA/DAENode.cs
++++ /dev/null
+@@ -1,82 +0,0 @@
+-﻿using System.Collections.Generic;
+-using System.Numerics;
+-using System.Xml.Serialization;
+-
+-namespace SPICA.Formats.Generic.COLLADA
+-{
+-    public class DAENode
+-    {
+-        [XmlAttribute] public string id;
+-        [XmlAttribute] public string name;
+-        [XmlAttribute] public string sid;
+-        [XmlAttribute] public DAENodeType type = DAENodeType.NODE;
+-
+-        public DAEMatrix matrix;
+-
+-        [XmlElement("translate")] public DAEVector3   Translation;
+-        [XmlElement("rotate")]    public DAEVector4[] Rotation;
+-        [XmlElement("scale")]     public DAEVector3   Scale;
+-
+-        [XmlElement("node")] public List<DAENode> Nodes;
+-
+-        public DAENodeInstance instance_geometry;
+-        public DAENodeInstance instance_controller;
+-        [XmlElement("extra")] public List<DAEExtra> extra = new List<DAEExtra>();
+-
+-        public void SetBoneEuler(Vector3 T, Vector3 R, Vector3 S)
+-        {
+-            Rotation = new DAEVector4[3];
+-
+-            Translation = new DAEVector3() { sid = "translate" };
+-            Rotation[0] = new DAEVector4() { sid = "rotateZ" };
+-            Rotation[1] = new DAEVector4() { sid = "rotateY" };
+-            Rotation[2] = new DAEVector4() { sid = "rotateX" };
+-            Scale       = new DAEVector3() { sid = "scale" };
+-
+-            Translation.Set(T);
+-            Rotation[0].Set(new Vector4(0, 0, 1, DAEUtils.RadToDeg(R.Z)));
+-            Rotation[1].Set(new Vector4(0, 1, 0, DAEUtils.RadToDeg(R.Y)));
+-            Rotation[2].Set(new Vector4(1, 0, 0, DAEUtils.RadToDeg(R.X)));
+-            Scale.Set(S);
+-        }
+-    }
+-
+-    public enum DAENodeType
+-    {
+-        NODE,
+-        JOINT
+-    }
+-
+-    public class DAENodeInstance
+-    {
+-        [XmlAttribute] public string url;
+-
+-        [XmlElement("skeleton")] public List<string> skeleton = new List<string>();
+-
+-        public DAEBindMaterialTechniqueCommon bind_material = new DAEBindMaterialTechniqueCommon();
+-    }
+-
+-    public class DAEBindMaterialTechniqueCommon
+-    {
+-        public DAEBindMaterial technique_common = new DAEBindMaterial();
+-    }
+-
+-    public class DAEBindMaterial
+-    {
+-        public DAEBindInstanceMaterial instance_material = new DAEBindInstanceMaterial();
+-    }
+-
+-    public class DAEBindInstanceMaterial
+-    {
+-        [XmlAttribute] public string symbol;
+-        [XmlAttribute] public string target;
+-        [XmlElement("bind_vertex_input")] public List<DAEBindVertexInput> bind_vertex_input = new List<DAEBindVertexInput>();
+-    }
+-
+-    public class DAEBindVertexInput
+-    {
+-        [XmlAttribute] public string semantic;
+-        [XmlAttribute] public string input_semantic = "TEXCOORD";
+-        [XmlAttribute] public uint input_set;
+-    }
+-}
+diff --git a/SPICA/Formats/Generic/COLLADA/DAESkin.cs b/SPICA/Formats/Generic/COLLADA/DAESkin.cs
+deleted file mode 100644
+index f78b7c8..0000000
+--- a/SPICA/Formats/Generic/COLLADA/DAESkin.cs
++++ /dev/null
+@@ -1,51 +0,0 @@
+-﻿using System.Collections.Generic;
+-using System.Xml.Serialization;
+-
+-namespace SPICA.Formats.Generic.COLLADA
+-{
+-    public class DAESkin
+-    {
+-        [XmlAttribute] public string source;
+-
+-        public DAEMatrix bind_shape_matrix = DAEMatrix.Identity;
+-
+-        [XmlElement("source")] public List<DAESource> src = new List<DAESource>();
+-
+-        public DAEJoints  joints         = new DAEJoints();
+-        public DAEWeights vertex_weights = new DAEWeights();
+-    }
+-
+-    public class DAEJoints
+-    {
+-        [XmlElement("input")] public List<DAEInput> input = new List<DAEInput>();
+-
+-        public void AddInput(string semantic, string source)
+-        {
+-            input.Add(new DAEInput()
+-            {
+-                semantic = semantic,
+-                source   = source
+-            });
+-        }
+-    }
+-
+-    public class DAEWeights
+-    {
+-        [XmlAttribute] public uint count;
+-
+-        [XmlElement("input")] public List<DAEInputOffset> input = new List<DAEInputOffset>();
+-
+-        public string vcount;
+-        public string v;
+-
+-        public void AddInput(string semantic, string source, uint offset = 0)
+-        {
+-            input.Add(new DAEInputOffset()
+-            {
+-                semantic = semantic,
+-                source   = source,
+-                offset   = offset
+-            });
+-        }
+-    }
+-}
+diff --git a/SPICA/Formats/Generic/COLLADA/DAESource.cs b/SPICA/Formats/Generic/COLLADA/DAESource.cs
+deleted file mode 100644
+index cdcec36..0000000
+--- a/SPICA/Formats/Generic/COLLADA/DAESource.cs
++++ /dev/null
+@@ -1,49 +0,0 @@
+-﻿using System.Xml.Serialization;
+-
+-namespace SPICA.Formats.Generic.COLLADA
+-{
+-    public class DAESource
+-    {
+-        [XmlAttribute] public string id;
+-        [XmlAttribute] public string name;
+-
+-        [XmlElement(IsNullable = false)] public DAEArray Name_array;
+-        [XmlElement(IsNullable = false)] public DAEArray float_array;
+-
+-        public DAESourceTechniqueCommon technique_common = new DAESourceTechniqueCommon();
+-
+-        public DAESource() { }
+-
+-        public DAESource(string Name, int Stride, string[] Elements, params string[] Accessors)
+-        {
+-            name = Name;
+-            id = $"{Name}_id";
+-
+-            DAEArray Array = new DAEArray()
+-            {
+-                id    = $"{Name}_array_id",
+-                count = (uint)(Elements.Length * Stride),
+-                data  = string.Join(" ", Elements)
+-            };
+-
+-            if (Accessors[1] == "Name")
+-                Name_array = Array;
+-            else
+-                float_array = Array;
+-
+-            technique_common.accessor.source = $"#{Array.id}";
+-            technique_common.accessor.count  = (uint)Elements.Length;
+-            technique_common.accessor.stride = (uint)Stride;
+-
+-            for (int Index = 0; Index < Accessors.Length; Index += 2)
+-            {
+-                technique_common.accessor.AddParam(Accessors[Index + 0], Accessors[Index + 1]);
+-            }
+-        }
+-    }
+-
+-    public class DAESourceTechniqueCommon
+-    {
+-        public DAEAccessor accessor = new DAEAccessor();
+-    }
+-}
+diff --git a/SPICA/Formats/Generic/COLLADA/DAEUtils.cs b/SPICA/Formats/Generic/COLLADA/DAEUtils.cs
+deleted file mode 100644
+index c513990..0000000
+--- a/SPICA/Formats/Generic/COLLADA/DAEUtils.cs
++++ /dev/null
+@@ -1,63 +0,0 @@
+-﻿using SPICA.Math3D;
+-
+-using System;
+-using System.Globalization;
+-using System.Numerics;
+-
+-namespace SPICA.Formats.Generic.COLLADA
+-{
+-    static class DAEUtils
+-    {
+-        private const float RadToDegConstant = (float)((1 / Math.PI) * 180);
+-
+-        private const string Matrix3x4Format = "{0} {1} {2} {3} {4} {5} {6} {7} {8} {9} {10} {11} 0 0 0 1";
+-
+-        public static float RadToDeg(float Radians)
+-        {
+-            return Radians * RadToDegConstant;
+-        }
+-
+-        public static string RadToDegStr(float Radians)
+-        {
+-            return RadToDeg(Radians).ToString(CultureInfo.InvariantCulture);
+-        }
+-
+-        public static string VectorStr(Vector2 v)
+-        {
+-            return FormattableString.Invariant($"{v.X} {v.Y}");
+-        }
+-
+-        public static string VectorStr(Vector3 v)
+-        {
+-            return FormattableString.Invariant($"{v.X} {v.Y} {v.Z}");
+-        }
+-
+-        public static string VectorStr(Vector4 v)
+-        {
+-            return FormattableString.Invariant($"{v.X} {v.Y} {v.Z} {v.W}");
+-        }
+-
+-        public static string Vector2Str(Vector4 v)
+-        {
+-            return FormattableString.Invariant($"{v.X} {v.Y}");
+-        }
+-
+-        public static string Vector3Str(Vector4 v)
+-        {
+-            return FormattableString.Invariant($"{v.X} {v.Y} {v.Z}");
+-        }
+-
+-        public static string Vector4Str(Vector4 v)
+-        {
+-            return VectorStr(v);
+-        }
+-
+-        public static string MatrixStr(Matrix3x4 m)
+-        {
+-            return string.Format(CultureInfo.InvariantCulture, Matrix3x4Format,
+-                m.M11, m.M21, m.M31, m.M41,
+-                m.M12, m.M22, m.M32, m.M42,
+-                m.M13, m.M23, m.M33, m.M43);
+-        }
+-    }
+-}
+diff --git a/SPICA/Formats/Generic/COLLADA/DAEVector3.cs b/SPICA/Formats/Generic/COLLADA/DAEVector3.cs
+deleted file mode 100644
+index 695f2ea..0000000
+--- a/SPICA/Formats/Generic/COLLADA/DAEVector3.cs
++++ /dev/null
+@@ -1,22 +0,0 @@
+-﻿using System.Numerics;
+-using System.Xml.Serialization;
+-
+-namespace SPICA.Formats.Generic.COLLADA
+-{
+-    public class DAEVector3
+-    {
+-        [XmlAttribute] public string sid;
+-
+-        [XmlText] public string data;
+-
+-        public static DAEVector3 Empty
+-        {
+-            get => new DAEVector3() { data = "0 0 0" };
+-        }
+-
+-        public void Set(Vector3 Vector)
+-        {
+-            data = DAEUtils.VectorStr(Vector);
+-        }
+-    }
+-}
+diff --git a/SPICA/Formats/Generic/COLLADA/DAEVector4.cs b/SPICA/Formats/Generic/COLLADA/DAEVector4.cs
+deleted file mode 100644
+index abc7dab..0000000
+--- a/SPICA/Formats/Generic/COLLADA/DAEVector4.cs
++++ /dev/null
+@@ -1,22 +0,0 @@
+-﻿using System.Numerics;
+-using System.Xml.Serialization;
+-
+-namespace SPICA.Formats.Generic.COLLADA
+-{
+-    public class DAEVector4
+-    {
+-        [XmlAttribute] public string sid;
+-
+-        [XmlText] public string data;
+-
+-        public static DAEVector4 Empty
+-        {
+-            get => new DAEVector4() { data = "0 0 0 0" };
+-        }
+-
+-        public void Set(Vector4 Vector)
+-        {
+-            data = DAEUtils.VectorStr(Vector);
+-        }
+-    }
+-}
+diff --git a/SPICA/Formats/Generic/COLLADA/DAEVisualScene.cs b/SPICA/Formats/Generic/COLLADA/DAEVisualScene.cs
+deleted file mode 100644
+index 317bdad..0000000
+--- a/SPICA/Formats/Generic/COLLADA/DAEVisualScene.cs
++++ /dev/null
+@@ -1,23 +0,0 @@
+-﻿using System.Collections.Generic;
+-using System.Xml.Serialization;
+-
+-namespace SPICA.Formats.Generic.COLLADA
+-{
+-    public class DAEVisualScene
+-    {
+-        [XmlAttribute] public string id;
+-        [XmlAttribute] public string name;
+-
+-        [XmlElement("node")] public List<DAENode> node = new List<DAENode>();
+-    }
+-
+-    public class DAEScene
+-    {
+-        public DAEInstanceVisualScene instance_visual_scene = new DAEInstanceVisualScene();
+-    }
+-
+-    public class DAEInstanceVisualScene
+-    {
+-        [XmlAttribute] public string url;
+-    }
+-}
+diff --git a/SPICA/Formats/Generic/StudioMdl/SMD.cs b/SPICA/Formats/Generic/StudioMdl/SMD.cs
+deleted file mode 100644
+index 1f8d46c..0000000
+--- a/SPICA/Formats/Generic/StudioMdl/SMD.cs
++++ /dev/null
+@@ -1,472 +0,0 @@
+-﻿using SPICA.Formats.Common;
+-using SPICA.Formats.CtrH3D;
+-using SPICA.Formats.CtrH3D.Model;
+-using SPICA.Formats.CtrH3D.Model.Material;
+-using SPICA.Formats.CtrH3D.Model.Mesh;
+-using SPICA.Formats.CtrH3D.Texture;
+-using SPICA.PICA.Commands;
+-using SPICA.PICA.Converters;
+-
+-using System;
+-using System.Collections.Generic;
+-using System.IO;
+-using System.Globalization;
+-using System.Text;
+-using System.Numerics;
+-
+-namespace SPICA.Formats.Generic.StudioMdl
+-{
+-    public class SMD
+-    {
+-        private List<SMDNode> Nodes    = new List<SMDNode>();
+-        private List<SMDBone> Skeleton = new List<SMDBone>();
+-        private List<SMDMesh> Meshes   = new List<SMDMesh>();
+-
+-        private enum SMDSection
+-        {
+-            None,
+-            Nodes,
+-            Skeleton,
+-            Triangles
+-        }
+-
+-        public SMD(H3D Scene, int MdlIndex, int AnimIndex = -1)
+-        {
+-            int Index = 0;
+-
+-            if (Scene == null || Scene.Models.Count == 0) return;
+-
+-            if (MdlIndex != -1 && AnimIndex == -1)
+-            {
+-                H3DModel Mdl = Scene.Models[MdlIndex];
+-
+-                foreach (H3DBone Bone in Mdl.Skeleton)
+-                {
+-                    SMDNode Node = new SMDNode()
+-                    {
+-                        Index       = Index,
+-                        Name        = Bone.Name,
+-                        ParentIndex = Bone.ParentIndex
+-                    };
+-
+-                    SMDBone B = new SMDBone()
+-                    {
+-                        NodeIndex   = Index++,
+-                        Translation = Bone.Translation,
+-                        Rotation    = Bone.Rotation
+-                    };
+-
+-                    Nodes.Add(Node);
+-                    Skeleton.Add(B);
+-                }
+-
+-                foreach (H3DMesh Mesh in Mdl.Meshes)
+-                {
+-                    if (Mesh.Type == H3DMeshType.Silhouette) continue;
+-
+-                    PICAVertex[] Vertices = Mesh.GetVertices();
+-
+-                    Meshes.Add(new SMDMesh()
+-                    {
+-                        MaterialName = Mdl.Materials[Mesh.MaterialIndex].Texture0Name + ".png",
+-                        Vertices     = MeshTransform.GetVerticesList(Mdl.Skeleton, Mesh)
+-                    });
+-                }
+-            }
+-        }
+-
+-        public SMD(string FileName)
+-        {
+-            using (FileStream FS = new FileStream(FileName, FileMode.Open))
+-            {
+-                SMDModelImpl(FS);
+-            }
+-        }
+-
+-        public SMD(Stream Stream)
+-        {
+-            SMDModelImpl(Stream);
+-        }
+-
+-        private void SMDModelImpl(Stream Stream)
+-        {
+-            TextReader Reader = new StreamReader(Stream);
+-
+-            SMDMesh CurrMesh = new SMDMesh();
+-
+-            SMDSection CurrSection = SMDSection.None;
+-
+-            int SkeletalFrame = 0;
+-            int VerticesLine = 0;
+-
+-            for (string Line; (Line = Reader.ReadLine()) != null;)
+-            {
+-                string[] Params = Line.Split(new char[] { ' ', '\t' }, StringSplitOptions.RemoveEmptyEntries);
+-
+-                if (Params.Length > 0)
+-                {
+-                    switch (Params[0])
+-                    {
+-                        case "version": break;
+-                        case "nodes":     CurrSection   = SMDSection.Nodes;     break;
+-                        case "skeleton":  CurrSection   = SMDSection.Skeleton;  break;
+-                        case "time":      SkeletalFrame = int.Parse(Params[1]); break;
+-                        case "triangles": CurrSection   = SMDSection.Triangles; break;
+-                        case "end":       CurrSection   = SMDSection.None;      break;
+-
+-                        default:
+-                            switch (CurrSection)
+-                            {
+-                                case SMDSection.Nodes:
+-                                    int NameStart  = Line.IndexOf('"') + 1;
+-                                    int NameEnd    = Line.LastIndexOf('"');
+-                                    int NameLength = NameEnd - NameStart;
+-
+-                                    Params[1] = Line.Substring(NameStart, NameLength);
+-                                    Params[2] = Line.Substring(NameEnd + 1).Trim();
+-
+-                                    Nodes.Add(new SMDNode()
+-                                    {
+-                                        Index       = int.Parse(Params[0]),
+-                                        Name        = Params[1],
+-                                        ParentIndex = int.Parse(Params[2])
+-                                    });
+-                                    break;
+-
+-                                case SMDSection.Skeleton:
+-                                    Skeleton.Add(new SMDBone()
+-                                    {
+-                                        NodeIndex = int.Parse(Params[0]),
+-                                        Translation = new Vector3()
+-                                        {
+-                                            X = ParseFloat(Params[1]),
+-                                            Y = ParseFloat(Params[2]),
+-                                            Z = ParseFloat(Params[3])
+-                                        },
+-                                        Rotation = new Vector3()
+-                                        {
+-                                            X = ParseFloat(Params[4]),
+-                                            Y = ParseFloat(Params[5]),
+-                                            Z = ParseFloat(Params[6])
+-                                        }
+-                                    });
+-                                    break;
+-
+-                                case SMDSection.Triangles:
+-                                    if ((VerticesLine++ & 3) == 0)
+-                                    {
+-                                        if (CurrMesh.MaterialName != Line)
+-                                        {
+-                                            Meshes.Add(CurrMesh = new SMDMesh() { MaterialName = Line });
+-                                        }
+-                                    }
+-                                    else
+-                                    {
+-                                        PICAVertex Vertex = new PICAVertex();
+-
+-                                        Vertex.Position.X = ParseFloat(Params[1]);
+-                                        Vertex.Position.Y = ParseFloat(Params[2]);
+-                                        Vertex.Position.Z = ParseFloat(Params[3]);
+-
+-                                        Vertex.Normal.X = ParseFloat(Params[4]);
+-                                        Vertex.Normal.Y = ParseFloat(Params[5]);
+-                                        Vertex.Normal.Z = ParseFloat(Params[6]);
+-
+-                                        Vertex.TexCoord0.X = ParseFloat(Params[7]);
+-                                        Vertex.TexCoord0.Y = ParseFloat(Params[8]);
+-
+-                                        if (Params.Length > 9)
+-                                        {
+-                                            //NOTE: 3DS formats only supports 4 bones per vertex max
+-                                            //Warn user when more nodes are used?
+-                                            int NodesCount = int.Parse(Params[9]);
+-
+-                                            for (int Node = 0; Node < Math.Min(NodesCount, 4); Node++)
+-                                            {
+-                                                Vertex.Indices[Node] = int.Parse(Params[10 + Node * 2]);
+-                                                Vertex.Weights[Node] = ParseFloat(Params[11 + Node * 2]);
+-                                            }
+-                                        }
+-
+-                                        Vertex.Color = Vector4.One;
+-
+-                                        CurrMesh.Vertices.Add(Vertex);
+-                                    }
+-                                    break;
+-                            }
+-                            break;
+-                    }
+-                }
+-            }
+-        }
+-
+-        private float ParseFloat(string Value)
+-        {
+-            return float.Parse(Value, CultureInfo.InvariantCulture);
+-        }
+-
+-        public void Save(string FileName)
+-        {
+-            StringBuilder SB = new StringBuilder();
+-
+-            SB.AppendLine("version 1");
+-            SB.AppendLine("nodes");
+-
+-            foreach (SMDNode Node in Nodes)
+-            {
+-                SB.AppendLine($"{Node.Index} \"{Node.Name}\" {Node.ParentIndex}");
+-            }
+-
+-            SB.AppendLine("end");
+-
+-            SB.AppendLine("skeleton");
+-            SB.AppendLine("time 0");
+-
+-            foreach (SMDBone Bone in Skeleton)
+-            {
+-                SB.AppendLine(string.Format(CultureInfo.InvariantCulture, "{0} {1} {2} {3} {4} {5} {6}",
+-                    Bone.NodeIndex,
+-                    Bone.Translation.X,
+-                    Bone.Translation.Y,
+-                    Bone.Translation.Z,
+-                    Bone.Rotation.X, 
+-                    Bone.Rotation.Y,
+-                    Bone.Rotation.Z));
+-            }
+-
+-            SB.AppendLine("end");
+-
+-            SB.AppendLine("triangles");
+-
+-            foreach (SMDMesh Mesh in Meshes)
+-            {
+-                for (int i = 0; i < Mesh.Vertices.Count; i += 3)
+-                {
+-                    SB.AppendLine(Mesh.MaterialName);
+-
+-                    SB.AppendLine(GetSMDVertex(Mesh.Vertices[i + 0]));
+-                    SB.AppendLine(GetSMDVertex(Mesh.Vertices[i + 1]));
+-                    SB.AppendLine(GetSMDVertex(Mesh.Vertices[i + 2]));
+-                }
+-            }
+-
+-            SB.AppendLine("end");
+-
+-            File.WriteAllText(FileName, SB.ToString());
+-        }
+-
+-        private string GetSMDVertex(PICAVertex Vtx)
+-        {
+-            string Indices = string.Empty;
+-
+-            int i = 0;
+-
+-            for (i = 0; i < 4 && Vtx.Weights[i] > 0; i++)
+-            {
+-                Indices += $" {Vtx.Indices[i]} {Vtx.Weights[i].ToString(CultureInfo.InvariantCulture)}";
+-            }
+-
+-            return string.Format(CultureInfo.InvariantCulture, "{0} {1} {2} {3} {4} {5} {6} {7} {8} {9}{10}",
+-                0,
+-                Vtx.Position.X,
+-                Vtx.Position.Y,
+-                Vtx.Position.Z,
+-                Vtx.Normal.X,
+-                Vtx.Normal.Y,
+-                Vtx.Normal.Z,
+-                Vtx.TexCoord0.X,
+-                Vtx.TexCoord0.Y,
+-                i,
+-                Indices);
+-        }
+-
+-        public H3D ToH3D(string TextureSearchPath = null)
+-        {
+-            H3D Output = new H3D();
+-
+-            H3DModel Model = new H3DModel();
+-
+-            Model.Name = "Model";
+-
+-            ushort MaterialIndex = 0;
+-
+-            if (Skeleton.Count > 0)
+-            {
+-                Model.Flags = H3DModelFlags.HasSkeleton;
+-            }
+-
+-            Model.BoneScaling = H3DBoneScaling.Maya;
+-            Model.MeshNodesVisibility.Add(true);
+-
+-            foreach (SMDMesh Mesh in Meshes)
+-            {
+-                Vector3 MinVector = new Vector3();
+-                Vector3 MaxVector = new Vector3();
+-
+-                Dictionary<PICAVertex, int> Vertices = new Dictionary<PICAVertex, int>();
+-
+-                List<H3DSubMesh> SubMeshes = new List<H3DSubMesh>();
+-
+-                Queue<PICAVertex> VerticesQueue = new Queue<PICAVertex>();
+-
+-                foreach (PICAVertex Vertex in Mesh.Vertices)
+-                {
+-                    VerticesQueue.Enqueue(Vertex);
+-                }
+-
+-                while (VerticesQueue.Count > 2)
+-                {
+-                    List<ushort> Indices     = new List<ushort>();
+-                    List<ushort> BoneIndices = new List<ushort>();
+-
+-                    int TriCount = VerticesQueue.Count / 3;
+-
+-                    while (TriCount-- > 0)
+-                    {
+-                        PICAVertex[] Triangle = new PICAVertex[3];
+-
+-                        Triangle[0] = VerticesQueue.Dequeue();
+-                        Triangle[1] = VerticesQueue.Dequeue();
+-                        Triangle[2] = VerticesQueue.Dequeue();
+-
+-                        List<ushort> TempIndices = new List<ushort>();
+-
+-                        for (int Tri = 0; Tri < 3; Tri++)
+-                        {
+-                            PICAVertex Vertex = Triangle[Tri];
+-
+-                            for (int i = 0; i < 4; i++)
+-                            {
+-                                ushort Index = (ushort)Vertex.Indices[i];
+-
+-                                if (!(BoneIndices.Contains(Index) || TempIndices.Contains(Index)))
+-                                {
+-                                    TempIndices.Add(Index);
+-                                }
+-                            }
+-                        }
+-
+-                        if (BoneIndices.Count + TempIndices.Count > 20)
+-                        {
+-                            VerticesQueue.Enqueue(Triangle[0]);
+-                            VerticesQueue.Enqueue(Triangle[1]);
+-                            VerticesQueue.Enqueue(Triangle[2]);
+-
+-                            continue;
+-                        }
+-
+-                        for (int Tri = 0; Tri < 3; Tri++)
+-                        {
+-                            PICAVertex Vertex = Triangle[Tri];
+-
+-                            for (int Index = 0; Index < 4; Index++)
+-                            {
+-                                int BoneIndex = BoneIndices.IndexOf((ushort)Vertex.Indices[Index]);
+-
+-                                if (BoneIndex == -1)
+-                                {
+-                                    BoneIndex = BoneIndices.Count;
+-                                    BoneIndices.Add((ushort)Vertex.Indices[Index]);
+-                                }
+-
+-                                Vertex.Indices[Index] = BoneIndex;
+-                            }
+-
+-                            if (Vertices.ContainsKey(Vertex))
+-                            {
+-                                Indices.Add((ushort)Vertices[Vertex]);
+-                            }
+-                            else
+-                            {
+-                                Indices.Add((ushort)Vertices.Count);
+-
+-                                if (Vertex.Position.X < MinVector.X) MinVector.X = Vertex.Position.X;
+-                                if (Vertex.Position.Y < MinVector.Y) MinVector.Y = Vertex.Position.Y;
+-                                if (Vertex.Position.Z < MinVector.Z) MinVector.Z = Vertex.Position.Z;
+-
+-                                if (Vertex.Position.X > MaxVector.X) MaxVector.X = Vertex.Position.X;
+-                                if (Vertex.Position.Y > MaxVector.Y) MaxVector.Y = Vertex.Position.Y;
+-                                if (Vertex.Position.Z > MaxVector.Z) MaxVector.Z = Vertex.Position.Z;
+-
+-                                Vertices.Add(Vertex, Vertices.Count);
+-                            }
+-                        }
+-                    }
+-
+-                    SubMeshes.Add(new H3DSubMesh()
+-                    {
+-                        Skinning         = H3DSubMeshSkinning.Smooth,
+-                        BoneIndicesCount = (ushort)BoneIndices.Count,
+-                        BoneIndices      = BoneIndices.ToArray(),
+-                        Indices          = Indices.ToArray()
+-                    });
+-                }
+-
+-                List<PICAAttribute> Attributes = PICAAttribute.GetAttributes(
+-                    PICAAttributeName.Position,
+-                    PICAAttributeName.Normal,
+-                    PICAAttributeName.Color,
+-                    PICAAttributeName.TexCoord0,
+-                    PICAAttributeName.BoneIndex,
+-                    PICAAttributeName.BoneWeight);
+-
+-                //Mesh
+-                H3DMesh M = new H3DMesh(Vertices.Keys, Attributes, SubMeshes)
+-                {
+-                    Skinning      = H3DMeshSkinning.Smooth,
+-                    MeshCenter    = (MinVector + MaxVector) * 0.5f,
+-                    MaterialIndex = MaterialIndex
+-                };
+-
+-                //Material
+-                string TexName = Path.GetFileNameWithoutExtension(Mesh.MaterialName);
+-                string MatName = $"Mat{MaterialIndex++.ToString("D5")}_{TexName}";
+-
+-                H3DMaterial Material = H3DMaterial.GetSimpleMaterial(Model.Name, MatName, TexName);
+-
+-                Model.Materials.Add(Material);
+-
+-                if (TextureSearchPath != null && !Output.Textures.Contains(TexName))
+-                {
+-                    string TextureFile = Path.Combine(TextureSearchPath, Mesh.MaterialName);
+-
+-                    if (File.Exists(TextureFile))
+-                    {
+-                        Output.Textures.Add(new H3DTexture(TextureFile));
+-                    }
+-                }
+-
+-                M.UpdateBoolUniforms(Material);
+-
+-                Model.AddMesh(M);
+-            }
+-
+-            //Build Skeleton
+-            foreach (SMDBone Bone in Skeleton)
+-            {
+-                SMDNode Node = Nodes[Bone.NodeIndex];
+-
+-                Model.Skeleton.Add(new H3DBone()
+-                {
+-                    Name        = Node.Name,
+-                    ParentIndex = (short)Node.ParentIndex,
+-                    Translation = Bone.Translation,
+-                    Rotation    = Bone.Rotation,
+-                    Scale       = Vector3.One
+-                });
+-            }
+-
+-            //Calculate Absolute Inverse Transforms for all bones
+-            foreach (H3DBone Bone in Model.Skeleton)
+-            {
+-                Bone.CalculateTransform(Model.Skeleton);
+-            }
+-
+-            Output.Models.Add(Model);
+-
+-            Output.CopyMaterials();
+-
+-            return Output;
+-        }
+-    }
+-}
+diff --git a/SPICA/Formats/Generic/StudioMdl/SMDBone.cs b/SPICA/Formats/Generic/StudioMdl/SMDBone.cs
+deleted file mode 100644
+index bc79c6a..0000000
+--- a/SPICA/Formats/Generic/StudioMdl/SMDBone.cs
++++ /dev/null
+@@ -1,12 +0,0 @@
+-﻿using System.Numerics;
+-
+-namespace SPICA.Formats.Generic.StudioMdl
+-{
+-    struct SMDBone
+-    {
+-        public int NodeIndex;
+-
+-        public Vector3 Translation;
+-        public Vector3 Rotation;
+-    }
+-}
+diff --git a/SPICA/Formats/Generic/StudioMdl/SMDMesh.cs b/SPICA/Formats/Generic/StudioMdl/SMDMesh.cs
+deleted file mode 100644
+index 7a1c319..0000000
+--- a/SPICA/Formats/Generic/StudioMdl/SMDMesh.cs
++++ /dev/null
+@@ -1,18 +0,0 @@
+-﻿using SPICA.PICA.Converters;
+-
+-using System.Collections.Generic;
+-
+-namespace SPICA.Formats.Generic.StudioMdl
+-{
+-    class SMDMesh
+-    {
+-        public string MaterialName;
+-
+-        public List<PICAVertex> Vertices;
+-
+-        public SMDMesh()
+-        {
+-            Vertices = new List<PICAVertex>();
+-        }
+-    }
+-}
+diff --git a/SPICA/Formats/Generic/StudioMdl/SMDNode.cs b/SPICA/Formats/Generic/StudioMdl/SMDNode.cs
+deleted file mode 100644
+index a4869eb..0000000
+--- a/SPICA/Formats/Generic/StudioMdl/SMDNode.cs
++++ /dev/null
+@@ -1,11 +0,0 @@
+-﻿namespace SPICA.Formats.Generic.StudioMdl
+-{
+-    struct SMDNode
+-    {
+-        public int Index;
+-
+-        public string Name;
+-
+-        public int ParentIndex;
+-    }
+-}
+diff --git a/SPICA/Formats/Generic/WavefrontOBJ/OBJ.cs b/SPICA/Formats/Generic/WavefrontOBJ/OBJ.cs
+deleted file mode 100644
+index 07abba6..0000000
+--- a/SPICA/Formats/Generic/WavefrontOBJ/OBJ.cs
++++ /dev/null
+@@ -1,393 +0,0 @@
+-﻿using SPICA.Formats.CtrH3D;
+-using SPICA.Formats.CtrH3D.Model;
+-using SPICA.Formats.CtrH3D.Model.Material;
+-using SPICA.Formats.CtrH3D.Model.Mesh;
+-using SPICA.Formats.CtrH3D.Texture;
+-using SPICA.PICA.Commands;
+-using SPICA.PICA.Converters;
+-
+-using System;
+-using System.Collections.Generic;
+-using System.Globalization;
+-using System.IO;
+-using System.Numerics;
+-
+-namespace SPICA.Formats.Generic.WavefrontOBJ
+-{
+-    public class OBJ
+-    {
+-        private string MtlFile;
+-
+-        List<OBJMesh> Meshes;
+-
+-        public OBJ(string FileName)
+-        {
+-            using (FileStream FS = new FileStream(FileName, FileMode.Open))
+-            {
+-                OBJModelImpl(FS);
+-            }
+-        }
+-
+-        public OBJ(Stream Stream)
+-        {
+-            OBJModelImpl(Stream);
+-        }
+-
+-        private void OBJModelImpl(Stream Stream)
+-        {
+-            Meshes = new List<OBJMesh>();
+-
+-            List<Vector4> Positions = new List<Vector4>();
+-            List<Vector4> Normals   = new List<Vector4>();
+-            List<Vector4> TexCoords = new List<Vector4>();
+-
+-            OBJMesh Mesh = new OBJMesh();
+-
+-            TextReader Reader = new StreamReader(Stream);
+-
+-            for (string Line; (Line = Reader.ReadLine()) != null;)
+-            {
+-                string[] Params = Line.Split(new char[] { ' ', '\t' }, StringSplitOptions.RemoveEmptyEntries);
+-
+-                if (Params.Length == 0) continue;
+-
+-                switch (Params[0])
+-                {
+-                    case "v":
+-                    case "vn":
+-                        if (Params.Length >= 4)
+-                        {
+-                            (Params[0] == "v"
+-                                ? Positions
+-                                : Normals)
+-                                .Add(new Vector4()
+-                                {
+-                                    X = float.Parse(Params[1], CultureInfo.InvariantCulture),
+-                                    Y = float.Parse(Params[2], CultureInfo.InvariantCulture),
+-                                    Z = float.Parse(Params[3], CultureInfo.InvariantCulture)
+-                                });
+-                        }
+-                        break;
+-
+-                    case "vt":
+-                        if (Params.Length >= 3)
+-                        {
+-                            TexCoords.Add(new Vector4()
+-                            {
+-                                X = float.Parse(Params[1], CultureInfo.InvariantCulture),
+-                                Y = float.Parse(Params[2], CultureInfo.InvariantCulture)
+-                            });
+-                        }
+-                        break;
+-
+-                    case "f":
+-                        string[][] Indices = new string[Params.Length - 1][];
+-
+-                        for (int Index = 0; Index < Params.Length - 1; Index++)
+-                        {
+-                            Indices[Index] = Params[Index + 1].Split('/');
+-                        }
+-
+-                        for (int Index = 0; Index < Indices.Length; Index++)
+-                        {
+-                            if (Index > 2)
+-                            {
+-                                Mesh.Vertices.Add(Mesh.Vertices[Mesh.Vertices.Count - 3]);
+-                                Mesh.Vertices.Add(Mesh.Vertices[Mesh.Vertices.Count - 2]);
+-                            }
+-
+-                            PICAVertex Vertex = new PICAVertex();
+-
+-                            if (Indices[Index].Length > 0 && Indices[Index][0] != string.Empty)
+-                            {
+-                                Mesh.HasPosition = true;
+-
+-                                Vertex.Position = Positions[GetIndex(Indices[Index][0], Positions.Count)];
+-                            }
+-
+-                            if (Indices[Index].Length > 1 && Indices[Index][1] != string.Empty)
+-                            {
+-                                Mesh.HasTexCoord = true;
+-
+-                                Vertex.TexCoord0 = TexCoords[GetIndex(Indices[Index][1], Normals.Count)];
+-                            }
+-
+-                            if (Indices[Index].Length > 2 && Indices[Index][2] != string.Empty)
+-                            {
+-                                Mesh.HasNormal = true;
+-
+-                                Vertex.Normal = Normals[GetIndex(Indices[Index][2], TexCoords.Count)];
+-                            }
+-                            
+-                            Vertex.Weights[0] = 1;
+-
+-                            Vertex.Color = Vector4.One;
+-
+-                            Mesh.Vertices.Add(Vertex);
+-                        }
+-                        break;
+-
+-                    case "usemtl":
+-                        if (Params.Length > 1)
+-                        {
+-                            string MaterialName = Line.Substring(Line.IndexOf(" ")).Trim();
+-
+-                            if (Mesh.Vertices.Count > 0)
+-                            {
+-                                Meshes.Add(Mesh);
+-
+-                                Mesh = new OBJMesh(MaterialName);
+-                            }
+-                            else
+-                            {
+-                                Mesh.MaterialName = MaterialName;
+-                            }
+-                        }
+-                        break;
+-
+-                    case "mtllib":
+-                        string MtlLibName = Line.Substring(Line.IndexOf(" ")).Trim();
+-
+-                        if (Params.Length > 1)
+-                        {
+-                            MtlFile = MtlLibName;
+-                        }
+-                        break;
+-                }
+-            }
+-
+-            if (Mesh.Vertices.Count > 0) Meshes.Add(Mesh);
+-        }
+-
+-        private int GetIndex(string Value, int Count)
+-        {
+-            int Index = int.Parse(Value);
+-
+-            if (Index < 0)
+-                return Count + Index;
+-            else
+-                return Index - 1;
+-        }
+-
+-        private struct OBJMaterial
+-        {
+-            public Vector4 Ambient;
+-            public Vector4 Diffuse;
+-            public Vector4 Specular;
+-
+-            public string DiffuseTexture; 
+-        }
+-
+-        public H3D ToH3D(string TextureAndMtlSearchPath = null)
+-        {
+-            H3D Output = new H3D();
+-
+-            Dictionary<string, OBJMaterial> Materials = new Dictionary<string, OBJMaterial>();
+-
+-            if (TextureAndMtlSearchPath != null)
+-            {
+-                string MaterialFile = Path.Combine(TextureAndMtlSearchPath, MtlFile);
+-
+-                if (File.Exists(MaterialFile))
+-                {
+-                    string MaterialName = null;
+-
+-                    OBJMaterial Material = default(OBJMaterial);
+-
+-                    TextReader Reader = new StreamReader(MaterialFile);
+-
+-                    for (string Line; (Line = Reader.ReadLine()) != null;)
+-                    {
+-                        string[] Params = Line.Split(new char[] { ' ', '\t' }, StringSplitOptions.RemoveEmptyEntries);
+-
+-                        if (Params.Length == 0) continue;
+-
+-                        switch (Params[0])
+-                        {
+-                            case "newmtl":
+-                                if (Params.Length > 1)
+-                                {
+-                                    if (MaterialName != null && Material.DiffuseTexture != null)
+-                                    {
+-                                        Materials.Add(MaterialName, Material);
+-                                    }
+-
+-                                    Material = new OBJMaterial();
+-
+-                                    MaterialName = Line.Substring(Line.IndexOf(" ")).Trim();
+-                                }
+-                                break;
+-
+-                            case "map_Kd":
+-                                if (Params.Length > 1)
+-                                {
+-                                    string Name = Line.Substring(Line.IndexOf(Params[1]));
+-
+-                                    string TextureFile = Path.Combine(TextureAndMtlSearchPath, Name);
+-                                    string TextureName = Path.GetFileNameWithoutExtension(TextureFile);
+-
+-                                    if (File.Exists(TextureFile) && !Output.Textures.Contains(TextureName))
+-                                    {
+-                                        Output.Textures.Add(new H3DTexture(TextureFile));
+-                                    }
+-
+-                                    Material.DiffuseTexture = Path.GetFileNameWithoutExtension(TextureName);
+-                                }
+-                                break;
+-
+-                            case "Ka":
+-                            case "Kd":
+-                            case "Ks":
+-                                if (Params.Length >= 4)
+-                                {
+-                                    Vector4 Color = new Vector4(
+-                                        float.Parse(Params[1], CultureInfo.InvariantCulture),
+-                                        float.Parse(Params[2], CultureInfo.InvariantCulture),
+-                                        float.Parse(Params[3], CultureInfo.InvariantCulture), 1);
+-
+-                                    switch (Params[0])
+-                                    {
+-                                        case "Ka": Material.Ambient  = Color; break;
+-                                        case "Kd": Material.Diffuse  = Color; break;
+-                                        case "Ks": Material.Specular = Color; break;
+-                                    }
+-                                }
+-                                break;
+-                        }
+-                    }
+-
+-                    Reader.Dispose();
+-
+-                    if (MaterialName != null && Material.DiffuseTexture != null)
+-                    {
+-                        Materials.Add(MaterialName, Material);
+-                    }
+-                }
+-            }
+-
+-            H3DModel Model = new H3DModel();
+-
+-            Model.Name = "Model";
+-
+-            ushort MaterialIndex = 0;
+-
+-            Model.Flags       = H3DModelFlags.HasSkeleton;
+-            Model.BoneScaling = H3DBoneScaling.Maya;
+-            Model.MeshNodesVisibility.Add(true);
+-
+-            float Height = 0;
+-
+-            foreach (OBJMesh Mesh in Meshes)
+-            {
+-                Vector3 MinVector = new Vector3();
+-                Vector3 MaxVector = new Vector3();
+-
+-                Dictionary<PICAVertex, int> Vertices = new Dictionary<PICAVertex, int>();
+-
+-                List<H3DSubMesh> SubMeshes = new List<H3DSubMesh>();
+-
+-                Queue<PICAVertex> VerticesQueue = new Queue<PICAVertex>();
+-
+-                foreach (PICAVertex Vertex in Mesh.Vertices)
+-                {
+-                    VerticesQueue.Enqueue(Vertex);
+-                }
+-
+-                while (VerticesQueue.Count > 2)
+-                {
+-                    List<ushort> Indices = new List<ushort>();
+-
+-                    while (VerticesQueue.Count > 0)
+-                    {
+-                        for (int Tri = 0; Tri < 3; Tri++)
+-                        {
+-                            PICAVertex Vertex = VerticesQueue.Dequeue();
+-
+-                            if (Vertices.ContainsKey(Vertex))
+-                            {
+-                                Indices.Add((ushort)Vertices[Vertex]);
+-                            }
+-                            else
+-                            {
+-                                Indices.Add((ushort)Vertices.Count);
+-
+-                                if (Vertex.Position.X < MinVector.X) MinVector.X = Vertex.Position.X;
+-                                if (Vertex.Position.Y < MinVector.Y) MinVector.Y = Vertex.Position.Y;
+-                                if (Vertex.Position.Z < MinVector.Z) MinVector.Z = Vertex.Position.Z;
+-
+-                                if (Vertex.Position.X > MaxVector.X) MaxVector.X = Vertex.Position.X;
+-                                if (Vertex.Position.Y > MaxVector.Y) MaxVector.Y = Vertex.Position.Y;
+-                                if (Vertex.Position.Z > MaxVector.Z) MaxVector.Z = Vertex.Position.Z;
+-
+-                                Vertices.Add(Vertex, Vertices.Count);
+-                            }
+-                        }
+-                    }
+-
+-                    H3DSubMesh SM = new H3DSubMesh();
+-
+-                    SM.BoneIndices = new ushort[] { 0 };
+-                    SM.Skinning    = H3DSubMeshSkinning.Smooth;
+-                    SM.Indices     = Indices.ToArray();
+-
+-                    SubMeshes.Add(SM);
+-                }
+-
+-                //Mesh
+-                List<PICAAttribute> Attributes = PICAAttribute.GetAttributes(
+-                    PICAAttributeName.Position,
+-                    PICAAttributeName.Normal,
+-                    PICAAttributeName.TexCoord0,
+-                    PICAAttributeName.Color,
+-                    PICAAttributeName.BoneIndex,
+-                    PICAAttributeName.BoneWeight);
+-
+-                H3DMesh M = new H3DMesh(Vertices.Keys, Attributes, SubMeshes)
+-                {
+-                    Skinning      = H3DMeshSkinning.Smooth,
+-                    MeshCenter    = (MinVector + MaxVector) * 0.5f,
+-                    MaterialIndex = MaterialIndex
+-                };
+-
+-                if (Height < MaxVector.Y)
+-                    Height = MaxVector.Y;
+-
+-                //Material
+-                string MatName = $"Mat{MaterialIndex++.ToString("D5")}_{Mesh.MaterialName}";
+-
+-                H3DMaterial Material = H3DMaterial.GetSimpleMaterial(Model.Name, MatName, null);
+-
+-                if (Materials.ContainsKey(Mesh.MaterialName))
+-                    Material.Texture0Name = Materials[Mesh.MaterialName].DiffuseTexture;
+-                else
+-                    Material.Texture0Name = "NoTexture";
+-
+-                Model.Materials.Add(Material);
+-
+-                M.UpdateBoolUniforms(Material);
+-
+-                Model.AddMesh(M);
+-            }
+-
+-            /*
+-             * On Pokémon, the root bone (on the animaiton file) is used by the game to move
+-             * characters around, and all rigged bones are parented to this bone.
+-             * It's usually the Waist bone, that points upward and is half the character height.
+-             */
+-            Model.Skeleton.Add(new H3DBone(
+-                new Vector3(0, Height * 0.5f, 0),
+-                new Vector3(0, 0, (float)(Math.PI * 0.5)),
+-                Vector3.One,
+-                "Waist",
+-                -1));
+-
+-            Model.Skeleton[0].CalculateTransform(Model.Skeleton);
+-
+-            Output.Models.Add(Model);
+-
+-            Output.CopyMaterials();
+-
+-            return Output;
+-        }
+-    }
+-}
+diff --git a/SPICA/Formats/Generic/WavefrontOBJ/OBJMesh.cs b/SPICA/Formats/Generic/WavefrontOBJ/OBJMesh.cs
+deleted file mode 100644
+index 240740b..0000000
+--- a/SPICA/Formats/Generic/WavefrontOBJ/OBJMesh.cs
++++ /dev/null
+@@ -1,24 +0,0 @@
+-﻿using SPICA.PICA.Converters;
+-
+-using System.Collections.Generic;
+-
+-namespace SPICA.Formats.Generic.WavefrontOBJ
+-{
+-    class OBJMesh
+-    {
+-        public bool HasPosition;
+-        public bool HasNormal;
+-        public bool HasTexCoord;
+-
+-        public string MaterialName;
+-
+-        public List<PICAVertex> Vertices;
+-
+-        public OBJMesh(string MaterialName = "NoMaterial")
+-        {
+-            this.MaterialName = MaterialName;
+-
+-            Vertices = new List<PICAVertex>();
+-        }
+-    }
+-}
+diff --git a/SPICA/PICA/Converters/TextureConverter.cs b/SPICA/PICA/Converters/TextureConverter.cs
+index 5c90387..f9b455b 100644
+--- a/SPICA/PICA/Converters/TextureConverter.cs
++++ b/SPICA/PICA/Converters/TextureConverter.cs
+@@ -1,8 +1,10 @@
+ ﻿using SPICA.PICA.Commands;
+ 
+ using System;
++#if DRAWING
+ using System.Drawing;
+ using System.Drawing.Imaging;
++#endif
+ using System.Runtime.InteropServices;
+ 
+ namespace SPICA.PICA.Converters
+@@ -205,6 +207,7 @@ namespace SPICA.PICA.Converters
+                 Buffer[Address + 1] << 8);
+         }
+ 
++#if DRAWING
+         public static Bitmap DecodeBitmap(byte[] Input, int Width, int Height, PICATextureFormat Format)
+         {
+             byte[] Buffer = DecodeBuffer(Input, Width, Height, Format);
+@@ -283,6 +286,7 @@ namespace SPICA.PICA.Converters
+ 
+         
+ 
++#endif
+         public static int CalculateLength(int Width, int Height, PICATextureFormat Format)
+         {
+             int Length = (Width * Height * FmtBPP[(int)Format]) / 8;
+@@ -295,6 +299,7 @@ namespace SPICA.PICA.Converters
+             return Length;
+         }
+ 
++#if DRAWING
+         public static Bitmap GetBitmap(byte[] Buffer, int Width, int Height)
+         {
+             Rectangle Rect = new Rectangle(0, 0, Width, Height);
+@@ -324,5 +329,6 @@ namespace SPICA.PICA.Converters
+ 
+             return Output;
+         }
++#endif
+     }
+ }
+diff --git a/SPICA/SPICA.csproj b/SPICA/SPICA.csproj
+index 393024c..f9eb2e8 100644
+--- a/SPICA/SPICA.csproj
++++ b/SPICA/SPICA.csproj
+@@ -3,6 +3,5 @@
+     <OutputType>Library</OutputType>
+   </PropertyGroup>
+   <ItemGroup>
+-    <PackageReference Include="System.Drawing.Common" Version="8.0.10" />
+   </ItemGroup>
+ </Project>

@@ -6,6 +6,20 @@ using SPICA.Formats.CtrGfx; using SPICA.Formats.CtrH3D.Animation; using SPICA.Fo
 class P {
   static string TC(SPICA.Formats.CtrH3D.Model.Material.H3DTextureCoord c) => $"{c.Scale.X:F2},{c.Scale.Y:F2},{c.Rotation:F2},{c.Translation.X:F2},{c.Translation.Y:F2}";
   static void Main(string[] a) {
+    // dump file.bcres outdir textures: only the textures (effect files hold
+    // particle emitters the full reader cannot read)
+    if (a.Length >= 3 && a[2] == "textures") {
+      Directory.CreateDirectory(a[1]);
+      System.Collections.Generic.List<SPICA.Formats.CtrH3D.Texture.H3DTexture> ts;
+      using (var f = File.OpenRead(a[0])) ts = GfxTexturesOnly.Open(f);
+      using var tl = new StreamWriter(Path.Combine(a[1], "textures.txt"));
+      foreach (var t in ts) {
+        try { File.WriteAllBytes(Path.Combine(a[1], t.Name + ".rgba"), t.ToRGBA()); tl.WriteLine($"{t.Name}\t{t.Width}\t{t.Height}"); }
+        catch (Exception e) { Console.Error.WriteLine($"{t.Name}: {e.Message}"); }
+      }
+      Console.WriteLine($"textures {ts.Count}");
+      return;
+    }
     H3D h; using (var f = File.OpenRead(a[0])) h = Gfx.Open(f);
     Directory.CreateDirectory(a[1]);
     Console.WriteLine($"models {h.Models.Count} textures {h.Textures.Count} skeletal anims {h.SkeletalAnimations.Count} material anims {h.MaterialAnimations.Count}");
