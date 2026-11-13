@@ -173,7 +173,7 @@ for mode in range(4):    # rays from the key light (the kick's impact for Togeth
 import relight
 BUF_DIR = {0: f'{R}/poster_solo_buf', 1: f'{R}/poster_tog_buf', 2: f'{R}/vault_buf', 3: f'{R}/options_buf'}
 def mixw(c, k): return tuple(1 - (1 - x / 255) * k for x in c)        # a colour, k of the way from white
-LIGHT = {m: dict(key=(-0.8, 0.5, 0.35), key_col=mixw(PAL[m]["key"], 0.45), dark=0.45,
+LIGHT = {m: dict(key=(-0.7, 0.5, 0.6), skin_shadow=(1.15, 0.92, 0.85), key_col=mixw(PAL[m]["key"], 0.45), dark=0.45,
                  shadow=mixw(PAL[m]["mid"], 0.35), rim=tuple(x / 255 for x in PAL[m]["high"]), rim_strength=1.8,
                  bounce=tuple(x / 255 for x in PAL[m]['mid']), bounce_strength=0.35) for m in range(4)}
 for m in range(4): LIGHT[m].update(_json.loads(os.environ.get('LTUNE', '{}')))

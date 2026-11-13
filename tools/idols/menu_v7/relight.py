@@ -16,16 +16,24 @@ def load(prefix):
     return base, n, has
 
 def relight(prefix, key=(-0.85, 0.45, 0.28), key_col=(1, 1, 1), dark=0.55, shadow=(1, 1, 1),
-            rim=(1, 1, 1), rim_strength=0.8, rim_side=None, bounce=None, bounce_strength=0.0):
+            rim=(1, 1, 1), rim_strength=0.8, rim_side=None, bounce=None, bounce_strength=0.0,
+            skin_shadow=None):
     """Same maths as render/post_shade.py, plus:
     key_col: colour of the key light on the lit side;
     rim_side: direction the rim comes from (default: opposite the key);
-    bounce: colour of light from below (the ground/stage), on down-facing surfaces."""
+    bounce: colour of light from below (the ground/stage), on down-facing surfaces;
+    skin_shadow: shadow tint used on skin instead of `shadow` (skin stays warm)."""
     base, n, has = load(prefix)
     colour, cover = base[..., :3], base[..., 3]
     L = np.array(key, np.float32); L /= np.linalg.norm(L)
     ndl = np.clip((n @ L) * 1.1 + 0.25, 0, 1)[..., None]
     sh = dark * np.array(shadow, np.float32)
+    if skin_shadow is not None:
+        # skin: warm hue (about 0-45 degrees), light, moderately saturated
+        mx, mn = colour.max(2), colour.min(2); sat = (mx - mn) / np.maximum(mx, 1e-3)
+        r, g, b = colour[..., 0], colour[..., 1], colour[..., 2]
+        skin = ((r >= g) & (g >= b) & (mx > 0.45) & (sat > 0.12) & (sat < 0.6) & ((g - b) > 0.25 * (r - b)))[..., None]
+        sh = np.where(skin, dark * np.array(skin_shadow, np.float32), sh)
     shade = sh * (1 - ndl) + np.array(key_col, np.float32) * ndl
     edge = np.clip(1 - np.abs(n[..., 2]), 0, 1) ** 2.5
     Rd = -L if rim_side is None else np.array(rim_side, np.float32) / np.linalg.norm(rim_side)
