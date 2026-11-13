@@ -61,11 +61,30 @@ def cropped(img, name):
 
 # --- the characters: which frames each mode plays --------------------------------
 SEQ = {
+    # Pit: a seamless 6 s glide with a glance and a barrel roll (render/solo_loop.py)
     0: dict(dir=f'{R}/solo_loop_buf', idle=dict(range=[0, 359], play='loop'), confirm=dict(range=[1000, 1047])),
     1: dict(dir=f'{R}/poster_tog_buf', idle=dict(range=[0, 149], play='pingpong'), confirm=dict(range=[150, 215], impact=190)),
-    2: dict(dir=f'{R}/vault_buf', intro=dict(range=[150, 195]), idle=dict(range=[195, 225], play='pingpong'), confirm=dict(range=[225, 259])),
-    3: dict(dir=f'{R}/options_buf', idle=dict(range=[0, 149], play='pingpong'), confirm=dict(range=[150, 249])),
+    # Palutena and Viridi: their new key-art animations (render/promo.py): an
+    # entrance into the hero pose, a held pose that loops in 4 s, a confirm pose
+    2: dict(dir=f'{R}/promo_P02_buf', intro=dict(range=[0, 39]), idle=dict(range=[100, 339], play='loop'), confirm=dict(range=[400, 439])),
+    3: dict(dir=f'{R}/promo_V12_buf', intro=dict(range=[0, 39]), idle=dict(range=[100, 339], play='loop'), confirm=dict(range=[400, 439])),
 }
+
+# --- v13 framing: full figures standing on the ground band, none cut off --------
+FEET = 900          # the ground band's top edge (the band starts at 905)
+REF = {0: (f'{R}/poster_solo/0060.png', None), 1: (f'{R}/poster_tog_buf/0100_post.png', 'stand'),
+       2: (f'{R}/promo_P02_buf/0100_post.png', 'stand'), 3: (f'{R}/promo_V12_buf/0100_post.png', 'stand')}
+SIZE = {0: (640, 1340, 880), 1: (820, 1390, FEET + 4), 2: (860, 1420, FEET), 3: (800, 1410, FEET)}
+for mode, (h, cx, feet) in SIZE.items():
+    ref = Image.open(REF[mode][0]).getchannel('A').point(lambda a: 255 if a > 40 else 0).getbbox()
+    k = h / (ref[3] - ref[1]); PLACE[mode] = (k, cx - (ref[0] + ref[2]) / 2 * k, feet - ref[3] * k)
+b190 = Image.open(f'{R}/poster_tog_buf/0190_post.png').getbbox(); k1, x1, y1 = PLACE[1]
+IMPACT = (int(x1 + (b190[0] + b190[2]) / 2 * k1), int(y1 + (b190[1] + 0.45 * (b190[3] - b190[1])) * k1))
+RAYS[1] = G.backlight_rays((W, H), IMPACT[0], IMPACT[1], PAL[1]['key'], n=24, length=1700, strength=TUNE['rays'])
+# the light: shading blurred so it draws no hard edges across faces, the rim
+# only at the outline (relight.py), no separate skin tint
+for m in range(4):
+    LIGHT[m].update(soft=6, skin_shadow=None, skin_flat=0.0, dark=0.6 if m == 1 else 0.5)
 
 def rest_panel(mode):
     """The window as it stands at rest, for the light wrap."""

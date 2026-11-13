@@ -24,8 +24,22 @@ static class Animate
             (float)(CZ * CX * CY + SZ * SX * SY));
     }
 
+    /// Every bone's local scale, rotation and translation at `frame` (for
+    /// posing in Python: dump ... locals). Bones driven by whole matrices
+    /// (rare) keep their rest values; their count is returned.
+    public static (Vector3 s, Quaternion r, Vector3 t)[] Locals(H3DDict<H3DBone> skeleton, H3DAnimation anim, float frame, out int matrixBones)
+    {
+        var w = Pose(skeleton, anim, frame, out var bones, out var fixedM);
+        matrixBones = 0; foreach (var f in fixedM) if (f) matrixBones++;
+        var o = new (Vector3, Quaternion, Vector3)[bones.Length];
+        for (int i = 0; i < bones.Length; i++) o[i] = (bones[i].Scale, bones[i].Rotation, bones[i].Translation);
+        return o;
+    }
+
     /// The world transform of every bone at `frame` (no animation: the rest pose).
-    public static Matrix4x4[] Pose(H3DDict<H3DBone> skeleton, H3DAnimation anim, float frame)
+    public static Matrix4x4[] Pose(H3DDict<H3DBone> skeleton, H3DAnimation anim, float frame) => Pose(skeleton, anim, frame, out _, out _);
+
+    static Matrix4x4[] Pose(H3DDict<H3DBone> skeleton, H3DAnimation anim, float frame, out Bone[] bonesOut, out bool[] fixedOut)
     {
         int n = skeleton.Count;
         var bones = new Bone[n];
@@ -92,6 +106,7 @@ static class Animate
             }
             result[i] = m;
         }
+        bonesOut = bones; fixedOut = fixedM;
         return result;
     }
 

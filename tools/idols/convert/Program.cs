@@ -69,6 +69,40 @@ class P {
       }
       return;
     }
+    // the skin, for posing in Python: dump model.bcres out skin
+    //   skin.bin: per exported vertex (mesh.bin's order) its raw position
+    //   and normal, 1 if smoothly skinned, four skeleton bone indices and
+    //   four weights; skeleton.txt: per bone name, parent, scale-compensate
+    //   flag and rest scale, rotation (x y z w) and translation.
+    if (a.Length >= 3 && a[2] == "skin" && h.Models.Count > 0) {
+      var model = h.Models[0];
+      using var sb = new BinaryWriter(File.Create(Path.Combine(a[1], "skin.bin")));
+      foreach (H3DMesh mesh in model.Meshes) {
+        if (mesh.Type == H3DMeshType.Silhouette) continue;
+        var verts = mesh.GetVertices();
+        foreach (H3DSubMesh sm in mesh.SubMeshes) {
+          bool smooth = sm.Skinning == H3DSubMeshSkinning.Smooth;
+          foreach (ushort i in sm.Indices) {
+            var v = verts[i];
+            sb.Write(v.Position.X); sb.Write(v.Position.Y); sb.Write(v.Position.Z);
+            sb.Write(v.Normal.X); sb.Write(v.Normal.Y); sb.Write(v.Normal.Z);
+            sb.Write(smooth ? 1f : 0f);
+            for (int k = 0; k < 4; k++) sb.Write((float)(sm.BoneIndices.Length > v.Indices[k] ? sm.BoneIndices[v.Indices[k]] : 0));
+            for (int k = 0; k < 4; k++) sb.Write(smooth ? v.Weights[k] : (k == 0 ? 1f : 0f));
+          }
+        }
+      }
+      var rest = Animate.Locals(model.Skeleton, null, 0, out _);
+      var lines = new System.Collections.Generic.List<string>();
+      for (int i = 0; i < model.Skeleton.Count; i++) {
+        var bo = model.Skeleton[i]; var (sc, r, t) = rest[i];
+        bool comp = (bo.Flags & H3DBoneFlags.IsSegmentScaleCompensate) != 0;
+        lines.Add(string.Join("\t", bo.Name, bo.ParentIndex, comp ? 1 : 0, sc.X, sc.Y, sc.Z, r.X, r.Y, r.Z, r.W, t.X, t.Y, t.Z));
+      }
+      File.WriteAllLines(Path.Combine(a[1], "skeleton.txt"), lines);
+      Console.WriteLine($"skin written, {model.Skeleton.Count} bones");
+      return;
+    }
     // frames of an animation: dump model.bcres out anim step
     if (a.Length >= 3 && h.Models.Count > 0) {
       var model = h.Models[0];
@@ -79,6 +113,10 @@ class P {
       if (anim != null) { int hit = 0; foreach (H3DAnimationElement e in anim.Elements) if (model.Skeleton.Find(e.Name) >= 0) hit++; Console.WriteLine($"bones matched {hit}/{anim.Elements.Count}"); }
       if (anim == null) { Console.Error.WriteLine("no animation " + a[2]); return; }
       float step = a.Length >= 4 ? float.Parse(a[3]) : 1f;
+      // LOCALS=1 (environment): also every bone's local scale, rotation and
+      // translation per frame, 10 floats each (<anim>.locals), for posing in Python
+      bool locals = Environment.GetEnvironmentVariable("LOCALS") == "1";
+      using var lb = locals ? new BinaryWriter(File.Create(Path.Combine(a[1], a[2] + ".locals"))) : null;
       using var fb = new BinaryWriter(File.Create(Path.Combine(a[1], a[2] + ".frames")));
       // and every bone's world matrix per frame (row-major 4x4), with the bone names
       using var bb = new BinaryWriter(File.Create(Path.Combine(a[1], a[2] + ".bones")));
@@ -88,6 +126,11 @@ class P {
       float f0 = float.Parse(Environment.GetEnvironmentVariable("ANIM_START") ?? "0"), f1 = float.Parse(Environment.GetEnvironmentVariable("ANIM_END") ?? anim.FramesCount.ToString());
       for (float f = f0; f < Math.Min(f1, anim.FramesCount); f += step) {
         var pose = Animate.Pose(model.Skeleton, anim, f);
+        if (lb != null) {
+          foreach (var (sc, r, t) in Animate.Locals(model.Skeleton, anim, f, out int mtx)) {
+            lb.Write(sc.X); lb.Write(sc.Y); lb.Write(sc.Z); lb.Write(r.X); lb.Write(r.Y); lb.Write(r.Z); lb.Write(r.W); lb.Write(t.X); lb.Write(t.Y); lb.Write(t.Z);
+          }
+        }
         foreach (var m in pose) { bb.Write(m.M11); bb.Write(m.M12); bb.Write(m.M13); bb.Write(m.M14); bb.Write(m.M21); bb.Write(m.M22); bb.Write(m.M23); bb.Write(m.M24); bb.Write(m.M31); bb.Write(m.M32); bb.Write(m.M33); bb.Write(m.M34); bb.Write(m.M41); bb.Write(m.M42); bb.Write(m.M43); bb.Write(m.M44); }
         var ps = new System.Collections.Generic.List<Vector3>(); var ns = new System.Collections.Generic.List<Vector3>();
         Animate.Skin(model, pose, ps, ns);

@@ -38,7 +38,7 @@ IDOL = dict(ENV, light_dir=np.array([0.276, 0.276, 0.92]),
             light_ambient=np.array([0.30, 0.30, 0.30]), light_diffuse=np.array([0.30, 0.30, 0.30]),
             light_specular1=np.array([0.60, 0.55, 0.50]),
             hemi_sky=np.array([0.75, 0.75, 0.80]), hemi_ground=np.array([0.60, 0.55, 0.50]))
-LIGHTS = {'V12': IDOL, 'G08': IDOL, 'Viri': NATU, 'V11': NATU, 'ViriH': NATU, 'PitHF': CH1, '000': CH1, 'T05': CH1, 'PitH': CH1, 'DPitH': CH1}
+LIGHTS = {'V12': IDOL, 'G08': IDOL, 'P02': IDOL, 'Viri': NATU, 'V11': NATU, 'ViriH': NATU, 'PitHF': CH1, '000': CH1, 'T05': CH1, 'PitH': CH1, 'DPitH': CH1}
 
 def in_view(env, R):
     """The lights seen from the camera. The key light stays where the

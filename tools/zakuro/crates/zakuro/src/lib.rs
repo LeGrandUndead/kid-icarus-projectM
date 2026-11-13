@@ -1487,7 +1487,8 @@ impl App {
         let overlay = gui.frame(window, |ui| {
             let rect = ui.ctx().content_rect();
             if let Some(scene) = menu_scene.as_mut() {
-                scene.select(native_live.nav.current);
+                // where the selection is going, not each choice the cursor passes on the way
+                scene.select(native_live.nav.heading());
                 scene_done = !scene.show(ui.ctx(), rect);
             }
             if let Some((screen, art)) = native {

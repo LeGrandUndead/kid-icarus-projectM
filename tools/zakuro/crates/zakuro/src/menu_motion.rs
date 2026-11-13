@@ -189,6 +189,10 @@ impl Nav {
         if self.unseen > UNSEEN { self.current = None; }
     }
 
+    /// Where the cursor is going: the pointer's choice while the game's
+    /// cursor walks there, otherwise where the cursor is.
+    pub fn heading(&self) -> Option<usize> { self.target.filter(|_| self.tries < TRIES).or(self.current) }
+
     /// The choice the pointer rests on (None: leave the game's cursor be).
     pub fn want(&mut self, target: Option<usize>) {
         if target != self.target {

@@ -3,7 +3,8 @@
 #  - loop (frames 0-359): his flap cycle (AirGrideFlap1, 90 frames) four
 #    times; heading and pitch swing on curves with the same 360-frame period,
 #    he banks into the turns (bank from the heading's rate of turn) and
-#    glances back once (AirGrideLookB at 150, faded in and out inside the loop),
+#    glances back (AirGrideLookB at 40) and barrel-rolls (AirRollingGrideLA at 230),
+#    each faded in and out inside the loop,
 #    so frame 360 is frame 0 again;
 #  - confirm (frames 1000-1047): from loop frame 0 he whips round toward the
 #    camera and barrel-rolls past it (AirRollingGrideRA), as in sky.py's click.
@@ -12,7 +13,10 @@ import sys, os, math
 sys.path.insert(0, '.')
 import numpy as np, idol, sky
 from multiprocessing import Pool
-SIZE = 1300; PERIOD = 360; LOOK = (150, 'AirGrideLookB', 1.0); CONFIRM = 1000
+SIZE = 1300; PERIOD = 360; CONFIRM = 1000
+# his flourishes inside the loop, each fading in and out before the loop wraps:
+# a glance back, then (v13) a barrel roll for style
+ACTS = [(40, 'AirGrideLookB', 1.0), (230, 'AirRollingGrideLA', 1.0)]
 def yaw_pitch(f):
     a = 2 * math.pi * f / PERIOD
     return -24 + 22 * math.sin(a) + 6 * math.sin(2 * a + 1), 7 + 5 * math.sin(a + 2)
@@ -21,10 +25,11 @@ def loop_entry(f):
     return dict(f=f, yaw=yaw, pitch=pitch, bank=max(-35, min(35, -(y2 - yaw) * 14 * 4)))
 def loop_pose(f):
     loop = sky.clip(sky.LOOP); out = loop[f % len(loop)]
-    s, a, sp = LOOK; c = sky.clip(a); t = (f - s) * sp
-    if 0 <= t < len(c) - 1 + sky.FADE:
-        w = min(1, (t + 1) / sky.FADE) * min(1, (len(c) - 1 + sky.FADE - t) / sky.FADE)
-        out = out * (1 - w) + c[min(len(c) - 1, int(t))] * w
+    for s, a, sp in ACTS:
+        c = sky.clip(a); t = (f - s) * sp
+        if 0 <= t < len(c) - 1 + sky.FADE:
+            w = min(1, (t + 1) / sky.FADE) * min(1, (len(c) - 1 + sky.FADE - t) / sky.FADE)
+            out = out * (1 - w) + c[min(len(c) - 1, int(t))] * w
     out = out.copy(); n = out[:, 3:6]; out[:, 3:6] = n / np.maximum(np.linalg.norm(n, axis=1, keepdims=True), 1e-6)
     return out
 def confirm_entry(g):
