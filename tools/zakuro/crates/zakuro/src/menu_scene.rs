@@ -1315,7 +1315,7 @@ mod bench {
         let t = std::time::Instant::now();
         let mut n = 0; let mut px = 0;
         for i in [100, 101, 102, 103, 104, 105, 106, 107] {
-            let p = crate::native_menu::load(&root.join(format!("char_2/{i:04}.webp"))).unwrap();
+            let p = super::load_frame(&root.join("char_2"), i).unwrap();
             n += 1; px += p.width * p.height;
         }
         let dt = t.elapsed().as_secs_f64() / n as f64;
@@ -1323,17 +1323,6 @@ mod bench {
         let t = std::time::Instant::now();
         for f in ["paper_1.webp", "stage_1.webp", "rays_1.webp"] { let _ = crate::native_menu::load(&root.join(f)).unwrap(); }
         println!("paper+stage+rays decode: {:.0} ms", t.elapsed().as_secs_f64() * 1000.0);
-        let fmt = std::path::Path::new("/tmp/claude-0/-home-claude/0846ad66-37b8-5f7e-bbd2-eb4c158aa498/scratchpad/fmt");
-        let t = std::time::Instant::now();
-        for i in 100..108 {
-            let c = image::open(fmt.join(format!("{i:04}.jpg"))).unwrap().to_rgb8();
-            let a = image::open(fmt.join(format!("{i:04}_a.png"))).unwrap().to_luma8();
-            assert_eq!(c.dimensions(), a.dimensions());
-        }
-        println!("jpg + alpha png decode: {:.1} ms each", t.elapsed().as_secs_f64() * 1000.0 / 8.0);
-        let t = std::time::Instant::now();
-        for i in 100..108 { let _ = image::open(fmt.join(format!("{i:04}.qoi.png"))).unwrap().to_rgba8(); }
-        println!("rgba png decode: {:.1} ms each", t.elapsed().as_secs_f64() * 1000.0 / 8.0);
         // the menu as the game runs it: real time, never waiting for frames
         {
             let ctx = egui::Context::default();
