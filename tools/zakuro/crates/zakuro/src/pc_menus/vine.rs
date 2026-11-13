@@ -1,4 +1,4 @@
-//! The vine that binds a redrawn menu's buttons together (native_menu):
+//! The vine that binds a redrawn menu's buttons together (pc_menus::buttons):
 //! a black silhouette tendril in the style of the game's own menu art,
 //! entering from the window's edge, passing by each button (wherever the
 //! button is now, so it bends when one is dragged), with laurel leaves and

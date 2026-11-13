@@ -79,7 +79,7 @@ impl PcMenus {
     pub fn set_screen(&mut self, id: Option<u16>) {
         let screen = id.and_then(|id| SCREENS.iter().copied().find(|s| s.id == id));
         if screen.map(|s| s.id) == self.screen.map(|s| s.id) { return; }
-        log::info!("Menu drawn by the PC: {}", screen.map_or("none".into(), |s| format!("{:03}", s.id)));
+        log::info!("Redrawn menu: {}", screen.map_or("none".into(), |s| format!("screen {:03}", s.id)));
         self.screen = screen;
         self.live = Live::default();
         zakuro_gpu::kiu_ui::watch_top(screen.map_or(&[][..], |s| s.selected_art));
@@ -117,7 +117,7 @@ impl PcMenus {
             match rx.try_recv() {
                 Ok(prepared) => { self.arts = prepared.iter().filter_map(|p| p.upload(ctx)).collect(); self.art_coming = None; }
                 Err(TryRecvError::Disconnected) => {
-                    log::warn!("The redrawn menus need the menu art pack (KIU_MENU_PACK); none readable");
+                    log::warn!("Redrawn menu: the menu art pack (KIU_MENU_PACK) is missing or unreadable; the game's own menus are shown");
                     self.art_coming = None;
                 }
                 Err(TryRecvError::Empty) => {}
@@ -127,7 +127,7 @@ impl PcMenus {
             match rx.try_recv() {
                 Ok(Some(prepared)) => { self.scene_upload = Some(Upload::new(prepared)); self.scene_coming = None; }
                 Ok(None) | Err(TryRecvError::Disconnected) => {
-                    log::warn!("The main menu scene needs its pack (menu-pc/scene-040); the game's own upper screen is shown instead");
+                    log::warn!("Main menu scene: its pack (menu-pc/scene-040) is missing or unreadable; the game's own upper screen is shown");
                     self.scene_coming = None;
                 }
                 Err(TryRecvError::Empty) => {}

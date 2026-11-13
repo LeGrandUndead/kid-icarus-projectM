@@ -94,7 +94,7 @@ impl Prepared {
             let glow = p.glow(pad);
             (p, glow, pad as f32, k)
         });
-        log::info!("Menu {:03} redrawn from the menu art pack ({}x), prepared in {} ms", screen.id, density, start.elapsed().as_millis());
+        log::info!("Redrawn menu: screen {:03} art prepared in {} ms ({}x)", screen.id, start.elapsed().as_millis(), density);
         Some(Prepared { id: screen.id, buttons, density, back })
     }
 

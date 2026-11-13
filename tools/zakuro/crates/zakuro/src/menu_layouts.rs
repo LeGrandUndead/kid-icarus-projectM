@@ -11,7 +11,7 @@
 //! unless = []               # archives that mean another screen
 //! page = "#F6F5F1"          # the window's background
 //! compose = true            # lower screen drawn transparent, backdrops left out
-//! native = true            # the menu is drawn by the PC with the game's art (native_menu)
+//! native = true            # the menu is drawn by the PC with the game's art (pc_menus)
 //! redraw = true             # lower pieces are elements: each of the game's draws goes
 //!                           # whole to the piece whose src holds its centre (implies compose)
 //! hide = [[56, 186, 190, 240]]   # lower-screen parts left out (3DS-only)

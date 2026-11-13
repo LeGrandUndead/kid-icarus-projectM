@@ -74,7 +74,7 @@ const MAIN_MENU_MAP: [[usize; 4]; 8] = [
 ];
 
 /// The main menu: Solo, Together, Vault and Options hang from a vine on
-/// the left, under the PC scene's heading (menu_scene) and clear of its
+/// the left, under the PC scene's heading (pc_menus::scene) and clear of its
 /// black ground band (from 201 units), as in the v11 design. One scale for
 /// all four (the art's own proportions keep Solo first), inside the safe
 /// margins. StreetPass and AR Cards (3DS only) are left out.

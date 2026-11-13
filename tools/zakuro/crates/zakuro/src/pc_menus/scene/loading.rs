@@ -60,7 +60,7 @@ impl Prepared {
     pub(super) fn read(root: PathBuf) -> Option<Prepared> {
         let start = std::time::Instant::now();
         let text = std::fs::read_to_string(root.join("manifest.toml")).ok()?;
-        let man: Manifest = toml::from_str(&text).map_err(|e| log::warn!("Menu scene: manifest unreadable: {e}")).ok()?;
+        let man: Manifest = toml::from_str(&text).map_err(|e| log::warn!("Main menu scene: manifest unreadable: {e}")).ok()?;
         if man.modes.len() < 4 { return None; }
         // (file, an added light: its alpha is cleared)
         let mut files: Vec<(String, bool)> = Vec::new();
@@ -75,7 +75,7 @@ impl Prepared {
         }
         let mut pictures = Vec::new();
         for (f, light) in files {
-            let Some(mut p) = load_picture(&root.join(&f)) else { log::warn!("Menu scene: {f} unreadable"); return None };
+            let Some(mut p) = load_picture(&root.join(&f)) else { log::warn!("Main menu scene: {f} unreadable"); return None };
             if light { for px in p.rgba.chunks_exact_mut(4) { px[3] = 0; } }
             pictures.push((f, p));
         }

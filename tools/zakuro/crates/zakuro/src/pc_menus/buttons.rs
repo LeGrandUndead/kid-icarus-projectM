@@ -5,14 +5,14 @@
 //! pack, `KIU_MENU_PACK`, rebuilt from the player's ROM at 4x), cut along
 //! its own outline, at a place laid out for a 16:9 window
 //! (doc/UI_DESIGN_RULES.md). A vine in the art's own style binds them
-//! (menu_vine); they sway together in a slow breeze (menu_motion). Pointing
+//! (`vine`); they sway together in a slow breeze (`motion`). Pointing
 //! lights a button (by its own outline), clicking presses it, and, as in the
 //! game, a deliberate drag pulls it about on its vine; it springs back.
 //!
 //! Moving the pointer onto a button selects it at once on the PC (the gold,
 //! the PC scene's heading and character), while the game's own cursor
-//! walks there out of sight with the D-pad (menu_motion::Nav); clicking it touches the game's real
-//! button on its hidden lower screen (top_menus::Tap). The game still
+//! walks there out of sight with the D-pad (`cursor`); clicking it touches
+//! the game's real button on its hidden lower screen (top_menus::Tap). The game still
 //! decides what happens; keyboard and controller keep working, and light
 //! the same buttons.
 //!
@@ -90,7 +90,7 @@ const GOLD: egui::Color32 = egui::Color32::from_rgb(255, 208, 84);
 /// Draws a redrawn screen over the window (`window`, in egui points).
 /// The game's selected choice (`live.nav.current`) is lit with a gold glow,
 /// the others step back. `presence(i)`: button i's horizontal offset in
-/// units and its opacity (a scene's entrance and exit, menu_scene);
+/// units and its opacity (the scene's entrance and exit, pc_menus::scene);
 /// `interactive`: false while the scene is leaving.
 pub fn show(ctx: &egui::Context, screen: &Screen, art: &Art, live: &mut Live, window: egui::Rect,
             presence: &[(f32, f32)], interactive: bool) -> Output {
@@ -145,7 +145,7 @@ pub fn show(ctx: &egui::Context, screen: &Screen, art: &Art, live: &mut Live, wi
     if pointing != live.last_pointed { out.entered = out.pointed; }
     live.last_pointed = pointing;
     // the selection shown: the pointer's at once, else where the game's
-    // cursor is going (it catches up out of sight, menu_motion::Nav)
+    // cursor is going (it catches up out of sight, `cursor`)
     let selected = out.entered.or(live.nav.heading());
     // hover and gold ease in and out (about 8 frames) rather than pop
     live.ease.resize(screen.buttons.len(), [0.0; 2]);
@@ -228,7 +228,7 @@ mod pointer {
         out
     }
 
-    /// KIU_MENU_PACK=<menu-pc> cargo test -p zakuro --lib native_menu::pointer -- --ignored --nocapture
+    /// KIU_MENU_PACK=<menu-pc> cargo test -p zakuro --lib pc_menus::buttons::pointer -- --ignored --nocapture
     #[test]
     #[ignore]
     fn pointing_and_clicking_follow_the_button_shapes() {

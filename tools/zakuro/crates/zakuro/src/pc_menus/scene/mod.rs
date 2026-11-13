@@ -1,5 +1,5 @@
 //! The main menu's scene, drawn by the PC behind the redrawn buttons
-//! (native_menu): the v11 "Ink & Paper" design (tools/idols/menu_v7).
+//! (pc_menus::buttons): the v11 "Ink & Paper" design (tools/idols/menu_v7).
 //!
 //! Everything is the game's own art, prepared once from the player's ROM into
 //! a scene pack (tools/idols/menu_v7/scene_pack.py ->

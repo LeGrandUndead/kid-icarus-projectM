@@ -1301,7 +1301,7 @@ impl App {
         let scene = zakuro_gpu::kiu_ui::end_frame();
         // which of the game's menus is up, for the PC's own buttons: drawn
         // where the screen's layout says it is redrawn natively
-        // (native_menu), or everywhere without a layout file (top_menus)
+        // (pc_menus), or everywhere without a layout file (top_menus)
         self.top_menu.update(&scene, game.frame);
         self.pc_menus.observe(scene.top_watched, scene.fresh, game.frame);
         self.menu_layouts.poll();

@@ -230,7 +230,7 @@ impl Stream {
             match d.picture {
                 Some(p) => { self.frames[d.key.0].cache.insert(d.key.1, p); }
                 None => {
-                    if self.failed.insert(d.key) { log::warn!("Menu scene: character frame {:?} unreadable", d.key); }
+                    if self.failed.insert(d.key) { log::warn!("Main menu scene: character frame {:?} unreadable", d.key); }
                 }
             }
         }
