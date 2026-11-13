@@ -1,8 +1,8 @@
 //! The main menu's scene, drawn by the PC behind the redrawn buttons
-//! (pc_menus::buttons): the v11 "Ink & Paper" design (tools/idols/menu_v7).
+//! (pc_menus::buttons): the "Ink & Paper" design.
 //!
 //! Everything is the game's own art, prepared once from the player's ROM into
-//! a scene pack (tools/idols/menu_v7/scene_pack.py ->
+//! a scene pack (tools/idols/menu_pack ->
 //! build/texture-work/menu-pc/scene-040, local only): the striped paper and
 //! the mode's emblem, the mode's stage in a slanted window with the mode's
 //! character relit for it, ink ornaments, the ground band, the heading,

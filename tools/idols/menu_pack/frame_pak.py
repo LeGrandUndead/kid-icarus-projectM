@@ -1,20 +1,24 @@
-# Packs one character's frames (char_M/NNNN.jpg + NNNN_a.png) into one file,
-# char_M.pak, so the game reads them in one go instead of 600+ small files
-# (on a hard disk, while the game also reads its ROM, the small files took
-# a minute).
-#
-#   python3 frame_pak.py <scene-040 folder> <mode 0-3>
-#
-# The file:
-#   b'KIUFRAM1', then the number of frames (4 bytes),
-#   then per frame: index, JPEG length, PNG length (4 bytes each),
-#   then each frame's JPEG bytes and PNG bytes, in the same order.
-# Numbers are little-endian. Written to .tmp first, then renamed, so a
-# half-written file is never used.
-import os, sys, struct
+"""One character's frames (char_M/NNNN.jpg + NNNN_a.png) packed into one
+file, char_M.pak, so the game reads them in one go instead of hundreds of
+small files (on a hard disk, while the game also reads its ROM, the small
+files took a minute; the game falls back to them without a pak).
 
-def main():
-    folder, mode = sys.argv[1], int(sys.argv[2])
+The file:
+    b'KIUFRAM1', then the number of frames (4 bytes),
+    then per frame: index, JPEG length, PNG length (4 bytes each),
+    then each frame's JPEG bytes and PNG bytes, in the same order.
+Numbers are little-endian. Written to .tmp first, then renamed, so a
+half-written file is never used.
+
+    python3 -m menu_pack.frame_pak <scene-040 folder> <mode 0-3>
+"""
+import os
+import struct
+import sys
+
+
+def pack(folder, mode):
+    """Packs mode's frames in `folder`; returns the pak's path."""
     frames_dir = os.path.join(folder, f'char_{mode}')
     indices = sorted(int(name[:4]) for name in os.listdir(frames_dir) if name.endswith('.jpg'))
     out_path = os.path.join(folder, f'char_{mode}.pak')
@@ -38,5 +42,8 @@ def main():
             out.write(png)
     os.replace(tmp_path, out_path)
     print('packed', len(frames), 'frames into', out_path, os.path.getsize(out_path) // (1 << 20), 'MB')
+    return out_path
 
-main()
+
+if __name__ == '__main__':
+    pack(sys.argv[1], int(sys.argv[2]))

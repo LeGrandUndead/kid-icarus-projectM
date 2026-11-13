@@ -46,7 +46,7 @@ pub(super) type Key = (usize, i32);
 /// A frame's two files as read from disk (JPEG colour, PNG coverage).
 pub(super) type FrameFiles = (Vec<u8>, Vec<u8>);
 
-/// A character's frames packed in one file (tools/idols/menu_v7/frame_pak.py:
+/// A character's frames packed in one file (tools/idols/menu_pack/frame_pak.py:
 /// "KIUFRAM1", the count, then index / JPEG length / PNG length per frame,
 /// then the bytes in that order), read in one go.
 pub(super) fn read_pak(path: &Path) -> Option<Vec<(i32, FrameFiles)>> {
