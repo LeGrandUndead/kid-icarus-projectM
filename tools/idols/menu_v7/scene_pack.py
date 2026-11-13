@@ -9,8 +9,10 @@
 #   paper_M, stage_M (opaque), emblem_M, heading_M, caption_M, band, swirl,
 #   sprig, controls (alpha), rays_M, glow_0 (light: added, stored on black),
 #   sprite_* (white particle shapes, tinted at run time),
-#   char_M/NNNN.webp: the character, relit for its stage, light-wrapped,
-#   with its soft glow, cropped; the manifest gives each frame's corner and
+#   char_M/NNNN.jpg + NNNN_a.png: the character, relit for its stage,
+#   light-wrapped, with its soft glow, cropped: colour as JPEG, coverage as a
+#   grey PNG (both decode about 4x faster than WebP, so the game can stream
+#   them at 60 fps); the manifest gives each frame's corner and size and
 #   the sequences (loop, back-and-forth, one-shot).
 import os, sys, json
 g = {'__name__': 'scene_pack'}
@@ -102,6 +104,29 @@ def rest_panel(mode):
     if mode == 0: win = G.add(win, GLOW0)
     return win
 
+def bleed(img):
+    """The colour under the see-through pixels, filled from the nearby
+    visible ones (a premultiplied blur divided by the blurred coverage), so
+    JPEG has no dark or stray colour to bleed into the soft edges."""
+    from scipy import ndimage
+    a = np.asarray(img, np.float32) / 255
+    alpha = a[:, :, 3:4]
+    rgb = a[:, :, :3]
+    soft = np.zeros_like(rgb); cover = np.zeros_like(alpha)
+    for sigma in (2, 6, 18):                       # near colour first, far colour for big gaps
+        pre = np.stack([ndimage.gaussian_filter(rgb[:, :, c] * alpha[:, :, 0], sigma) for c in range(3)], 2)
+        cov = ndimage.gaussian_filter(alpha[:, :, 0], sigma)[:, :, None]
+        fill = (cover < 1e-3) & (cov > 1e-3)
+        soft = np.where(fill, pre / np.maximum(cov, 1e-6), soft)
+        cover = np.where(fill, 1.0, cover)
+    out = np.where(alpha > 0.98, rgb, alpha * rgb + (1 - alpha) * soft)
+    return Image.fromarray((np.clip(out, 0, 1) * 255 + 0.5).astype(np.uint8))
+
+def save_frame(lay, base):
+    """One character frame: colour (JPEG) and coverage (grey PNG)."""
+    bleed(lay).save(base + '.jpg', quality=92, subsampling=0)
+    lay.getchannel('A').save(base + '_a.png', optimize=False, compress_level=6)
+
 def char_frames(mode):
     seq = SEQ[mode]; k, x0, y0 = PLACE[mode]; panel = rest_panel(mode)
     os.makedirs(f'{OUT}/char_{mode}', exist_ok=True)
@@ -111,9 +136,14 @@ def char_frames(mode):
         pre = f'{seq["dir"]}/{i:04d}'
         if not os.path.exists(pre + '_nrm.png'):
             print('missing', pre); continue
-        done = f'{OUT}/char_{mode}/{i:04d}.webp'
+        done = f'{OUT}/char_{mode}/{i:04d}.jpg'
         if os.path.exists(done) and os.path.exists(done + '.at'):       # already built (incremental)
             frames[i] = [int(x) for x in open(done + '.at').read().split()]; continue
+        old = f'{OUT}/char_{mode}/{i:04d}.webp'
+        if os.path.exists(old) and os.path.exists(old + '.at'):         # built before as WebP: convert
+            lay = Image.open(old).convert('RGBA'); x, y = [int(v) for v in open(old + '.at').read().split()]
+            save_frame(lay, done[:-4]); frames[i] = [x, y, lay.width, lay.height]
+            open(done + '.at', 'w').write(' '.join(map(str, frames[i]))); os.remove(old); os.remove(old + '.at'); continue
         ch = scaled(relight.relight(pre, **LIGHT[mode]), k)
         pos = (int(x0), int(y0))
         ch = integrate(ch, mode, panel, pos)
@@ -122,9 +152,10 @@ def char_frames(mode):
         lay.alpha_composite(soft_glow(ch, mix(MODES[mode]['color'], (255, 240, 220), 0.5), 0.22, 16), (pad, pad))
         lay.alpha_composite(ch, (pad, pad))
         bb = lay.getchannel('A').getbbox()
-        lay.crop(bb).save(f'{OUT}/char_{mode}/{i:04d}.webp', quality=90, method=4)
-        frames[i] = [pos[0] - pad + bb[0], pos[1] - pad + bb[1]]
-        open(done + '.at', 'w').write(f'{frames[i][0]} {frames[i][1]}')
+        lay = lay.crop(bb)
+        save_frame(lay, done[:-4])
+        frames[i] = [pos[0] - pad + bb[0], pos[1] - pad + bb[1], lay.width, lay.height]
+        open(done + '.at', 'w').write(' '.join(map(str, frames[i])))
     out = {p: seq[p] for p in ('intro', 'idle', 'confirm') if p in seq}
     return dict(dir=f'char_{mode}', frames=frames, **out)
 
@@ -156,8 +187,8 @@ if True:
     man['sprites'] = dict(feather=white(P['hane'], 'sprite_feather'), spark=white(P['spark'], 'sprite_spark'),
                           powder=white(P['kona'], 'sprite_powder'), leaves=[white(l, f'sprite_leaf{i}') for i, l in enumerate(P['leaves'])],
                           flash=white(FLASH, 'sprite_flash'))
-    for e in man['modes']:                       # frames as [index, x, y] rows
+    for e in man['modes']:                       # frames as [index, x, y, width, height] rows
         ch = e['character']
-        if ch: ch['frames'] = [[int(i), int(xy[0]), int(xy[1])] for i, xy in sorted(ch['frames'].items())]
+        if ch: ch['frames'] = [[int(i)] + [int(v) for v in f] for i, f in sorted(ch['frames'].items())]
     open(f'{OUT}/manifest.toml', 'w').write(toml_doc(man))
     print('pack written:', OUT)

@@ -302,26 +302,62 @@ fn texture(ctx: &egui::Context, name: &str, p: &Picture) -> egui::TextureHandle 
     ctx.load_texture(name, image, egui::TextureOptions::LINEAR)
 }
 
-impl Art {
-    pub fn load(ctx: &egui::Context, screen: &Screen) -> Option<Art> {
+/// A screen's button pictures, cut and glowed (the slow part), ready to
+/// become textures; made on its own thread (`prepare`).
+pub struct Prepared {
+    id: u16,
+    buttons: Vec<(Picture, Picture, f32)>,
+    density: f32,
+    back: Option<(Picture, Picture, f32, f32)>,
+}
+
+/// Cuts and glows every redrawn screen's buttons on its own thread (at
+/// start-up), so showing a screen costs only its upload.
+pub fn prepare() -> std::sync::mpsc::Receiver<Vec<Prepared>> {
+    let (tx, rx) = std::sync::mpsc::channel();
+    let _ = std::thread::Builder::new().name("native-menu-art".into()).spawn(move || {
+        let _ = tx.send(SCREENS.iter().filter_map(|s| Prepared::make(s)).collect());
+    });
+    rx
+}
+
+impl Prepared {
+    fn make(screen: &Screen) -> Option<Prepared> {
+        let start = std::time::Instant::now();
         let pack = pack()?;
         let sheet = load(&pack.join(screen.sheet))?;
         let density = sheet.width as f32 / screen.sheet_size as f32;
-        let mut masks = Vec::new();
-        let buttons = cut_buttons(&sheet, screen).iter().zip(screen.buttons).map(|(p, b)| {
+        let buttons = cut_buttons(&sheet, screen).into_iter().map(|p| {
             let pad = (p.height.min(p.width) as f32 * 0.14) as usize;
             let glow = p.glow(pad);
-            masks.push(Mask::of(&glow));
-            (texture(ctx, &format!("kiu-{}-{}", screen.id, b.name), p), texture(ctx, &format!("kiu-{}-{}-glow", screen.id, b.name), &glow), pad as f32)
+            (p, glow, pad as f32)
         }).collect();
         let back = load(&pack.join(BACK_SHEET)).map(|p| {
             let k = p.width as f32 / 64.0;
             let pad = (p.height as f32 * 0.14) as usize;
-            (texture(ctx, "kiu-back", &p), texture(ctx, "kiu-back-glow", &p.glow(pad)), pad as f32, k)
+            let glow = p.glow(pad);
+            (p, glow, pad as f32, k)
         });
-        log::info!("Main menu redrawn from the menu art pack ({}x)", density);
-        Some(Art { id: screen.id, buttons, masks, density, back })
+        log::info!("Menu {:03} redrawn from the menu art pack ({}x), prepared in {} ms", screen.id, density, start.elapsed().as_millis());
+        Some(Prepared { id: screen.id, buttons, density, back })
     }
+
+    /// The textures (quick: the pictures are ready).
+    pub fn upload(&self, ctx: &egui::Context) -> Option<Art> {
+        let screen = SCREENS.iter().find(|s| s.id == self.id)?;
+        let buttons = self.buttons.iter().zip(screen.buttons).map(|((p, glow, pad), b)| {
+            (texture(ctx, &format!("kiu-{}-{}", screen.id, b.name), p), texture(ctx, &format!("kiu-{}-{}-glow", screen.id, b.name), glow), *pad)
+        }).collect();
+        let masks = self.buttons.iter().map(|(_, glow, _)| Mask::of(glow)).collect();
+        let back = self.back.as_ref().map(|(p, glow, pad, k)| (texture(ctx, "kiu-back", p), texture(ctx, "kiu-back-glow", glow), *pad, *k));
+        Some(Art { id: self.id, buttons, masks, density: self.density, back })
+    }
+}
+
+impl Art {
+    /// Cuts, glows and uploads at once (the preview test).
+    #[cfg(test)]
+    pub fn load(ctx: &egui::Context, screen: &Screen) -> Option<Art> { Prepared::make(screen)?.upload(ctx) }
 }
 
 /// A redrawn screen's moving state: its buttons' motion and the game's
@@ -591,6 +627,69 @@ mod pack_check {
                 image::RgbaImage::from_raw(q.width as u32, q.height as u32, q.rgba).unwrap()
                     .save(std::path::Path::new(&out).join(format!("{name}.png"))).unwrap();
             }
+        }
+    }
+}
+
+#[cfg(test)]
+mod pointer {
+    use super::*;
+
+    fn frame(ctx: &egui::Context, art: &Art, live: &mut Live, t: f64, events: Vec<egui::Event>) -> Output {
+        let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1920.0, 1080.0));
+        let input = egui::RawInput { time: Some(t), screen_rect: Some(screen), events, ..Default::default() };
+        let mut out = Output::default();
+        let _ = ctx.run_ui(input, |ui| { out = show(ui.ctx(), &MAIN_MENU, art, live, screen, &[(0.0, 1.0); 4], true); });
+        out
+    }
+
+    /// KIU_MENU_PACK=<menu-pc> cargo test -p zakuro --lib native_menu::pointer -- --ignored --nocapture
+    #[test]
+    #[ignore]
+    fn pointing_and_clicking_follow_the_button_shapes() {
+        let ctx = egui::Context::default();
+        let mut art = None;
+        let _ = ctx.run_ui(egui::RawInput::default(), |ui| art = Art::load(ui.ctx(), &MAIN_MENU));
+        let Some(art) = art else { println!("no menu art pack"); return };
+        let mut live = Live::default();
+        let unit = 1080.0 / 240.0;
+        let homes = homes(&MAIN_MENU, &art);
+        let mut t = 0.0;
+        let clock = std::time::Instant::now();
+        for k in 0..120 { t += 1.0 / 60.0; let _ = frame(&ctx, &art, &mut live, t, vec![egui::Event::PointerMoved(egui::pos2(900.0, 100.0 + k as f32))]); }
+        println!("buttons and vine: {:.2} ms a frame", clock.elapsed().as_secs_f64() * 1000.0 / 120.0);
+        for (i, b) in MAIN_MENU.buttons.iter().enumerate() {
+            // a point on the button's own art: the covered point nearest its middle
+            let h = homes[i];
+            let mut on = None;
+            'find: for r in 0..40 {
+                for (dx, dy) in [(0, 0), (r, 0), (-r, 0), (0, r), (0, -r)] {
+                    let p = egui::pos2(((h[0] + h[2]) / 2.0 + dx as f32) * unit, ((h[1] + h[3]) / 2.0 + dy as f32 * 0.3) * unit);
+                    t += 1.0 / 60.0;
+                    let out = frame(&ctx, &art, &mut live, t, vec![egui::Event::PointerMoved(p)]);
+                    if out.pointed == Some(b.node) { on = Some((p, out)); break 'find; }
+                }
+            }
+            let (p, out) = on.unwrap_or_else(|| panic!("{} never pointed at", b.name));
+            println!("{}: pointed at {:?}, selected at once: {:?}", b.name, p, out.entered);
+            // the next frame: still pointed, not entered again
+            t += 1.0 / 60.0;
+            let out = frame(&ctx, &art, &mut live, t, vec![egui::Event::PointerMoved(p)]);
+            assert_eq!(out.pointed, Some(b.node));
+            assert_eq!(out.entered, None);
+            // press and release: a click on this button
+            t += 1.0 / 60.0;
+            let press = |pressed| egui::Event::PointerButton { pos: p, button: egui::PointerButton::Primary, pressed, modifiers: Default::default() };
+            let _ = frame(&ctx, &art, &mut live, t, vec![press(true)]);
+            t += 1.0 / 60.0;
+            let out = frame(&ctx, &art, &mut live, t, vec![press(false)]);
+            assert_eq!(out.clicked.map(|c| c.0), Some(b.node), "{} click", b.name);
+            // the empty top-left corner of its rectangle is not the button
+            t += 1.0 / 60.0;
+            let corner = egui::pos2(h[0] * unit + 2.0, h[1] * unit + 2.0);
+            let out = frame(&ctx, &art, &mut live, t, vec![egui::Event::PointerMoved(corner)]);
+            println!("  its rectangle's corner points at {:?}", out.pointed);
+            assert_ne!(out.pointed, Some(b.node), "{}: the empty corner counts", b.name);
         }
     }
 }

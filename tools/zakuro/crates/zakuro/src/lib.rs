@@ -142,11 +142,12 @@ fn start(options: cli::Options, linked: Option<Linked>) {
         space_jump: kiu_jump::SpaceJump::default(),
         top_menu: top_menus::Shown::default(),
         native_screen: None,
-        native_art: None,
-        native_art_failed: false,
+        native_art_coming: native_menu::pack().map(|_| native_menu::prepare()),
+        native_arts: Vec::new(),
         native_live: native_menu::Live::default(),
+        menu_scene_coming: menu_scene::pack().map(menu_scene::prepare),
+        menu_scene_upload: None,
         menu_scene: None,
-        menu_scene_failed: false,
         native_watched: 0,
         tap: top_menus::Tap::default(),
         released_for_menu: false,
@@ -421,15 +422,18 @@ struct App {
     top_menu: top_menus::Shown,
     /// the screen's layout has its menu redrawn by us (native_menu)
     native_screen: Option<u16>,
-    /// the redrawn menu's art, loaded once from the menu art pack
-    native_art: Option<native_menu::Art>,
-    native_art_failed: bool,
+    /// the redrawn menus' art: prepared on its own thread from start-up,
+    /// then uploaded once and kept
+    native_art_coming: Option<std::sync::mpsc::Receiver<Vec<native_menu::Prepared>>>,
+    native_arts: Vec<native_menu::Art>,
     /// the redrawn menu's moving buttons and the game's cursor
     native_live: native_menu::Live,
-    /// the main menu's scene drawn by the PC behind the buttons (menu_scene),
-    /// kept while it plays its exit after the game has left the menu
+    /// the main menu's scene drawn by the PC behind the buttons (menu_scene):
+    /// its pack read on its own thread from start-up, uploaded a few layers
+    /// a frame, then kept for every visit (it rests between them)
+    menu_scene_coming: Option<std::sync::mpsc::Receiver<Option<menu_scene::Prepared>>>,
+    menu_scene_upload: Option<menu_scene::Upload>,
     menu_scene: Option<menu_scene::Scene>,
-    menu_scene_failed: bool,
     native_watched: u32,
     /// a touch the top-screen buttons asked for, given over a few frames
     tap: top_menus::Tap,
@@ -1455,28 +1459,40 @@ impl App {
             .and_then(|id| native_menu::SCREENS.iter().copied().find(|s| s.id == id));
         // the plain PC buttons only without a layout file, over the top view
         let top_menu = shown.filter(|_| !self.menu_layouts.active() && self.presentation.access.is_none());
-        if let Some(screen) = native {
-            if self.native_art.as_ref().is_none_or(|a| a.id != screen.id) && !self.native_art_failed {
-                self.native_art = native_menu::Art::load(&gui.ctx, screen);
-                if self.native_art.is_none() {
-                    self.native_art_failed = true;
-                    log::warn!("The redrawn menus need the menu art pack (KIU_MENU_PACK); none found");
+        // the redrawn menus' art and the main menu's scene, read off this
+        // thread since start-up: taken in when ready, uploaded once
+        if let Some(rx) = &self.native_art_coming {
+            match rx.try_recv() {
+                Ok(prepared) => {
+                    self.native_arts = prepared.iter().filter_map(|p| p.upload(&gui.ctx)).collect();
+                    self.native_art_coming = None;
                 }
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                    log::warn!("The redrawn menus need the menu art pack (KIU_MENU_PACK); none readable");
+                    self.native_art_coming = None;
+                }
+                Err(std::sync::mpsc::TryRecvError::Empty) => {}
             }
         }
-        let native = native.zip(self.native_art.as_ref()).filter(|(s, a)| s.id == a.id);
-        // the main menu's scene: made when the menu appears, told when the
-        // game leaves it (it then plays its exit and ends by itself)
-        if self.native_screen == Some(40) && game.is_some() {
-            if self.menu_scene.is_none() && !self.menu_scene_failed {
-                self.menu_scene = menu_scene::pack().and_then(|root| menu_scene::Scene::load(&gui.ctx, &root));
-                if self.menu_scene.is_none() {
-                    self.menu_scene_failed = true;
+        if let Some(rx) = &self.menu_scene_coming {
+            match rx.try_recv() {
+                Ok(Some(prepared)) => { self.menu_scene_upload = Some(menu_scene::Upload::new(prepared)); self.menu_scene_coming = None; }
+                Ok(None) | Err(std::sync::mpsc::TryRecvError::Disconnected) => {
                     log::warn!("The main menu scene needs its pack (menu-pc/scene-040); the game's own upper screen is shown instead");
+                    self.menu_scene_coming = None;
                 }
+                Err(std::sync::mpsc::TryRecvError::Empty) => {}
             }
-        } else if let Some(scene) = &mut self.menu_scene {
-            scene.game_left();
+        }
+        if let Some(up) = &mut self.menu_scene_upload {
+            if let Some(scene) = up.step(&gui.ctx) { self.menu_scene = Some(scene); self.menu_scene_upload = None; }
+        }
+        let native = native.and_then(|s| self.native_arts.iter().find(|a| a.id == s.id).map(|a| (s, a)));
+        // the main menu's scene: starts when the menu appears, told when the
+        // game leaves it (it then plays its exit and rests)
+        if let Some(scene) = &mut self.menu_scene {
+            if self.native_screen == Some(40) && game.is_some() { scene.on_menu(&gui.ctx); }
+            else { scene.game_left(); }
         }
         let menu_scene = &mut self.menu_scene;
         let native_live = &mut self.native_live;
@@ -1486,19 +1502,20 @@ impl App {
         let mut scene_done = false;
         let overlay = gui.frame(window, |ui| {
             let rect = ui.ctx().content_rect();
-            if let Some(scene) = menu_scene.as_mut() {
+            if let Some(scene) = menu_scene.as_mut().filter(|s| s.active()) {
                 // where the selection is going, not each choice the cursor passes on the way
                 scene.select(native_live.nav.heading());
                 scene_done = !scene.show(ui.ctx(), rect);
             }
+            let scene = menu_scene.as_ref().filter(|s| s.active());
             if let Some((screen, art)) = native {
                 let presence: Vec<(f32, f32)> = (0..screen.buttons.len())
-                    .map(|i| menu_scene.as_ref().map_or((0.0, 1.0), |s| s.button_presence(i))).collect();
-                let interactive = menu_scene.as_ref().is_none_or(|s| s.interactive());
+                    .map(|i| scene.map_or((0.0, 1.0), |s| s.button_presence(i))).collect();
+                let interactive = scene.is_none_or(|s| s.interactive());
                 let out = native_menu::show(ui.ctx(), screen, art, native_live, rect, &presence, interactive);
                 native_live.nav.want(out.entered);
                 tapped = tapped.or(out.touch);
-                if let Some(scene) = menu_scene.as_mut() {
+                if let Some(scene) = menu_scene.as_mut().filter(|s| s.active()) {
                     if let Some((node, at)) = out.clicked { scene.confirm(node, Some(at), rect); }
                     if out.back { scene.back(); }
                 }
@@ -1522,8 +1539,7 @@ impl App {
         });
         self.library.changed = false;
         if scene_done {
-            log::info!("Main menu scene: finished");
-            self.menu_scene = None;
+            log::info!("Main menu scene: finished (kept for the next visit)");
         }
         if let Some(at) = tapped {
             log::info!("Top-screen menu: touch {at:?}");

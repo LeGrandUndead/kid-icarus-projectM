@@ -59,7 +59,12 @@ impl Gui {
                         id: texture(id),
                         offset: delta.pos.map(|[x, y]| [x as u32, y as u32]),
                         size: [image.width() as u32, image.height() as u32],
-                        pixels: image.pixels.iter().flat_map(|color| color.to_array()).collect(),
+                        pixels: {
+                            // one straight copy (big pictures, such as the menu's character frames, come every frame)
+                            let mut bytes = vec![0u8; image.pixels.len() * 4];
+                            for (out, color) in bytes.chunks_exact_mut(4).zip(&image.pixels) { out.copy_from_slice(&color.to_array()); }
+                            bytes
+                        },
                         linear: delta.options.magnification == egui::TextureFilter::Linear,
                     }
                 })

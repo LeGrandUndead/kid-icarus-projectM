@@ -30,11 +30,19 @@
 //! Times are in frames at 60 per second, counted from real time, so it is
 //! smooth at any refresh rate. Positions are in the design's 1920x1080
 //! pixels, scaled to cover the window.
+//!
+//! Cost on the game's thread: the pack is read on its own thread from
+//! start-up (`prepare`) and turned into textures a few per frame (`Upload`),
+//! once, then kept for every visit. Character frames (JPEG colour + PNG
+//! coverage, ~7 ms each) are decoded by 2-4 threads working from a to-do list
+//! that is replaced every frame (what is needed now, then what comes next),
+//! so they never fall behind for good; each mode's character is one texture,
+//! updated in place.
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
-use std::sync::mpsc::{channel, Receiver, Sender};
-use std::sync::Arc;
+use std::sync::mpsc::{channel, Receiver};
+use std::sync::{Arc, Condvar, Mutex};
 
 use egui::{Color32, Mesh, Pos2, Rect, TextureHandle};
 use serde::Deserialize;
@@ -61,8 +69,9 @@ pub struct Seq { pub range: [i32; 2], #[serde(default)] pub play: Option<String>
 #[derive(Deserialize, Clone)]
 pub struct Character {
     pub dir: String,
-    /// [index, x, y]: each frame's file and top-left corner
-    pub frames: Vec<[i32; 3]>,
+    /// [index, x, y, width, height]: each frame's file, top-left corner and
+    /// size (older packs: [index, x, y])
+    pub frames: Vec<Vec<i32>>,
     #[serde(default)] pub intro: Option<Seq>,
     pub idle: Seq,
     pub confirm: Seq,
@@ -194,13 +203,19 @@ impl Canvas {
     }
     /// A picture over the rectangle (x, y, w, h), turned `deg` about `pivot`, tinted.
     fn image(&mut self, tex: &TextureHandle, r: [f32; 4], deg: f32, pivot: [f32; 2], tint: Color32) {
+        self.image_part(tex.id(), [1.0, 1.0], r, deg, pivot, tint);
+    }
+    /// The top-left `uv` part of a texture over the rectangle.
+    fn image_part(&mut self, tex: egui::TextureId, uv: [f32; 2], r: [f32; 4], deg: f32, pivot: [f32; 2], tint: Color32) {
         let (s, c) = deg.to_radians().sin_cos();
         let rot = |x: f32, y: f32| [pivot[0] + (x - pivot[0]) * c - (y - pivot[1]) * s, pivot[1] + (x - pivot[0]) * s + (y - pivot[1]) * c];
         let [x, y, w, h] = r;
-        let pts = [Vx { p: rot(x, y), uv: [0.0, 0.0], c: tint }, Vx { p: rot(x + w, y), uv: [1.0, 0.0], c: tint },
-                   Vx { p: rot(x + w, y + h), uv: [1.0, 1.0], c: tint }, Vx { p: rot(x, y + h), uv: [0.0, 1.0], c: tint }];
-        self.poly(tex.id(), &pts);
+        let pts = [Vx { p: rot(x, y), uv: [0.0, 0.0], c: tint }, Vx { p: rot(x + w, y), uv: [uv[0], 0.0], c: tint },
+                   Vx { p: rot(x + w, y + h), uv: uv, c: tint }, Vx { p: rot(x, y + h), uv: [0.0, uv[1]], c: tint }];
+        self.poly(tex, &pts);
     }
+    /// A character frame over the rectangle.
+    fn frame(&mut self, f: &Shown, r: [f32; 4], tint: Color32) { self.image_part(f.tex.id(), f.uv, r, 0.0, [0.0, 0.0], tint); }
     fn image_at(&mut self, tex: &TextureHandle, at: [f32; 2], tint: Color32) {
         let s = tex.size();
         self.image(tex, [at[0], at[1], s[0] as f32, s[1] as f32], 0.0, at, tint);
@@ -252,82 +267,197 @@ fn mix(a: [u8; 3], b: [u8; 3], k: f32) -> [u8; 3] {
 
 // --- character frames, decoded off the main thread -------------------------------------
 
-struct Decoded { mode: usize, index: i32, picture: Picture }
+/// One frame: colour (JPEG) and coverage (grey PNG), premultiplied; older
+/// packs: one WebP.
+fn load_frame(dir: &Path, index: i32) -> Option<Picture> {
+    let jpg = dir.join(format!("{index:04}.jpg"));
+    if !jpg.is_file() { return load_picture(&dir.join(format!("{index:04}.webp"))); }
+    let rgb = image::open(&jpg).ok()?.to_rgb8();
+    let cover = image::open(dir.join(format!("{index:04}_a.png"))).ok()?.to_luma8();
+    if rgb.dimensions() != cover.dimensions() { return None; }
+    let (w, h) = rgb.dimensions();
+    let mut rgba = vec![0u8; w as usize * h as usize * 4];
+    for ((out, c), &a) in rgba.chunks_exact_mut(4).zip(rgb.as_raw().chunks_exact(3)).zip(cover.as_raw()) {
+        for k in 0..3 { out[k] = ((c[k] as u32 * a as u32 + 127) / 255) as u8; }
+        out[3] = a;
+    }
+    Some(Picture { width: w as usize, height: h as usize, rgba })
+}
+
+/// A frame: its mode and index.
+type Key = (usize, i32);
+
+/// The decoders' to-do list: the frames wanted now, most urgent first. The
+/// scene replaces it every frame, so a frame that went by before its turn is
+/// simply dropped, and the decoders work on what is needed now.
+struct Board { wanted: Vec<Key>, busy: HashSet<Key>, quit: bool }
+struct Shared { board: Mutex<Board>, wake: Condvar }
+
+struct Decoded { key: Key, picture: Option<Picture> }
 
 /// One mode's character: its frames on disk, the decoded ones near the
-/// playhead, and the texture showing the current one.
+/// playhead, and the one texture showing the current frame.
 struct Frames {
-    dir: PathBuf,
-    at: HashMap<i32, [f32; 2]>,
-    cache: HashMap<i32, Arc<Picture>>,
-    asked: HashSet<i32>,
+    /// corner and size of each frame
+    at: HashMap<i32, [f32; 4]>,
+    cache: HashMap<i32, Picture>,
+    /// kept whatever the playhead: the first frames of its entrance, hold
+    /// and confirm, so a mode always starts on its own frames
+    pinned: HashSet<i32>,
+    /// the biggest frame (+1 for a clear edge): the texture's size
+    most: [usize; 2],
     tex: Option<TextureHandle>,
     shown: Option<i32>,
 }
 
-struct Stream { to: Sender<(usize, i32, PathBuf)>, from: Receiver<Decoded>, frames: Vec<Frames> }
+/// A character frame on screen: its texture, corner and size (design
+/// pixels), and how much of the texture it covers.
+#[derive(Clone)]
+struct Shown { tex: TextureHandle, at: [f32; 2], size: [f32; 2], uv: [f32; 2] }
+
+struct Stream {
+    shared: Arc<Shared>,
+    from: Receiver<Decoded>,
+    frames: Vec<Frames>,
+    /// this frame's requests: needed now, then needed next
+    now: Vec<Key>,
+    next: Vec<Key>,
+    /// every frame named this frame (kept in the caches), and each mode's playhead
+    named: HashSet<Key>,
+    playhead: [Option<i32>; 4],
+    /// frames that could not be read (asked for once only)
+    failed: HashSet<Key>,
+    /// frames shown on time, frames shown late, and the most frames late
+    pub stats: [u32; 3],
+}
+
+impl Drop for Stream {
+    fn drop(&mut self) {
+        if let Ok(mut b) = self.shared.board.lock() { b.quit = true; }
+        self.shared.wake.notify_all();
+    }
+}
+
 impl Stream {
     fn new(root: &Path, man: &Manifest) -> Stream {
-        let (to, rx) = channel::<(usize, i32, PathBuf)>();
+        let shared = Arc::new(Shared { board: Mutex::new(Board { wanted: Vec::new(), busy: HashSet::new(), quit: false }), wake: Condvar::new() });
         let (tx, from) = channel::<Decoded>();
-        // two decoders share the requests
-        let rx = Arc::new(std::sync::Mutex::new(rx));
-        for n in 0..2 {
-            let (rx, tx) = (rx.clone(), tx.clone());
-            let _ = std::thread::Builder::new().name(format!("menu-scene-decode-{n}")).spawn(move || loop {
-                let job = { let Ok(r) = rx.lock() else { return }; r.recv() };
-                let Ok((mode, index, path)) = job else { return };
-                if let Some(picture) = load_picture(&path) { if tx.send(Decoded { mode, index, picture }).is_err() { return; } }
+        let dirs: Vec<PathBuf> = man.modes.iter().map(|m| root.join(&m.character.dir)).collect();
+        // two to four decoders, leaving the game its own cores
+        let n = std::thread::available_parallelism().map_or(2, |n| n.get()).saturating_sub(2).clamp(2, 4);
+        for k in 0..n {
+            let (shared, tx, dirs) = (shared.clone(), tx.clone(), dirs.clone());
+            let _ = std::thread::Builder::new().name(format!("menu-scene-decode-{k}")).spawn(move || loop {
+                // the most urgent frame nobody is decoding yet
+                let key = {
+                    let Ok(mut b) = shared.board.lock() else { return };
+                    loop {
+                        if b.quit { return; }
+                        if let Some(&key) = b.wanted.iter().find(|key| !b.busy.contains(key)) { b.busy.insert(key); break key; }
+                        b = match shared.wake.wait(b) { Ok(b) => b, Err(_) => return };
+                    }
+                };
+                let picture = dirs.get(key.0).and_then(|d| load_frame(d, key.1));
+                if let Ok(mut b) = shared.board.lock() { b.busy.remove(&key); b.wanted.retain(|k| *k != key); }
+                if tx.send(Decoded { key, picture }).is_err() { return; }
             });
         }
-        let frames = man.modes.iter().map(|m| Frames {
-            dir: root.join(&m.character.dir),
-            at: m.character.frames.iter().map(|f| (f[0], [f[1] as f32, f[2] as f32])).collect(),
-            cache: HashMap::new(), asked: HashSet::new(), tex: None, shown: None,
+        let frames = man.modes.iter().map(|m| {
+            let c = &m.character;
+            let at: HashMap<i32, [f32; 4]> = c.frames.iter().filter(|f| f.len() >= 3)
+                .map(|f| (f[0], [f[1] as f32, f[2] as f32, f.get(3).copied().unwrap_or(0) as f32, f.get(4).copied().unwrap_or(0) as f32])).collect();
+            let most = at.values().fold([0usize; 2], |m, r| [m[0].max(r[2] as usize + 1), m[1].max(r[3] as usize + 1)]);
+            let mut pinned: HashSet<i32> = (0..10).map(|k| idle_index(c, k as f32)).collect();
+            pinned.extend((0..4).map(|k| c.confirm.range[0] + k));
+            Frames { at, cache: HashMap::new(), pinned, most, tex: None, shown: None }
         }).collect();
-        Stream { to, from, frames }
+        let mut stream = Stream { shared, from, frames, now: Vec::new(), next: Vec::new(), named: HashSet::new(), playhead: [None; 4], failed: HashSet::new(), stats: [0; 3] };
+        // every mode's first frames, so each starts on its own pose
+        for m in 0..stream.frames.len() {
+            let mut first: Vec<i32> = stream.frames[m].pinned.iter().copied().collect();
+            first.sort();
+            for i in first { stream.wish(m, i, false); }
+        }
+        stream.publish();
+        stream
     }
-    fn ask(&mut self, mode: usize, index: i32) {
-        let f = &mut self.frames[mode];
-        if !f.at.contains_key(&index) || f.cache.contains_key(&index) || f.asked.contains(&index) { return; }
-        f.asked.insert(index);
-        let _ = self.to.send((mode, index, f.dir.join(format!("{index:04}.webp"))));
+
+    fn wish(&mut self, mode: usize, index: i32, urgent: bool) {
+        let key = (mode, index);
+        self.named.insert(key);
+        let f = &self.frames[mode];
+        if !f.at.contains_key(&index) || f.cache.contains_key(&index) || self.failed.contains(&key) { return; }
+        if self.now.contains(&key) || self.next.contains(&key) { return; }
+        if urgent { self.now.push(key) } else { self.next.push(key) }
     }
-    /// Whether frames asked for are still being decoded.
-    #[cfg(test)]
-    fn pending(&self) -> bool { self.frames.iter().any(|f| !f.asked.is_empty()) }
+
+    /// Takes in what the decoders finished.
     fn receive(&mut self) {
         while let Ok(d) = self.from.try_recv() {
-            let f = &mut self.frames[d.mode];
-            f.asked.remove(&d.index);
-            f.cache.insert(d.index, Arc::new(d.picture));
+            match d.picture {
+                Some(p) => { self.frames[d.key.0].cache.insert(d.key.1, p); }
+                None => {
+                    if self.failed.insert(d.key) { log::warn!("Menu scene: character frame {:?} unreadable", d.key); }
+                }
+            }
         }
     }
-    /// The texture for `index` (or the nearest frame already decoded), and its corner;
-    /// asks for the frames coming next.
-    fn get(&mut self, ctx: &egui::Context, mode: usize, index: i32, ahead: &[i32]) -> Option<(TextureHandle, [f32; 2])> {
-        self.ask(mode, index);
-        for &i in ahead { self.ask(mode, i); }
-        let f = &mut self.frames[mode];
-        // keep the cache near the playhead
-        if f.cache.len() > 48 {
-            let keep: HashSet<i32> = std::iter::once(index).chain(ahead.iter().copied()).collect();
-            f.cache.retain(|i, _| keep.contains(i) || (i - index).abs() < 6);
+
+    /// Hands the decoders this frame's to-do list and lets go of frames no
+    /// playhead is near.
+    fn publish(&mut self) {
+        for (m, f) in self.frames.iter_mut().enumerate() {
+            let Some(head) = self.playhead.get(m).copied().flatten() else { continue };
+            let Frames { cache, pinned, shown, .. } = f;
+            let named = &self.named;
+            cache.retain(|i, _| pinned.contains(i) || (i - head).abs() <= 16 || Some(*i) == *shown || named.contains(&(m, *i)));
         }
-        let best = if f.cache.contains_key(&index) { Some(index) } else { f.shown.filter(|s| f.cache.contains_key(s)).or(f.shown) };
-        let best = best?;
+        let mut wanted = std::mem::take(&mut self.now);
+        wanted.append(&mut self.next);
+        if let Ok(mut b) = self.shared.board.lock() { b.wanted = wanted; }
+        self.shared.wake.notify_all();
+        self.named.clear();
+        self.playhead = [None; 4];
+    }
+
+    /// Whether frames asked for are still being decoded.
+    #[cfg(test)]
+    fn pending(&self) -> bool { self.shared.board.lock().map_or(false, |b| !b.wanted.is_empty() || !b.busy.is_empty()) }
+
+    /// The frame to show for `index` of `mode` (or the closest one before it
+    /// already decoded), and the frames to have ready next.
+    fn get(&mut self, ctx: &egui::Context, mode: usize, index: i32, ahead: &[i32]) -> Option<Shown> {
+        self.playhead[mode] = Some(index);
+        self.wish(mode, index, true);
+        for &i in ahead { self.wish(mode, i, false); }
+        let f = &mut self.frames[mode];
+        let best = if f.cache.contains_key(&index) { Some(index) } else {
+            f.cache.keys().copied().filter(|&i| i < index && index - i <= 12).max().or(f.shown)
+        }?;
         if f.shown != Some(best) {
             if let Some(p) = f.cache.get(&best) {
-                let image = egui::ColorImage::from_rgba_premultiplied([p.width, p.height], &p.rgba);
-                match &mut f.tex {
-                    Some(t) => t.set(image, egui::TextureOptions::LINEAR),
-                    None => f.tex = Some(ctx.load_texture(format!("kiu-scene-char-{mode}"), image, egui::TextureOptions::LINEAR)),
+                // the frame and a clear row and column after it (filtering
+                // never picks up what an earlier, bigger frame left there)
+                let need = [p.width + 1, p.height + 1];
+                if f.tex.is_none() || f.most[0] < need[0] || f.most[1] < need[1] {
+                    // one texture as big as the biggest frame, made once
+                    f.most = [f.most[0].max(need[0]), f.most[1].max(need[1])];
+                    f.tex = Some(ctx.load_texture(format!("kiu-scene-char-{mode}"), egui::ColorImage::filled(f.most, Color32::TRANSPARENT), egui::TextureOptions::LINEAR));
                 }
+                let mut pixels = vec![Color32::TRANSPARENT; need[0] * need[1]];
+                for (row, src) in pixels.chunks_exact_mut(need[0]).zip(p.rgba.chunks_exact(p.width * 4)) {
+                    for (o, c) in row.iter_mut().zip(src.chunks_exact(4)) { *o = Color32::from_rgba_premultiplied(c[0], c[1], c[2], c[3]); }
+                }
+                if let Some(t) = &mut f.tex { t.set_partial([0, 0], egui::ColorImage::new(need, pixels), egui::TextureOptions::LINEAR); }
                 f.shown = Some(best);
             }
         }
-        let at = *f.at.get(&best)?;
-        f.tex.clone().map(|t| (t, at))
+        let shown = f.shown?;
+        if shown == index { self.stats[0] += 1; } else { self.stats[1] += 1; self.stats[2] = self.stats[2].max((index - shown).unsigned_abs()); }
+        let r = *f.at.get(&shown)?;
+        let tex = f.tex.clone()?;
+        let p = f.cache.get(&shown).map(|p| [p.width as f32, p.height as f32]).unwrap_or([r[2], r[3]]);
+        Some(Shown { tex, at: [r[0], r[1]], size: p, uv: [p[0] / f.most[0] as f32, p[1] / f.most[1] as f32] })
     }
 }
 
@@ -362,11 +492,65 @@ struct Art {
     feather: TextureHandle, spark: TextureHandle, leaves: Vec<TextureHandle>, flash: TextureHandle,
 }
 
-fn load_tex(ctx: &egui::Context, root: &Path, file: &str, light: bool) -> Option<TextureHandle> {
-    let mut p = load_picture(&root.join(file))?;
-    if light { for px in p.rgba.chunks_exact_mut(4) { px[3] = 0; } }    // an added light
-    let image = egui::ColorImage::from_rgba_premultiplied([p.width, p.height], &p.rgba);
-    Some(ctx.load_texture(format!("kiu-scene-{file}"), image, egui::TextureOptions::LINEAR))
+/// The pack read and decoded: its manifest and every layer's picture, ready
+/// to become textures.
+pub struct Prepared { root: PathBuf, man: Manifest, pictures: Vec<(String, Picture)> }
+
+/// Starts reading the pack on its own thread (at start-up), so the main menu
+/// opens without decoding anything on the game's thread.
+pub fn prepare(root: PathBuf) -> Receiver<Option<Prepared>> {
+    let (tx, rx) = channel();
+    let _ = std::thread::Builder::new().name("menu-scene-read".into()).spawn(move || { let _ = tx.send(Prepared::read(root)); });
+    rx
+}
+
+impl Prepared {
+    fn read(root: PathBuf) -> Option<Prepared> {
+        let start = std::time::Instant::now();
+        let text = std::fs::read_to_string(root.join("manifest.toml")).ok()?;
+        let man: Manifest = toml::from_str(&text).map_err(|e| log::warn!("Menu scene: manifest unreadable: {e}")).ok()?;
+        if man.modes.len() < 4 { return None; }
+        // (file, an added light: its alpha is cleared)
+        let mut files: Vec<(String, bool)> = Vec::new();
+        for m in &man.modes {
+            for f in [&m.paper, &m.stage, &m.emblem.file, &m.heading.file, &m.caption.file] { files.push((f.clone(), false)); }
+            files.push((m.rays.clone(), true));
+            if let Some(g) = &m.glow { files.push((g.clone(), true)); }
+        }
+        let sp = &man.sprites;
+        for f in [&man.band.file, &man.controls.file, &man.swirl.file, &man.sprig.file, &sp.feather, &sp.spark, &sp.flash].into_iter().chain(&sp.leaves) {
+            files.push((f.clone(), false));
+        }
+        let mut pictures = Vec::new();
+        for (f, light) in files {
+            let Some(mut p) = load_picture(&root.join(&f)) else { log::warn!("Menu scene: {f} unreadable"); return None };
+            if light { for px in p.rgba.chunks_exact_mut(4) { px[3] = 0; } }
+            pictures.push((f, p));
+        }
+        log::info!("Main menu scene: pack read in {} ms (on its own thread)", start.elapsed().as_millis());
+        Some(Prepared { root, man, pictures })
+    }
+}
+
+/// A prepared pack becoming textures, about 12 MB a frame, so the upload
+/// never holds a frame up; then the scene.
+pub struct Upload { prepared: Prepared, made: HashMap<String, TextureHandle> }
+
+impl Upload {
+    pub fn new(prepared: Prepared) -> Upload { Upload { prepared, made: HashMap::new() } }
+
+    /// Uploads the next few layers; the scene once all are up.
+    pub fn step(&mut self, ctx: &egui::Context) -> Option<Scene> {
+        let mut budget = 12usize << 20;
+        while budget > 0 {
+            let Some((f, p)) = self.prepared.pictures.pop() else { break };
+            budget = budget.saturating_sub(p.rgba.len());
+            let image = egui::ColorImage::from_rgba_premultiplied([p.width, p.height], &p.rgba);
+            self.made.insert(f.clone(), ctx.load_texture(format!("kiu-scene-{f}"), image, egui::TextureOptions::LINEAR));
+        }
+        if !self.prepared.pictures.is_empty() { return None; }
+        Scene::build(ctx, &self.prepared.root, self.prepared.man.clone(), &self.made)
+    }
 }
 
 /// What the scene is doing.
@@ -380,6 +564,11 @@ enum Phase {
 }
 
 pub struct Scene {
+    /// shown (between the menu appearing and the scene finishing)
+    active: bool,
+    /// it finished while the game still showed the menu: it waits for the
+    /// game to leave before it can start again
+    rested_on_menu: bool,
     man: Manifest,
     art: Art,
     stream: Stream,
@@ -411,31 +600,43 @@ const GUTTER: f32 = 70.0;
 const PUSH: f32 = 16.0;
 
 impl Scene {
-    pub fn load(ctx: &egui::Context, root: &Path) -> Option<Scene> {
-        let text = std::fs::read_to_string(root.join("manifest.toml")).ok()?;
-        let man: Manifest = toml::from_str(&text).map_err(|e| log::warn!("Menu scene: manifest unreadable: {e}")).ok()?;
-        if man.modes.len() < 4 { return None; }
-        let t = |f: &str| load_tex(ctx, root, f, false);
-        let l = |f: &str| load_tex(ctx, root, f, true);
+    fn build(ctx: &egui::Context, root: &Path, man: Manifest, made: &HashMap<String, TextureHandle>) -> Option<Scene> {
+        let t = |f: &str| made.get(f).cloned();
         let mut modes = Vec::new();
         for m in &man.modes {
-            modes.push(Tex { paper: t(&m.paper)?, stage: t(&m.stage)?, emblem: t(&m.emblem.file)?, rays: l(&m.rays)?,
-                             heading: t(&m.heading.file)?, caption: t(&m.caption.file)?, glow: m.glow.as_deref().and_then(l) });
+            modes.push(Tex { paper: t(&m.paper)?, stage: t(&m.stage)?, emblem: t(&m.emblem.file)?, rays: t(&m.rays)?,
+                             heading: t(&m.heading.file)?, caption: t(&m.caption.file)?, glow: m.glow.as_deref().and_then(t) });
         }
         let s = &man.sprites;
         let art = Art { modes, band: t(&man.band.file)?, controls: t(&man.controls.file)?, swirl: t(&man.swirl.file)?, sprig: t(&man.sprig.file)?,
                         feather: t(&s.feather)?, spark: t(&s.spark)?,
                         leaves: s.leaves.iter().filter_map(|f| t(f)).collect(), flash: t(&s.flash)? };
-        let mut stream = Stream::new(root, &man);
-        // the first frames of every mode, so the first change has its character ready
-        for m in 0..4 {
-            let c = &man.modes[m].character;
-            for k in 0..6 { stream.ask(m, idle_index(c, k as f32)); }
-        }
+        let stream = Stream::new(root, &man);
         let now = ctx.input(|i| i.time);
         log::info!("Main menu scene: the PC's ink and paper menu ({} character frames)", man.modes.iter().map(|m| m.character.frames.len()).sum::<usize>());
-        Some(Scene { man, art, stream, start: now, selected: 0, previous: 0, changed: None,
+        Some(Scene { active: false, rested_on_menu: false, man, art, stream, start: now, selected: 0, previous: 0, changed: None,
                      chosen_at: [now; 4], phase: Phase::Shown, game_left: None, time: now, pressed_at: None, pending: None })
+    }
+
+    /// Reads and uploads the whole pack at once (the preview test).
+    #[cfg(test)]
+    pub fn load(ctx: &egui::Context, root: &Path) -> Option<Scene> {
+        let mut up = Upload::new(Prepared::read(root.to_path_buf())?);
+        loop { if let Some(s) = up.step(ctx) { return Some(s); } if up.prepared.pictures.is_empty() { return None; } }
+    }
+
+    /// Whether the scene is being shown.
+    pub fn active(&self) -> bool { self.active }
+
+    /// The main menu is on screen: starts the scene from its entry, unless it
+    /// is already showing this visit.
+    pub fn on_menu(&mut self, ctx: &egui::Context) {
+        if self.active && self.game_left.is_none() { return; }
+        if !self.active && self.rested_on_menu { return; }
+        let now = ctx.input(|i| i.time);
+        self.active = true; self.start = now; self.time = now;
+        self.selected = 0; self.previous = 0; self.changed = None; self.chosen_at = [now; 4];
+        self.phase = Phase::Shown; self.game_left = None; self.pressed_at = None; self.pending = None;
     }
 
     /// The game's selected choice this frame (its node: 0 Solo .. 3 Options):
@@ -467,6 +668,7 @@ impl Scene {
 
     /// The game has left the menu screen.
     pub fn game_left(&mut self) {
+        if !self.active { self.rested_on_menu = false; return; }
         if self.game_left.is_none() { self.game_left = Some(self.time); }
         if self.phase == Phase::Shown { self.phase = Phase::Leaving { at: self.time }; }
     }
@@ -534,8 +736,10 @@ impl Scene {
         }
     }
 
-    /// Draws the scene. Returns false once it has finished leaving.
+    /// Draws the scene. Returns false once it has finished leaving (it then
+    /// rests until the menu appears again).
     pub fn show(&mut self, ctx: &egui::Context, window: Rect) -> bool {
+        if !self.active { return false; }
         self.time = ctx.input(|i| i.time);
         self.stream.receive();
         if let Some(n) = self.pending {
@@ -552,8 +756,10 @@ impl Scene {
         let opacity = self.opacity();
         let painter = ctx.layer_painter(egui::LayerId::new(egui::Order::Background, egui::Id::new("kiu-menu-scene")));
         cv.emit(&painter, &map, opacity);
+        self.stream.publish();
         ctx.request_repaint();
-        opacity > 0.0
+        if opacity <= 0.0 { self.active = false; self.rested_on_menu = self.game_left.is_none(); self.stream.publish(); }
+        self.active
     }
 
     /// Builds the picture.
@@ -652,7 +858,7 @@ impl Scene {
             (i, ahead)
         };
         // one mode's window content (stage, light, lines) moved by (dx, dy), and its character
-        let content = |s: &mut Scene, cv: &mut Canvas, m: usize, slide: f32, dy_stage: f32, dy_char: f32| -> Option<(TextureHandle, [f32; 4])> {
+        let content = |s: &mut Scene, cv: &mut Canvas, m: usize, slide: f32, dy_stage: f32, dy_char: f32| -> Option<(Shown, [f32; 4])> {
             let art = &s.art.modes[m]; let ma = &man.modes[m];
             let stage = &art.stage; let ss = stage.size(); let (sw, sh) = (ss[0] as f32, ss[1] as f32);
             let z = (1.03 + 0.02 * (TAU * v / 400.0).sin()) * zoom_push;
@@ -685,9 +891,9 @@ impl Scene {
             if v >= 14.0 { s.particles(cv, m, v, dy_stage, false); }
             cv.clips.pop();
             let (i, ahead) = char_index(s, m);
-            let (tex, at) = s.stream.get(ctx, m, i, &ahead)?;
-            let sz = tex.size();
-            let mut r = [at[0] + slide + vx_hit + 1.7 * cx, at[1] + 1.7 * cy + dy_char, sz[0] as f32, sz[1] as f32];
+            let fr = s.stream.get(ctx, m, i, &ahead)?;
+            let (at, sz) = (fr.at, fr.size);
+            let mut r = [at[0] + slide + vx_hit + 1.7 * cx, at[1] + 1.7 * cy + dy_char, sz[0], sz[1]];
             // a slow breathing push-in on the held pose (key-art camera), and the
             // confirm's push-in brings the character closer too
             let breath = 1.0 + 0.025 * (0.5 - 0.5 * (TAU * s.frames_since(s.chosen_at[m]) / 240.0).cos());
@@ -707,9 +913,9 @@ impl Scene {
                     r = [ip[0] + (r[0] - ip[0]) * cz, ip[1] + (r[1] - ip[1]) * cz, r[2] * cz, r[3] * cz];
                 }
             }
-            Some((tex, r))
+            Some((fr, r))
         };
-        let mut chars: Vec<(TextureHandle, [f32; 4], Option<Half>, usize, f32)> = Vec::new();
+        let mut chars: Vec<(Shown, [f32; 4], Option<Half>, usize, f32)> = Vec::new();
         if !impact_frame {
             if self.changed.is_none() {
                 let slide = track(v, &[(0.0, 1500.0, Ease::Out), (9.0, 1500.0, Ease::Out), (23.0, 0.0, Ease::OutBack)]);
@@ -755,14 +961,13 @@ impl Scene {
             cv.image(t, [0.0, 0.0, W, H], 0.0, [0.0, 0.0], Color32::WHITE);
             speed_lines(cv, man.impact, 1000 + conf_c as u32, 1.0, INK, 90);
             let (i, _) = char_index(self, 1);
-            if let Some((tex, at)) = self.stream.get(ctx, 1, i, &[]) {
-                let s = tex.size();
-                cv.image(&tex, [at[0] + vx_hit + 1.7 * cx, at[1] + 1.7 * cy, s[0] as f32, s[1] as f32], 0.0, [0.0, 0.0], Color32::from_rgba_premultiplied(0, 0, 0, 255));
+            if let Some(fr) = self.stream.get(ctx, 1, i, &[]) {
+                cv.frame(&fr, [fr.at[0] + vx_hit + 1.7 * cx, fr.at[1] + 1.7 * cy, fr.size[0], fr.size[1]], Color32::from_rgba_premultiplied(0, 0, 0, 255));
             }
         } else {
             for (t, r, side, m, dy) in &chars {
                 if let Some(h) = side { cv.clips.push(*h); }
-                cv.image(t, *r, 0.0, [0.0, 0.0], Color32::WHITE);
+                cv.frame(t, *r, Color32::WHITE);
                 if side.is_some() { cv.clips.pop(); }
                 // the near particles, in front of the character, in the window
                 if v >= 14.0 { cv.clips.push(panel_clip); self.particles(cv, *m, v, *dy, true); cv.clips.pop(); }
@@ -1074,6 +1279,7 @@ mod preview {
                 let ctx = ui.ctx().clone();
                 if scene.is_none() { scene = Scene::load(&ctx, std::path::Path::new(&pack)); }
                 let s = scene.as_mut().unwrap();
+                if f == 0 { s.on_menu(&ctx); }
                 let sel = [(0usize, 0usize), (130, 1), (230, 2), (320, 3), (420, 1)].iter().rev().find(|(at, _)| f >= *at).map(|x| x.1);
                 // wait for the frames the character needs (the game would show the previous one)
                 for _ in 0..200 { s.stream.receive(); if !s.stream.pending() { break; } std::thread::sleep(std::time::Duration::from_millis(5)); }
@@ -1096,5 +1302,75 @@ mod preview {
             let bytes: Vec<u8> = img.iter().flat_map(|c| c.map(|x| x as u8)).collect();
             image::RgbImage::from_raw(w as u32, h as u32, bytes).unwrap().save(out.join(format!("{f:04}.png"))).unwrap();
         }
+    }
+}
+
+#[cfg(test)]
+mod bench {
+    /// KIU_SCENE_PACK=... cargo test --release -p zakuro --lib menu_scene::bench -- --nocapture --ignored
+    #[test]
+    #[ignore]
+    fn timings() {
+        let Some(root) = super::pack() else { return };
+        let t = std::time::Instant::now();
+        let mut n = 0; let mut px = 0;
+        for i in [100, 101, 102, 103, 104, 105, 106, 107] {
+            let p = crate::native_menu::load(&root.join(format!("char_2/{i:04}.webp"))).unwrap();
+            n += 1; px += p.width * p.height;
+        }
+        let dt = t.elapsed().as_secs_f64() / n as f64;
+        println!("char frame decode: {:.1} ms each ({:.2} Mpx)", dt * 1000.0, px as f64 / n as f64 / 1e6);
+        let t = std::time::Instant::now();
+        for f in ["paper_1.webp", "stage_1.webp", "rays_1.webp"] { let _ = crate::native_menu::load(&root.join(f)).unwrap(); }
+        println!("paper+stage+rays decode: {:.0} ms", t.elapsed().as_secs_f64() * 1000.0);
+        let fmt = std::path::Path::new("/tmp/claude-0/-home-claude/0846ad66-37b8-5f7e-bbd2-eb4c158aa498/scratchpad/fmt");
+        let t = std::time::Instant::now();
+        for i in 100..108 {
+            let c = image::open(fmt.join(format!("{i:04}.jpg"))).unwrap().to_rgb8();
+            let a = image::open(fmt.join(format!("{i:04}_a.png"))).unwrap().to_luma8();
+            assert_eq!(c.dimensions(), a.dimensions());
+        }
+        println!("jpg + alpha png decode: {:.1} ms each", t.elapsed().as_secs_f64() * 1000.0 / 8.0);
+        let t = std::time::Instant::now();
+        for i in 100..108 { let _ = image::open(fmt.join(format!("{i:04}.qoi.png"))).unwrap().to_rgba8(); }
+        println!("rgba png decode: {:.1} ms each", t.elapsed().as_secs_f64() * 1000.0 / 8.0);
+        // the menu as the game runs it: real time, never waiting for frames
+        {
+            let ctx = egui::Context::default();
+            let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(super::W, super::H));
+            let t0 = std::time::Instant::now();
+            let mut scene = super::Scene::load(&ctx, &root).unwrap();
+            println!("load (all at once, test only): {:.0} ms", t0.elapsed().as_secs_f64() * 1000.0);
+            let start = std::time::Instant::now();
+            let mut worst = 0.0f64; let mut total = 0.0f64; let mut n = 0;
+            for f in 0..600usize {
+                // 60 frames a second of wall time
+                let due = start + std::time::Duration::from_micros(16_667 * f as u64);
+                if let Some(wait) = due.checked_duration_since(std::time::Instant::now()) { std::thread::sleep(wait); }
+                let t = std::time::Instant::now();
+                let input = egui::RawInput { time: Some(start.elapsed().as_secs_f64()), screen_rect: Some(screen), ..Default::default() };
+                let sel = [(0usize, 0usize), (130, 1), (230, 2), (320, 3), (420, 1), (470, 0), (520, 2)].iter().rev().find(|(at, _)| f >= *at).map(|x| x.1);
+                let out = ctx.run_ui(input, |ui| {
+                    if f == 0 { scene.on_menu(ui.ctx()); }
+                    scene.select(sel);
+                    scene.show(ui.ctx(), screen);
+                });
+                // what gui.rs does with the textures, and the meshes
+                let mut bytes = 0;
+                for (_, ds) in &out.textures_delta.set { for d in ds { let egui::ImageData::Color(c) = &d.image; let mut b = vec![0u8; c.pixels.len() * 4]; for (o, p) in b.chunks_exact_mut(4).zip(&c.pixels) { o.copy_from_slice(&p.to_array()); } bytes += b.len(); } }
+                let _ = ctx.tessellate(out.shapes, 1.0);
+                let dt = t.elapsed().as_secs_f64() * 1000.0;
+                if f > 5 { worst = worst.max(dt); total += dt; n += 1; }
+                if dt > 12.0 { println!("  frame {f}: {dt:.1} ms ({} KB uploaded)", bytes >> 10); }
+            }
+            let st = scene.stream.stats;
+            println!("real time: {:.1} ms a frame on average, worst {:.1} ms; character frames on time {}, late {} (at most {} behind)", total / n as f64, worst, st[0], st[1], st[2]);
+        }
+        let ctx = egui::Context::default();
+        let t = std::time::Instant::now();
+        let mut s = None;
+        let _ = ctx.run_ui(egui::RawInput::default(), |_| { s = super::Scene::load(&_ui_ctx(), &root); });
+        println!("Scene::load: {:.0} ms", t.elapsed().as_secs_f64() * 1000.0);
+        fn _ui_ctx() -> egui::Context { egui::Context::default() }
     }
 }

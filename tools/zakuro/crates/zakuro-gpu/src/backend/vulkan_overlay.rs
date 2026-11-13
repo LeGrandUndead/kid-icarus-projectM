@@ -45,7 +45,13 @@ struct Buffer {
 enum Garbage {
     Texture(Texture),
     Buffer(Buffer),
+    /// an upload's staging buffer: kept for the next upload once its frame is done
+    Staging(Buffer),
 }
+
+/// Staging buffers kept for reuse (texture updates every frame, such as the
+/// menu's character frames, then allocate nothing).
+const SPARE_STAGING: usize = 6;
 
 pub(super) struct OverlayPainter {
     descriptor_layout: vk::DescriptorSetLayout,
@@ -66,6 +72,8 @@ pub(super) struct OverlayPainter {
     /// still have to happen, the overlay sends each only once.
     pending: Vec<OverlayTexture>,
     pending_free: Vec<u64>,
+    /// staging buffers waiting to be reused
+    spare: Vec<Buffer>,
     srgb: bool,
 }
 
@@ -117,6 +125,7 @@ impl OverlayPainter {
             index_offset: 0,
             pending: Vec::new(),
             pending_free: Vec::new(),
+            spare: Vec::new(),
             srgb,
         })
     }
@@ -138,7 +147,10 @@ impl OverlayPainter {
     /// caller having waited for it.
     pub(super) fn begin_frame(&mut self, device: &ash::Device, frame: usize) {
         for garbage in self.garbage[frame].drain(..) {
-            destroy(device, garbage);
+            match garbage {
+                Garbage::Staging(buffer) if self.spare.len() < SPARE_STAGING => self.spare.push(buffer),
+                garbage => destroy(device, garbage),
+            }
         }
     }
 
@@ -173,7 +185,13 @@ impl OverlayPainter {
                 }
             }
             let Some(target) = self.textures.get_mut(&texture.id) else { continue };
-            let staging = make_buffer(device, memory, texture.pixels.len() as u64, vk::BufferUsageFlags::TRANSFER_SRC)?;
+            // a kept staging buffer big enough, the smallest such, or a new one
+            let size = texture.pixels.len() as u64;
+            let reuse = self.spare.iter().enumerate().filter(|(_, b)| b.size >= size).min_by_key(|(_, b)| b.size).map(|(i, _)| i);
+            let staging = match reuse {
+                Some(i) => self.spare.swap_remove(i),
+                None => make_buffer(device, memory, size.next_power_of_two().max(1 << 20), vk::BufferUsageFlags::TRANSFER_SRC)?,
+            };
             // SAFETY: the buffer is mapped and as long as the pixels
             unsafe { std::ptr::copy_nonoverlapping(texture.pixels.as_ptr(), staging.mapped, texture.pixels.len()) };
             let [x, y] = texture.offset.unwrap_or([0, 0]);
@@ -203,7 +221,7 @@ impl OverlayPainter {
                 vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
             );
             target.fresh = false;
-            self.garbage[frame].push(Garbage::Buffer(staging));
+            self.garbage[frame].push(Garbage::Staging(staging));
         }
 
         // the vertices, then the indices
@@ -425,6 +443,9 @@ impl OverlayPainter {
         for buffer in self.geometry.iter_mut().filter_map(Option::take) {
             destroy(device, Garbage::Buffer(buffer));
         }
+        for buffer in self.spare.drain(..) {
+            destroy(device, Garbage::Buffer(buffer));
+        }
         for (_, texture) in self.textures.drain() {
             destroy(device, Garbage::Texture(texture));
         }
@@ -471,7 +492,7 @@ fn destroy(device: &ash::Device, garbage: Garbage) {
                 // the pool lets sets go one by one, and a failure only leaks one
                 let _ = device.free_descriptor_sets(texture.pool, &[texture.descriptor]);
             }
-            Garbage::Buffer(buffer) => {
+            Garbage::Buffer(buffer) | Garbage::Staging(buffer) => {
                 device.unmap_memory(buffer.memory);
                 device.destroy_buffer(buffer.buffer, None);
                 device.free_memory(buffer.memory, None);
