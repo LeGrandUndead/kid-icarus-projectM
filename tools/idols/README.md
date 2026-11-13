@@ -74,9 +74,10 @@ pack is built.
 
 From `tools/idols`, with `IDOLS_WORK` set:
 
-1. Render what changed (each script skips frames that already exist; move
-   the old ones aside after a model change): for example
-   `cd render && python3 promo.py P02`.
+1. Render what changed, from the work folder's `render/` (it holds
+   `frames/` and links to the scripts in `render/` here): for example
+   `cd $IDOLS_WORK/render && python3 promo.py P02`. Each script skips frames
+   that already exist: move the old ones aside after a model change.
 2. `python3 -m menu_pack <out>`: frames already in `<out>` are kept, the
    rest are built, then the packs and the manifest are written.
 3. Copy `<out>` (without the `.at` files) to the PC's
