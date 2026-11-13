@@ -297,6 +297,27 @@ type Key = (usize, i32);
 /// A frame's two files as read from disk (JPEG colour, PNG coverage).
 type FrameFiles = (Vec<u8>, Vec<u8>);
 
+/// A character's frames packed in one file (tools/idols/menu_v7/frame_pak.py:
+/// "KIUFRAM1", the count, then index / JPEG length / PNG length per frame,
+/// then the bytes in that order), read in one go.
+fn read_pak(path: &Path) -> Option<Vec<(i32, FrameFiles)>> {
+    let data = std::fs::read(path).ok()?;
+    let word = |at: usize| -> Option<u32> { Some(u32::from_le_bytes(data.get(at..at + 4)?.try_into().ok()?)) };
+    if data.get(..8)? != b"KIUFRAM1" { return None; }
+    let n = word(8)? as usize;
+    let mut at = 12 + n * 12;
+    let mut out = Vec::with_capacity(n);
+    for k in 0..n {
+        let row = 12 + k * 12;
+        let (index, jl, pl) = (word(row)? as i32, word(row + 4)? as usize, word(row + 8)? as usize);
+        let jpg = data.get(at..at + jl)?.to_vec();
+        let png = data.get(at + jl..at + jl + pl)?.to_vec();
+        at += jl + pl;
+        out.push((index, (jpg, png)));
+    }
+    Some(out)
+}
+
 fn read_frame(dir: &Path, index: i32) -> Option<FrameFiles> {
     Some((std::fs::read(dir.join(format!("{index:04}.jpg"))).ok()?, std::fs::read(dir.join(format!("{index:04}_a.png"))).ok()?))
 }
@@ -384,6 +405,15 @@ impl Stream {
             let _ = std::thread::Builder::new().name("menu-scene-files".into()).spawn(move || {
                 let start = std::time::Instant::now();
                 let mut bytes = 0usize;
+                // packed characters first: one long read each
+                for (m, dir) in dirs.iter().enumerate() {
+                    let pak = dir.with_extension("pak");
+                    if let Some(frames) = read_pak(&pak) {
+                        if let Ok(mut mem) = memory.lock() {
+                            for (i, files) in frames { bytes += files.0.len() + files.1.len(); mem.insert((m, i), Arc::new(files)); }
+                        }
+                    }
+                }
                 for key in order {
                     if memory.lock().map_or(true, |m| m.contains_key(&key)) { continue; }
                     let Some(files) = dirs.get(key.0).and_then(|d| read_frame(d, key.1)) else { continue };
@@ -634,8 +664,12 @@ enum Phase {
 pub struct Scene {
     /// shown (between the menu appearing and the scene finishing)
     active: bool,
-    /// for the log every 5 s: since when, and how many times drawn
+    /// for the log every 5 s: since when (real time), and how many times drawn
     report: (f64, u32),
+    /// the real time last drawn: the scene's own clock (`time`) advances by
+    /// at most 1/20 s a frame, so when the game stalls (loading its next
+    /// screen) the animation pauses instead of jumping ahead
+    real: f64,
     /// it finished while the game still showed the menu: it waits for the
     /// game to leave before it can start again
     rested_on_menu: bool,
@@ -684,7 +718,7 @@ impl Scene {
         let stream = Stream::new(root, &man);
         let now = ctx.input(|i| i.time);
         log::info!("Main menu scene: the PC's ink and paper menu ({} character frames)", man.modes.iter().map(|m| m.character.frames.len()).sum::<usize>());
-        Some(Scene { active: false, report: (now, 0), rested_on_menu: false, man, art, stream, start: now, selected: 0, previous: 0, changed: None,
+        Some(Scene { active: false, report: (now, 0), real: now, rested_on_menu: false, man, art, stream, start: now, selected: 0, previous: 0, changed: None,
                      chosen_at: [now; 4], phase: Phase::Shown, game_left: None, time: now, pressed_at: None, pending: None })
     }
 
@@ -702,7 +736,7 @@ impl Scene {
     /// was drawn, character frames shown on time or late, decoding time.
     fn report_now(&mut self) {
         self.report.1 += 1;
-        let span = self.time - self.report.0;
+        let span = self.real - self.report.0;
         if span < 5.0 { return; }
         let st = std::mem::take(&mut self.stream.stats);
         let (n, ms) = std::mem::take(&mut self.stream.decoded);
@@ -710,7 +744,7 @@ impl Scene {
             "Main menu scene: drawn {:.0} times a second; character frames on time {}, late {} (at most {} behind); {} decoded, {:.1} ms each on {} threads",
             self.report.1 as f64 / span, st[0], st[1], st[2], n, if n > 0 { ms / n as f32 } else { 0.0 }, self.stream.threads
         );
-        self.report = (self.time, 0);
+        self.report = (self.real, 0);
     }
 
     /// The main menu is on screen: starts the scene from its entry, unless it
@@ -718,8 +752,9 @@ impl Scene {
     pub fn on_menu(&mut self, ctx: &egui::Context) {
         if self.active && self.game_left.is_none() { return; }
         if !self.active && self.rested_on_menu { return; }
-        let now = ctx.input(|i| i.time);
-        self.active = true; self.start = now; self.time = now; self.report = (now, 0);
+        self.real = ctx.input(|i| i.time);
+        let now = self.time;
+        self.active = true; self.start = now; self.report = (self.real, 0);
         self.selected = 0; self.previous = 0; self.changed = None; self.chosen_at = [now; 4];
         self.phase = Phase::Shown; self.game_left = None; self.pressed_at = None; self.pending = None;
     }
@@ -814,7 +849,7 @@ impl Scene {
                 let (_, _, push) = self.confirm_plan(mode);
                 let c = self.frames_since(at);
                 let pushed = push + PUSH;
-                let game = self.game_left.map_or(pushed + 180.0, |t| ((t - at) * 60.0) as f32);
+                let game = self.game_left.map_or(f32::INFINITY, |t| ((t - at) * 60.0) as f32);
                 1.0 - clamp01((c - pushed.max(game)) / 16.0)
             }
             Phase::Leaving { at } => 1.0 - clamp01((self.frames_since(at) - 6.0) / 14.0),
@@ -825,8 +860,20 @@ impl Scene {
     /// rests until the menu appears again).
     pub fn show(&mut self, ctx: &egui::Context, window: Rect) -> bool {
         if !self.active { return false; }
-        self.time = ctx.input(|i| i.time);
+        let real = ctx.input(|i| i.time);
+        self.time += (real - self.real).clamp(0.0, 1.0 / 20.0);
+        self.real = real;
         self.stream.receive();
+        // the game did not take the click (it is still on the menu long after
+        // the push-in): the menu comes back rather than fading to the game's own
+        if let Phase::Confirming { mode, at } = self.phase {
+            let (_, _, push) = self.confirm_plan(mode);
+            if self.game_left.is_none() && self.frames_since(at) > push + PUSH + 240.0 {
+                log::warn!("Main menu scene: the game did not leave the menu after the click; showing the menu again");
+                self.phase = Phase::Shown; self.pressed_at = None;
+                self.chosen_at[self.selected] = self.time;
+            }
+        }
         self.report_now();
         if let Some(n) = self.pending {
             if self.changed.is_none_or(|t| self.frames_since(t) >= SWAP_BUSY) { self.change_to(n); }

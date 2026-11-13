@@ -53,9 +53,7 @@ impl Motion {
 
     pub fn held(&self) -> Option<usize> { self.held.map(|h| h.0) }
 
-    /// Grabs button `i` at `pointer` (units). The main menu no longer lets
-    /// buttons be dragged (Kevin: they should not follow the pointer).
-    #[allow(dead_code)]
+    /// Grabs button `i` at `pointer` (units).
     pub fn grab(&mut self, i: usize, pointer: V, home: [f32; 4]) {
         let r = self.rect(i, home);
         self.held = Some((i, [pointer[0] - r[0], pointer[1] - r[1]]));
@@ -207,7 +205,7 @@ impl Nav {
     }
 
     /// Stops walking (a click went to the game's real button).
-    pub fn stop(&mut self) { self.target = None; }
+    pub fn stop(&mut self) { self.target = None; self.pressing = None; self.settle = 0; }
 
     /// The D-pad press to give the game this frame.
     pub fn pad(&mut self, graph: &Graph, shown: impl Fn(usize) -> bool) -> Option<Dir> {

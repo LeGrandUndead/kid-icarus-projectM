@@ -145,6 +145,7 @@ fn start(options: cli::Options, linked: Option<Linked>) {
         native_art_coming: native_menu::pack().map(|_| native_menu::prepare()),
         native_arts: Vec::new(),
         native_live: native_menu::Live::default(),
+        native_click: None,
         menu_scene_coming: menu_scene::pack().map(menu_scene::prepare),
         menu_scene_upload: None,
         menu_scene: None,
@@ -428,6 +429,9 @@ struct App {
     native_arts: Vec<native_menu::Art>,
     /// the redrawn menu's moving buttons and the game's cursor
     native_live: native_menu::Live,
+    /// a click on a redrawn menu's button the game has not answered yet:
+    /// where, frames waited, and whether it was given again
+    native_click: Option<((u16, u16), u32, bool)>,
     /// the main menu's scene drawn by the PC behind the buttons (menu_scene):
     /// its pack read on its own thread from start-up, uploaded a few layers
     /// a frame, then kept for every visit (it rests between them)
@@ -1280,8 +1284,10 @@ impl App {
         // a click on a top-screen menu button touches the lower screen
         if game.replay.is_none() {
             if let Some(touch) = self.tap.next() { input.touch = touch; }
-            // pointing at a redrawn menu's button walks the game's cursor there
-            if let Some(screen) = self.native_screen.and_then(|id| native_menu::SCREENS.iter().find(|s| s.id == id)) {
+            // pointing at a redrawn menu's button walks the game's cursor
+            // there (never during a click: a D-pad press held with the touch
+            // can make the game ignore the touch)
+            if let Some(screen) = self.native_screen.and_then(|id| native_menu::SCREENS.iter().find(|s| s.id == id)).filter(|_| self.native_click.is_none()) {
                 use zakuro_core::services::hid::PadState;
                 if let Some(dir) = self.native_live.nav.pad(&screen.graph, |n| screen.shows(n)) {
                     input.buttons |= match dir {
@@ -1499,6 +1505,7 @@ impl App {
         let size = window.inner_size();
         let view = layout(size.width, size.height, self.presentation.layout(self.layout, self.experimental_wide)).0;
         let mut tapped = None;
+        let mut native_tap = None;
         let mut scene_done = false;
         let overlay = gui.frame(window, |ui| {
             let rect = ui.ctx().content_rect();
@@ -1515,6 +1522,7 @@ impl App {
                 let out = native_menu::show(ui.ctx(), screen, art, native_live, rect, &presence, interactive);
                 native_live.nav.want(out.entered);
                 tapped = tapped.or(out.touch);
+                native_tap = native_tap.or(out.touch);
                 if let Some(scene) = menu_scene.as_mut().filter(|s| s.active()) {
                     if let Some((node, at)) = out.clicked { scene.confirm(node, Some(at), rect); }
                     if out.back { scene.back(); }
@@ -1544,6 +1552,25 @@ impl App {
         if let Some(at) = tapped {
             log::info!("Top-screen menu: touch {at:?}");
             self.tap.start(at);
+        }
+        // a click the game did not take (still on the menu 2 s after the
+        // tap, longer than any of its transitions takes to begin): given
+        // once more; the scene comes back by itself if that fails too
+        if let Some(at) = native_tap {
+            self.native_click = Some((at, 0, false));
+        } else if let Some((at, waited, again)) = &mut self.native_click {
+            if self.native_screen.is_none() {
+                self.native_click = None;
+            } else if !self.tap.busy() {
+                *waited += 1;
+                if *waited > 120 {
+                    if *again { self.native_click = None; } else {
+                        log::warn!("Redrawn menu: the game did not take the click at {at:?}; giving it again");
+                        self.tap.start(*at);
+                        *waited = 0; *again = true;
+                    }
+                }
+            }
         }
         for action in actions {
             self.act(action, event_loop);

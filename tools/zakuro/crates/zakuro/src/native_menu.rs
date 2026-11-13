@@ -5,9 +5,9 @@
 //! pack, `KIU_MENU_PACK`, rebuilt from the player's ROM at 4x), cut along
 //! its own outline, at a place laid out for a 16:9 window
 //! (doc/UI_DESIGN_RULES.md). A vine in the art's own style binds them
-//! (menu_vine); they sway together in a slow breeze (menu_motion). They do
-//! not follow the pointer: pointing lights a button (by its own outline),
-//! clicking presses it.
+//! (menu_vine); they sway together in a slow breeze (menu_motion). Pointing
+//! lights a button (by its own outline), clicking presses it, and, as in the
+//! game, a deliberate drag pulls it about on its vine; it springs back.
 //!
 //! Moving the pointer onto a button selects it at once on the PC (the gold,
 //! the PC scene's heading and character), while the game's own cursor
@@ -366,8 +366,8 @@ impl Art {
 pub struct Live {
     pub motion: Motion,
     pub nav: Nav,
-    /// the button pressed (the buttons do not follow the pointer)
-    press: Option<usize>,
+    /// the button pressed, where (units), and whether it became a drag
+    press: Option<(usize, [f32; 2], bool)>,
     /// each button's eased hover (0 rest, 1 pointed) and gold (0 off, 1 lit)
     ease: Vec<[f32; 2]>,
     /// the button the pointer was on last frame
@@ -455,18 +455,26 @@ pub fn show(ctx: &egui::Context, screen: &Screen, art: &Art, live: &mut Live, wi
     let mut top: Vec<usize> = (0..screen.buttons.len()).rev().collect();
     if let Some(h) = live.motion.held() { top.retain(|&i| i != h); top.insert(0, h); }
     let over = if shown > 0.5 && interactive { pointer.and_then(|p| top.iter().copied().find(|&i| presence.get(i).map_or(1.0, |q| q.1) > 0.5 && hit(i, p))) } else { None };
-    // a click: pressed and released on the same button's own shape
+    // a click: pressed and released on the same button's own shape. As in
+    // the game, a button can also be dragged about on its vine (it springs
+    // back): only once the pointer has moved a clear 2.5 units (about 11
+    // pixels at 1080p) while held, so a click never turns into a drag.
     if interactive {
-        if pressed { live.press = over; }
+        if pressed { live.press = over.zip(pointer_units).map(|(i, p)| (i, p, false)); }
+        if let (Some((i, at, false)), Some(p), true) = (live.press, pointer_units, down) {
+            if ((p[0] - at[0]).powi(2) + (p[1] - at[1]).powi(2)).sqrt() > 2.5 {
+                live.motion.grab(i, at, homes[i]);
+                live.press = Some((i, at, true));
+            }
+        }
         if released {
-            if let Some(i) = live.press.filter(|&i| over == Some(i)) {
-                out.touch = Some(screen.buttons[i].touch); out.clicked = Some((screen.buttons[i].node, placed[i].center()));
+            if let Some((i, _, false)) = live.press {
+                if over == Some(i) { out.touch = Some(screen.buttons[i].touch); out.clicked = Some((screen.buttons[i].node, placed[i].center())); }
             }
             live.press = None;
         }
     } else { live.press = None; }
-    let _ = down;
-    let pointing = over;
+    let pointing = live.motion.held().or(over);
     out.pointed = pointing.map(|i| screen.buttons[i].node);
     // only moving onto a button selects it, so keys and the pad keep
     // working while the pointer rests on one
@@ -507,7 +515,8 @@ pub fn show(ctx: &egui::Context, screen: &Screen, art: &Art, live: &mut Live, wi
             let _ = ui.interact(rect, egui::Id::new(("kiu-native", screen.id, i)), egui::Sense::hover());
             let [hover, gold] = live.ease[i];
             let lit = gold > 0.02;
-            let grow = if live.press == Some(i) && over == Some(i) { 0.97 } else { 1.0 + 0.05 * hover };
+            let pressing = live.press.is_some_and(|(p, _, dragging)| p == i && !dragging) && over == Some(i);
+            let grow = if pressing { 0.97 } else { 1.0 + 0.05 * hover };
             let rect = egui::Rect::from_center_size(rect.center(), rect.size() * grow);
             let px = rect.width() / tex.size()[0] as f32;
             let lift = if live.motion.held() == Some(i) { 2.0 } else { 1.0 };
@@ -684,6 +693,30 @@ mod pointer {
             t += 1.0 / 60.0;
             let out = frame(&ctx, &art, &mut live, t, vec![press(false)]);
             assert_eq!(out.clicked.map(|c| c.0), Some(b.node), "{} click", b.name);
+            // a small wobble while pressed is still a click
+            t += 1.0 / 60.0;
+            let _ = frame(&ctx, &art, &mut live, t, vec![egui::Event::PointerMoved(p), press(true)]);
+            t += 1.0 / 60.0;
+            let _ = frame(&ctx, &art, &mut live, t, vec![egui::Event::PointerMoved(p + egui::vec2(4.0, 3.0))]);
+            t += 1.0 / 60.0;
+            let out = frame(&ctx, &art, &mut live, t, vec![egui::PointerButton::Primary].into_iter().map(|_| egui::Event::PointerButton { pos: p + egui::vec2(4.0, 3.0), button: egui::PointerButton::Primary, pressed: false, modifiers: Default::default() }).collect());
+            assert_eq!(out.clicked.map(|c| c.0), Some(b.node), "{} click with a wobble", b.name);
+            // a real drag pulls the button along and is not a click
+            t += 1.0 / 60.0;
+            let _ = frame(&ctx, &art, &mut live, t, vec![egui::Event::PointerMoved(p), press(true)]);
+            let mut moved = egui::Pos2::ZERO;
+            for k in 1..=20 {
+                t += 1.0 / 60.0;
+                moved = p + egui::vec2(6.0 * k as f32, 2.0 * k as f32);
+                let _ = frame(&ctx, &art, &mut live, t, vec![egui::Event::PointerMoved(moved)]);
+            }
+            assert_eq!(live.motion.held(), Some(i), "{} held while dragged", b.name);
+            t += 1.0 / 60.0;
+            let out = frame(&ctx, &art, &mut live, t, vec![egui::Event::PointerButton { pos: moved, button: egui::PointerButton::Primary, pressed: false, modifiers: Default::default() }]);
+            assert_eq!(out.clicked, None, "{}: a drag is not a click", b.name);
+            for _ in 0..90 { t += 1.0 / 60.0; let _ = frame(&ctx, &art, &mut live, t, vec![egui::Event::PointerMoved(egui::pos2(1500.0, 500.0))]); }
+            let r = live.motion.rect(i, homes[i]);
+            println!("  dragged and let go: back within {:.1} units of home", ((r[0] - homes[i][0]).abs()).max((r[1] - homes[i][1]).abs()));
             // the empty top-left corner of its rectangle is not the button
             t += 1.0 / 60.0;
             let corner = egui::pos2(h[0] * unit + 2.0, h[1] * unit + 2.0);

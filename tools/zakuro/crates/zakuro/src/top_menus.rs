@@ -101,6 +101,9 @@ pub struct Tap {
 }
 
 impl Tap {
+    /// Whether a tap is still being given.
+    pub fn busy(&self) -> bool { self.frames > 0 }
+
     pub fn start(&mut self, at: (u16, u16)) {
         self.at = Some(at);
         self.frames = TAP_FRAMES + 1;
