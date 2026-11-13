@@ -21,7 +21,7 @@
 
 use std::path::{Path, PathBuf};
 
-use crate::menu_motion::{Graph, Motion, Nav};
+use crate::pc_menus::motion::{Graph, Motion, Nav};
 
 /// One button: where it is in the sheet and where it goes in the window.
 pub struct Button {
@@ -406,7 +406,7 @@ fn quad(tex: egui::TextureId, rect: egui::Rect, degrees: f32, tint: egui::Color3
 }
 
 /// The vine as a mesh: black, coverage as alpha, moved by `offset` points.
-fn vine_mesh(shape: &crate::menu_vine::Shape, origin: egui::Pos2, unit: f32, offset: egui::Vec2, alpha: f32) -> egui::Shape {
+fn vine_mesh(shape: &crate::pc_menus::vine::Shape, origin: egui::Pos2, unit: f32, offset: egui::Vec2, alpha: f32) -> egui::Shape {
     let mut mesh = egui::Mesh::default();
     for (i, (p, coverage)) in shape.vertices.iter().enumerate() {
         let pos = origin + egui::vec2(p[0], p[1]) * unit + offset;
@@ -499,7 +499,7 @@ pub fn show(ctx: &egui::Context, screen: &Screen, art: &Art, live: &mut Live, wi
         }).collect();
         if shown <= 0.01 { return; }
         // the vine, its soft shadow first
-        let vine = crate::menu_vine::vine(&now, 1.2 / unit);
+        let vine = crate::pc_menus::vine::vine(&now, 1.2 / unit);
         painter.add(vine_mesh(&vine, window.min, unit, egui::vec2(1.0, 1.6) * unit, 0.3 * shown));
         painter.add(vine_mesh(&vine, window.min, unit, egui::Vec2::ZERO, shown));
         // the buttons, the held one on top
@@ -616,9 +616,9 @@ mod tests {
         assert_eq!(MAIN_MENU.selected(0b0010), Some(1));
         assert_eq!(MAIN_MENU.selected(0b0110), None, "two cross-fading");
         assert_eq!(MAIN_MENU.selected(0b10000), None, "not one of the choices");
-        assert_eq!(MAIN_MENU.graph.first_step(0, 2, |n| MAIN_MENU.shows(n)), Some(crate::menu_motion::Dir::Down), "Solo, then Vault below it");
+        assert_eq!(MAIN_MENU.graph.first_step(0, 2, |n| MAIN_MENU.shows(n)), Some(crate::pc_menus::motion::Dir::Down), "Solo, then Vault below it");
         // Together to Solo goes by Vault, not by the hidden StreetPass
-        assert_eq!(MAIN_MENU.graph.first_step(1, 0, |n| MAIN_MENU.shows(n)), Some(crate::menu_motion::Dir::Left));
+        assert_eq!(MAIN_MENU.graph.first_step(1, 0, |n| MAIN_MENU.shows(n)), Some(crate::pc_menus::motion::Dir::Left));
         assert!(BACK_AT[0] >= 12.0 && BACK_AT[1] + 32.0 * BACK_SCALE <= 228.0);
     }
 }

@@ -47,7 +47,7 @@ use std::sync::{Arc, Condvar, Mutex};
 use egui::{Color32, Mesh, Pos2, Rect, TextureHandle};
 use serde::Deserialize;
 
-use crate::native_menu::{load as load_picture, Picture};
+use crate::pc_menus::buttons::{load as load_picture, Picture};
 
 const W: f32 = 1920.0;
 const H: f32 = 1080.0;
@@ -106,7 +106,7 @@ pub struct Manifest {
 
 /// The scene pack's folder: `scene-040` in the menu art pack.
 pub fn pack() -> Option<PathBuf> {
-    crate::native_menu::pack().map(|p| p.join("scene-040")).filter(|p| p.join("manifest.toml").is_file())
+    crate::pc_menus::buttons::pack().map(|p| p.join("scene-040")).filter(|p| p.join("manifest.toml").is_file())
 }
 
 // --- motion helpers (tools/idols/menu_v7/anim.py) ------------------------------------
@@ -1405,9 +1405,9 @@ mod preview {
         let mut textures: HashMap<egui::TextureId, Img> = HashMap::new();
         let mut scene: Option<Scene> = None;
         // the buttons and their vine too, when KIU_MENU_PACK points at the menu art pack
-        let menu = &crate::native_menu::MAIN_MENU;
-        let mut art: Option<Option<crate::native_menu::Art>> = None;
-        let mut live = crate::native_menu::Live::default();
+        let menu = &crate::pc_menus::buttons::MAIN_MENU;
+        let mut art: Option<Option<crate::pc_menus::buttons::Art>> = None;
+        let mut live = crate::pc_menus::buttons::Live::default();
         for f in 0..n {
             let t = f as f64 / 60.0;
             let input = egui::RawInput { time: Some(t), screen_rect: Some(screen), ..Default::default() };
@@ -1423,11 +1423,11 @@ mod preview {
                 if f == 452 { s.confirm(1, Some(Pos2::new(281.0, 520.0)), screen); }
                 if f >= 500 { s.game_left(); }
                 s.show(&ctx, screen);
-                let art = art.get_or_insert_with(|| crate::native_menu::Art::load(&ctx, &crate::native_menu::MAIN_MENU));
+                let art = art.get_or_insert_with(|| crate::pc_menus::buttons::Art::load(&ctx, &crate::pc_menus::buttons::MAIN_MENU));
                 if let Some(art) = art {
                     live.nav.observe(sel, true);
                     let presence: Vec<(f32, f32)> = (0..4).map(|i| s.button_presence(i)).collect();
-                    let _ = crate::native_menu::show(&ctx, menu, art, &mut live, screen, &presence, s.interactive());
+                    let _ = crate::pc_menus::buttons::show(&ctx, menu, art, &mut live, screen, &presence, s.interactive());
                 }
             });
             for (id, ds) in &output.textures_delta.set { for d in ds.iter() { apply(&mut textures, *id, d); } }
@@ -1457,7 +1457,7 @@ mod bench {
         let dt = t.elapsed().as_secs_f64() / n as f64;
         println!("char frame decode: {:.1} ms each ({:.2} Mpx)", dt * 1000.0, px as f64 / n as f64 / 1e6);
         let t = std::time::Instant::now();
-        for f in ["paper_1.webp", "stage_1.webp", "rays_1.webp"] { let _ = crate::native_menu::load(&root.join(f)).unwrap(); }
+        for f in ["paper_1.webp", "stage_1.webp", "rays_1.webp"] { let _ = crate::pc_menus::buttons::load(&root.join(f)).unwrap(); }
         println!("paper+stage+rays decode: {:.0} ms", t.elapsed().as_secs_f64() * 1000.0);
         // the menu as the game runs it: real time, never waiting for frames
         {
