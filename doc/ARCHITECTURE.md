@@ -63,8 +63,9 @@ then shows the screens.
 1. **Input** (`zakuro/src/lib.rs`, `App::emulate`): keyboard and mouse
    (`input.rs`) and pads (`gamepad.rs`) become one 3DS input state: buttons,
    circle pad, touch. The KIU extras act here: Space jump (`kiu_jump.rs`)
-   presses the D-pad like a player, clicks on top-screen menus become
-   touches (`top_menus.rs`), the mouse camera's movement is queued for the
+   presses the D-pad like a player, clicks on the PC's menus become
+   touches and the PC menus walk the game's cursor with the D-pad
+   (`top_menus.rs`, `pc_menus/`), the mouse camera's movement is queued for the
    game's camera code (`memory/kiu_mouse.rs`). A recording or replay
    (`replay.rs`) writes or supplies that input.
 2. **Emulation** (`zakuro-core/src/lib.rs`, `System::run_frame`): the
@@ -85,8 +86,9 @@ then shows the screens.
    the frame's samples go to the host's output (`zakuro/src/audio.rs`).
 6. **Showing**: `App::present` hands the screens to the presenter
    (`zakuro-gpu/src/backend/vulkan.rs`, sharing the renderer's device) with
-   the overlay: the PC interface's HUD and portraits (`kiu_ui`) and the
-   egui menus (`menus.rs`, `gui.rs`).
+   the overlay: the PC interface's HUD and portraits (`kiu_ui`), the menus
+   the PC draws for the game (`pc_menus/`), and the frontend's own egui
+   panels (`menus.rs`, `gui.rs`).
 
 The 3DS draws both screens every frame. The PC version shows the top
 screen; `kiu_ui` recognises the bottom screen's art by the identity of
@@ -107,7 +109,9 @@ Everything specific to the game, by where it acts.
 | game input | `zakuro-core/src/memory/kiu_mouse.rs` | mouse camera on land, flight aim |
 | game input | `zakuro-core/src/services/hid.rs` | circle pad range (156) |
 | frontend input | `zakuro/src/input.rs`, `kiu_jump.rs` | keyboard and mouse controls, Space jump |
-| menus | `zakuro/src/top_menus.rs` | out-of-stage menus answered from the top screen |
+| menus | `zakuro/src/pc_menus/` | menus the PC draws itself with the game's art (the main menu and its scene); see below |
+| menus | `zakuro/src/top_menus.rs`, `menu_layouts.rs` | other out-of-stage menus: plain PC buttons over the top screen, or the lower screen's pieces laid out (`tools/recomp/menu_layouts.toml`) |
+| menus (art) | `tools/idols/menu_pack` | the main menu scene's pack, built from the player's ROM |
 | picture | `zakuro-gpu/src/kiu_ui/*` | HUD, portraits, scene recognition, bakes, layout |
 | picture | `zakuro/src/pc_presentation.rs` | what is shown when |
 | picture | `zakuro-gpu/src/replacements.rs` | HD texture replacements |
@@ -122,6 +126,43 @@ Two ways to change the game's behaviour:
 - **In the game library** (overrides): replacing or wrapping a game
   function. As precise as editing the game's code, but each change costs a
   two-hour rebuild.
+
+## The PC menus (`zakuro/src/pc_menus`)
+
+The game keeps running its own menus on its hidden lower screen and keeps
+deciding what happens; the PC draws the menu with the game's art, laid out
+for 16:9, and turns pointing and clicking into the game's input.
+
+| File | What |
+|---|---|
+| `mod.rs` | the parts, and where the menu art pack is (`KIU_MENU_PACK`, read once) |
+| `state.rs` | `PcMenus`: the one value the frontend keeps; five calls a frame (below) |
+| `screens.rs` | the redrawn screens as data: buttons in the game's sheet and in the window, the touch that presses each, the game's navigation map |
+| `picture.rs`, `art.rs` | buttons cut from the game's sheet along their outlines, glows, pointer masks; prepared on their own thread, uploaded once |
+| `buttons.rs`, `motion.rs`, `vine.rs` | drawing the buttons and the vine; pointing, clicking, dragging; springs and sway |
+| `cursor.rs` | walking the game's own cursor to what the pointer points at, from the selection art the game draws |
+| `scene/` | the main menu's animated scene: `manifest.rs` (the pack), `loading.rs` (read off the game's thread, uploaded 12 MB a frame), `frames.rs` (character frames: in memory, 2-4 decoders, one texture per character), `timeline.rs`, `canvas.rs`, `anim.rs`, `effects.rs`, and the scene itself in `mod.rs` |
+
+Each frame, in order: `set_screen` (the screen the game shows, from its
+screen recipe), `cursor_press` (when the input is made; none during a
+click), `observe` (after the game's frame: which choice it shows
+selected), `show` (when the interface is drawn: the scene, then the
+buttons; returns the touch a click asks for), `check_click` (a click the
+game ignored is given once more after 2 s).
+
+The art is never in the repository: the menu art pack
+(`build/texture-work/menu-pc`, the game's menu textures rebuilt from the
+player's ROM at 4x) and the scene pack in its `scene-040` folder (made by
+`tools/idols/menu_pack`: layers, `manifest.toml`, each character's frames
+as JPEG colour + PNG coverage packed in `char_M.pak`).
+
+Checking without the game: `cargo test -p zakuro --lib` (screens, click
+rule, timelines, motion); with a pack, the preview
+(`pc_menus::scene::preview`, frames drawn by egui's own tessellator),
+the real-time check (`pc_menus::scene::bench`: frames on time when never
+waiting for decoding) and the pointer test (`pc_menus::buttons::pointer`).
+The log says every 5 s how smooth the scene is ("Main menu scene: drawn N
+times a second; character frames on time ...").
 
 ## Building and running
 
