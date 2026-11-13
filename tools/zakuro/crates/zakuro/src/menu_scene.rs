@@ -269,11 +269,18 @@ fn mix(a: [u8; 3], b: [u8; 3], k: f32) -> [u8; 3] {
 
 /// One frame: colour (JPEG) and coverage (grey PNG), premultiplied; older
 /// packs: one WebP.
-fn load_frame(dir: &Path, index: i32) -> Option<Picture> {
-    let jpg = dir.join(format!("{index:04}.jpg"));
-    if !jpg.is_file() { return load_picture(&dir.join(format!("{index:04}.webp"))); }
-    let rgb = image::open(&jpg).ok()?.to_rgb8();
-    let cover = image::open(dir.join(format!("{index:04}_a.png"))).ok()?.to_luma8();
+fn load_frame(dir: &Path, index: i32, files: Option<&FrameFiles>) -> Option<Picture> {
+    let read;
+    let (jpg, png) = match files {
+        Some(f) => (&f.0, &f.1),
+        None => {
+            if !dir.join(format!("{index:04}.jpg")).is_file() { return load_picture(&dir.join(format!("{index:04}.webp"))); }
+            read = read_frame(dir, index)?;
+            (&read.0, &read.1)
+        }
+    };
+    let rgb = image::load_from_memory_with_format(jpg, image::ImageFormat::Jpeg).ok()?.to_rgb8();
+    let cover = image::load_from_memory_with_format(png, image::ImageFormat::Png).ok()?.to_luma8();
     if rgb.dimensions() != cover.dimensions() { return None; }
     let (w, h) = rgb.dimensions();
     let mut rgba = vec![0u8; w as usize * h as usize * 4];
@@ -287,13 +294,26 @@ fn load_frame(dir: &Path, index: i32) -> Option<Picture> {
 /// A frame: its mode and index.
 type Key = (usize, i32);
 
+/// A frame's two files as read from disk (JPEG colour, PNG coverage).
+type FrameFiles = (Vec<u8>, Vec<u8>);
+
+fn read_frame(dir: &Path, index: i32) -> Option<FrameFiles> {
+    Some((std::fs::read(dir.join(format!("{index:04}.jpg"))).ok()?, std::fs::read(dir.join(format!("{index:04}_a.png"))).ok()?))
+}
+
+/// Every frame's files, read into memory on their own thread from start-up
+/// (about 270 MB), so decoding never waits on the disk: the first time
+/// through an animation, a cold disk read per frame (two files) could not
+/// keep up with 60 a second.
+type InMemory = Arc<Mutex<HashMap<Key, Arc<FrameFiles>>>>;
+
 /// The decoders' to-do list: the frames wanted now, most urgent first. The
 /// scene replaces it every frame, so a frame that went by before its turn is
 /// simply dropped, and the decoders work on what is needed now.
 struct Board { wanted: Vec<Key>, busy: HashSet<Key>, quit: bool }
 struct Shared { board: Mutex<Board>, wake: Condvar }
 
-struct Decoded { key: Key, picture: Option<Picture> }
+struct Decoded { key: Key, picture: Option<Picture>, ms: f32 }
 
 /// One mode's character: its frames on disk, the decoded ones near the
 /// playhead, and the one texture showing the current frame.
@@ -329,6 +349,9 @@ struct Stream {
     failed: HashSet<Key>,
     /// frames shown on time, frames shown late, and the most frames late
     pub stats: [u32; 3],
+    /// frames decoded, and the time they took (ms)
+    decoded: (u32, f32),
+    threads: usize,
 }
 
 impl Drop for Stream {
@@ -343,10 +366,37 @@ impl Stream {
         let shared = Arc::new(Shared { board: Mutex::new(Board { wanted: Vec::new(), busy: HashSet::new(), quit: false }), wake: Condvar::new() });
         let (tx, from) = channel::<Decoded>();
         let dirs: Vec<PathBuf> = man.modes.iter().map(|m| root.join(&m.character.dir)).collect();
+        let memory: InMemory = Arc::default();
+        {
+            // in playing order: each mode's first frames, then each mode's
+            // entrance and hold, then the rest
+            let mut order: Vec<Key> = Vec::new();
+            for (m, mode) in man.modes.iter().enumerate() {
+                order.extend((0..10).map(|k| (m, idle_index(&mode.character, k as f32))));
+            }
+            for (m, mode) in man.modes.iter().enumerate() {
+                let c = &mode.character;
+                let span = c.intro.as_ref().map_or(0, |i| i.range[1] - i.range[0]) + c.idle.range[1] - c.idle.range[0] + 1;
+                order.extend((0..span.max(0)).map(|k| (m, idle_index(c, k as f32))));
+            }
+            for (m, mode) in man.modes.iter().enumerate() { order.extend(mode.character.frames.iter().map(|f| (m, f[0]))); }
+            let (memory, dirs) = (memory.clone(), dirs.clone());
+            let _ = std::thread::Builder::new().name("menu-scene-files".into()).spawn(move || {
+                let start = std::time::Instant::now();
+                let mut bytes = 0usize;
+                for key in order {
+                    if memory.lock().map_or(true, |m| m.contains_key(&key)) { continue; }
+                    let Some(files) = dirs.get(key.0).and_then(|d| read_frame(d, key.1)) else { continue };
+                    bytes += files.0.len() + files.1.len();
+                    if let Ok(mut m) = memory.lock() { m.insert(key, Arc::new(files)); }
+                }
+                log::info!("Main menu scene: character frames read into memory ({} MB) in {:.1} s", bytes >> 20, start.elapsed().as_secs_f32());
+            });
+        }
         // two to four decoders, leaving the game its own cores
         let n = std::thread::available_parallelism().map_or(2, |n| n.get()).saturating_sub(2).clamp(2, 4);
         for k in 0..n {
-            let (shared, tx, dirs) = (shared.clone(), tx.clone(), dirs.clone());
+            let (shared, tx, dirs, memory) = (shared.clone(), tx.clone(), dirs.clone(), memory.clone());
             let _ = std::thread::Builder::new().name(format!("menu-scene-decode-{k}")).spawn(move || loop {
                 // the most urgent frame nobody is decoding yet
                 let key = {
@@ -357,9 +407,12 @@ impl Stream {
                         b = match shared.wake.wait(b) { Ok(b) => b, Err(_) => return };
                     }
                 };
-                let picture = dirs.get(key.0).and_then(|d| load_frame(d, key.1));
+                let clock = std::time::Instant::now();
+                let files = memory.lock().ok().and_then(|m| m.get(&key).cloned());
+                let picture = dirs.get(key.0).and_then(|d| load_frame(d, key.1, files.as_deref()));
+                let ms = clock.elapsed().as_secs_f32() * 1000.0;
                 if let Ok(mut b) = shared.board.lock() { b.busy.remove(&key); b.wanted.retain(|k| *k != key); }
-                if tx.send(Decoded { key, picture }).is_err() { return; }
+                if tx.send(Decoded { key, picture, ms }).is_err() { return; }
             });
         }
         let frames = man.modes.iter().map(|m| {
@@ -371,7 +424,7 @@ impl Stream {
             pinned.extend((0..4).map(|k| c.confirm.range[0] + k));
             Frames { at, cache: HashMap::new(), pinned, most, tex: None, shown: None }
         }).collect();
-        let mut stream = Stream { shared, from, frames, now: Vec::new(), next: Vec::new(), named: HashSet::new(), playhead: [None; 4], failed: HashSet::new(), stats: [0; 3] };
+        let mut stream = Stream { shared, from, frames, now: Vec::new(), next: Vec::new(), named: HashSet::new(), playhead: [None; 4], failed: HashSet::new(), stats: [0; 3], decoded: (0, 0.0), threads: n };
         // every mode's first frames, so each starts on its own pose
         for m in 0..stream.frames.len() {
             let mut first: Vec<i32> = stream.frames[m].pinned.iter().copied().collect();
@@ -394,6 +447,7 @@ impl Stream {
     /// Takes in what the decoders finished.
     fn receive(&mut self) {
         while let Ok(d) = self.from.try_recv() {
+            self.decoded.0 += 1; self.decoded.1 += d.ms;
             match d.picture {
                 Some(p) => { self.frames[d.key.0].cache.insert(d.key.1, p); }
                 None => {
@@ -462,6 +516,18 @@ impl Stream {
 }
 
 /// Which character frame a mode shows `t` frames after it was selected.
+/// Distance along a sweep of `len` frames, `t` frames in: at most one frame
+/// per frame, easing in over the first `e` frames of distance and out over
+/// the last (each ease takes 2e frames of time).
+fn sweep(t: f32, len: f32, e: f32) -> f32 {
+    let e = e.min(len / 2.0).max(0.5);
+    let total = len + 2.0 * e;
+    let t = t.clamp(0.0, total);
+    if t < 2.0 * e { t * t / (4.0 * e) }
+    else if t > total - 2.0 * e { let u = total - t; len - u * u / (4.0 * e) }
+    else { e + (t - 2.0 * e) }
+}
+
 fn idle_index(c: &Character, t: f32) -> i32 {
     let mut t = t.max(0.0);
     if let Some(intro) = &c.intro {
@@ -473,11 +539,13 @@ fn idle_index(c: &Character, t: f32) -> i32 {
     let len = (b - a).max(1) as f32;
     match c.idle.play.as_deref() {
         Some("pingpong") => {
-            // back and forth, slowing into each turn (a moving hold)
-            let p = (t / len) % 2.0;
-            let tri = if p < 1.0 { p } else { 2.0 - p };
-            let s = tri * tri * (3.0 - 2.0 * tri);
-            a + (s * len).round() as i32
+            // back and forth: one rendered frame per frame (none skipped),
+            // with a soft stop and start at each turn (a moving hold)
+            let e = 12.0;
+            let total = len + 2.0 * e;
+            let p = t % (2.0 * total);
+            let d = if p < total { sweep(p, len, e) } else { len - sweep(p - total, len, e) };
+            a + (d.floor() as i32).clamp(0, b - a)
         }
         _ => a + (t as i32).rem_euclid(len as i32 + 1),
     }
@@ -566,6 +634,8 @@ enum Phase {
 pub struct Scene {
     /// shown (between the menu appearing and the scene finishing)
     active: bool,
+    /// for the log every 5 s: since when, and how many times drawn
+    report: (f64, u32),
     /// it finished while the game still showed the menu: it waits for the
     /// game to leave before it can start again
     rested_on_menu: bool,
@@ -614,7 +684,7 @@ impl Scene {
         let stream = Stream::new(root, &man);
         let now = ctx.input(|i| i.time);
         log::info!("Main menu scene: the PC's ink and paper menu ({} character frames)", man.modes.iter().map(|m| m.character.frames.len()).sum::<usize>());
-        Some(Scene { active: false, rested_on_menu: false, man, art, stream, start: now, selected: 0, previous: 0, changed: None,
+        Some(Scene { active: false, report: (now, 0), rested_on_menu: false, man, art, stream, start: now, selected: 0, previous: 0, changed: None,
                      chosen_at: [now; 4], phase: Phase::Shown, game_left: None, time: now, pressed_at: None, pending: None })
     }
 
@@ -628,13 +698,28 @@ impl Scene {
     /// Whether the scene is being shown.
     pub fn active(&self) -> bool { self.active }
 
+    /// Every 5 s while shown, how smooth it is, for the log: how often it
+    /// was drawn, character frames shown on time or late, decoding time.
+    fn report_now(&mut self) {
+        self.report.1 += 1;
+        let span = self.time - self.report.0;
+        if span < 5.0 { return; }
+        let st = std::mem::take(&mut self.stream.stats);
+        let (n, ms) = std::mem::take(&mut self.stream.decoded);
+        log::info!(
+            "Main menu scene: drawn {:.0} times a second; character frames on time {}, late {} (at most {} behind); {} decoded, {:.1} ms each on {} threads",
+            self.report.1 as f64 / span, st[0], st[1], st[2], n, if n > 0 { ms / n as f32 } else { 0.0 }, self.stream.threads
+        );
+        self.report = (self.time, 0);
+    }
+
     /// The main menu is on screen: starts the scene from its entry, unless it
     /// is already showing this visit.
     pub fn on_menu(&mut self, ctx: &egui::Context) {
         if self.active && self.game_left.is_none() { return; }
         if !self.active && self.rested_on_menu { return; }
         let now = ctx.input(|i| i.time);
-        self.active = true; self.start = now; self.time = now;
+        self.active = true; self.start = now; self.time = now; self.report = (now, 0);
         self.selected = 0; self.previous = 0; self.changed = None; self.chosen_at = [now; 4];
         self.phase = Phase::Shown; self.game_left = None; self.pressed_at = None; self.pending = None;
     }
@@ -742,6 +827,7 @@ impl Scene {
         if !self.active { return false; }
         self.time = ctx.input(|i| i.time);
         self.stream.receive();
+        self.report_now();
         if let Some(n) = self.pending {
             if self.changed.is_none_or(|t| self.frames_since(t) >= SWAP_BUSY) { self.change_to(n); }
         }
@@ -1183,8 +1269,11 @@ mod tests {
             idle: Seq { range: [195, 225], play: Some("pingpong".into()), impact: None }, confirm: Seq { range: [225, 259], play: None, impact: None } };
         assert_eq!(idle_index(&c, 0.0), 150);
         assert_eq!(idle_index(&c, 45.0), 195);
-        assert_eq!(idle_index(&c, 45.0 + 30.0), 225, "the far end");
-        assert_eq!(idle_index(&c, 45.0 + 60.0), 195, "and back");
+        // 30 frames of sweep with a 12-frame soft turn at each end: 54 frames each way
+        assert_eq!(idle_index(&c, 45.0 + 54.0), 225, "the far end");
+        assert_eq!(idle_index(&c, 45.0 + 108.0), 195, "and back");
+        let steps: Vec<i32> = (0..108).map(|t| idle_index(&c, 45.0 + t as f32 + 1.0) - idle_index(&c, 45.0 + t as f32)).collect();
+        assert!(steps.iter().all(|d| d.abs() <= 1), "never skips a frame: {steps:?}");
         let l = Character { intro: None, idle: Seq { range: [0, 359], play: Some("loop".into()), impact: None }, ..c };
         assert_eq!(idle_index(&l, 360.0), 0);
         assert_eq!(idle_index(&l, 361.0), 1);
@@ -1315,7 +1404,7 @@ mod bench {
         let t = std::time::Instant::now();
         let mut n = 0; let mut px = 0;
         for i in [100, 101, 102, 103, 104, 105, 106, 107] {
-            let p = super::load_frame(&root.join("char_2"), i).unwrap();
+            let p = super::load_frame(&root.join("char_2"), i, None).unwrap();
             n += 1; px += p.width * p.height;
         }
         let dt = t.elapsed().as_secs_f64() / n as f64;
