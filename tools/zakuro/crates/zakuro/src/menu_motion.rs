@@ -34,9 +34,11 @@ pub struct Motion {
     time: f32,
 }
 
+/// A slow breeze through the vine: one wave (5 s) running down it, mostly
+/// sideways, each button a little after the one above, so they move as one.
 fn sway(i: usize, t: f32) -> V {
-    let f = i as f32;
-    [(t * 0.9 + f * 1.7).sin() * 0.8, (t * 1.3 + f * 2.3).sin() * 1.3]
+    let a = std::f32::consts::TAU * t / 5.0 - i as f32 * 0.6;
+    [a.sin() * 0.7, (a + 1.3).sin() * 0.3]
 }
 
 fn shift(r: [f32; 4], o: V) -> [f32; 4] { [r[0] + o[0], r[1] + o[1], r[2] + o[0], r[3] + o[1]] }
@@ -51,7 +53,9 @@ impl Motion {
 
     pub fn held(&self) -> Option<usize> { self.held.map(|h| h.0) }
 
-    /// Grabs button `i` at `pointer` (units).
+    /// Grabs button `i` at `pointer` (units). The main menu no longer lets
+    /// buttons be dragged (Kevin: they should not follow the pointer).
+    #[allow(dead_code)]
     pub fn grab(&mut self, i: usize, pointer: V, home: [f32; 4]) {
         let r = self.rect(i, home);
         self.held = Some((i, [pointer[0] - r[0], pointer[1] - r[1]]));
@@ -193,13 +197,17 @@ impl Nav {
     /// cursor walks there, otherwise where the cursor is.
     pub fn heading(&self) -> Option<usize> { self.target.filter(|_| self.tries < TRIES).or(self.current) }
 
-    /// The choice the pointer rests on (None: leave the game's cursor be).
+    /// The choice the pointer has just moved onto (None: leave the game's
+    /// cursor be). The walk carries on to it even if the pointer leaves.
     pub fn want(&mut self, target: Option<usize>) {
-        if target != self.target {
+        if target.is_some() && target != self.target {
             self.target = target;
             self.tries = 0;
         }
     }
+
+    /// Stops walking (a click went to the game's real button).
+    pub fn stop(&mut self) { self.target = None; }
 
     /// The D-pad press to give the game this frame.
     pub fn pad(&mut self, graph: &Graph, shown: impl Fn(usize) -> bool) -> Option<Dir> {
@@ -209,6 +217,8 @@ impl Nav {
         }
         if self.settle > 0 { self.settle -= 1; return None; }
         let (Some(from), Some(to)) = (self.current, self.target) else { return None };
+        // there: the walk is done, keys and the pad are free again
+        if from == to { self.target = None; return None; }
         if self.tries >= TRIES { return None; }
         let dir = graph.first_step(from, to, shown)?;
         self.tries += 1;

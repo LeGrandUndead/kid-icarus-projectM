@@ -1063,6 +1063,10 @@ mod preview {
         let screen = Rect::from_min_size(Pos2::ZERO, egui::vec2(W, H));
         let mut textures: HashMap<egui::TextureId, Img> = HashMap::new();
         let mut scene: Option<Scene> = None;
+        // the buttons and their vine too, when KIU_MENU_PACK points at the menu art pack
+        let menu = &crate::native_menu::MAIN_MENU;
+        let mut art: Option<Option<crate::native_menu::Art>> = None;
+        let mut live = crate::native_menu::Live::default();
         for f in 0..n {
             let t = f as f64 / 60.0;
             let input = egui::RawInput { time: Some(t), screen_rect: Some(screen), ..Default::default() };
@@ -1077,8 +1081,12 @@ mod preview {
                 if f == 452 { s.confirm(1, Some(Pos2::new(281.0, 520.0)), screen); }
                 if f >= 500 { s.game_left(); }
                 s.show(&ctx, screen);
-                // the buttons' entry, for the record
-                let _ = s.button_presence(0);
+                let art = art.get_or_insert_with(|| crate::native_menu::Art::load(&ctx, &crate::native_menu::MAIN_MENU));
+                if let Some(art) = art {
+                    live.nav.observe(sel, true);
+                    let presence: Vec<(f32, f32)> = (0..4).map(|i| s.button_presence(i)).collect();
+                    let _ = crate::native_menu::show(&ctx, menu, art, &mut live, screen, &presence, s.interactive());
+                }
             });
             for (id, ds) in &output.textures_delta.set { for d in ds.iter() { apply(&mut textures, *id, d); } }
             if only.as_ref().is_some_and(|o| !o.contains(&f)) { continue; }

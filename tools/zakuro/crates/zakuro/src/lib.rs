@@ -1496,7 +1496,7 @@ impl App {
                     .map(|i| menu_scene.as_ref().map_or((0.0, 1.0), |s| s.button_presence(i))).collect();
                 let interactive = menu_scene.as_ref().is_none_or(|s| s.interactive());
                 let out = native_menu::show(ui.ctx(), screen, art, native_live, rect, &presence, interactive);
-                native_live.nav.want(out.pointed);
+                native_live.nav.want(out.entered);
                 tapped = tapped.or(out.touch);
                 if let Some(scene) = menu_scene.as_mut() {
                     if let Some((node, at)) = out.clicked { scene.confirm(node, Some(at), rect); }

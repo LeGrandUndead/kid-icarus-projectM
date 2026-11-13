@@ -105,19 +105,25 @@ pub fn spiral(centre: P, r: f32, turns: f32, start: f32, sign: f32) -> Vec<P> {
 pub fn vine(buttons: &[[f32; 4]], soft: f32) -> Shape {
     let mut shape = Shape::default();
     let Some(last) = buttons.last() else { return shape };
-    let mut spine: Vec<P> = vec![[-16.0, -6.0], [-2.0, 8.0], [6.0, 14.0]];
+    // whole inside the window: from a curl just above the first button to a
+    // curl under the last, clear of the heading above and the ground band below
+    let first = buttons[0];
+    let top = [first[0] - 4.0, first[1] - 7.0];
+    let mut spine: Vec<P> = vec![top];
     for (i, b) in buttons.iter().enumerate() {
         let x = b[0] - 1.0 + if i % 2 == 1 { 3.0 } else { -2.0 };
         spine.push([x, (b[1] + b[3]) * 0.5]);
     }
-    spine.push([last[0] + 2.0, last[3] + 10.0]);
-    spine.push([last[0] + 12.0, last[3] + 15.0]);
+    spine.push([last[0] + 1.0, last[3] + 2.0]);
+    spine.push([last[0] + 8.0, last[3] + 5.0]);
     let path = curve(&spine, 16);
-    shape.ribbon(&path, 9.0, 2.6, soft);
+    // fine at both ends, fullest a third of the way down
+    let k = path.len() / 3;
+    shape.ribbon(&path[..=k], 2.4, 6.0, soft);
+    shape.ribbon(&path[k..], 6.0, 2.4, soft);
+    shape.ribbon(&spiral([top[0], top[1] - 4.5], 4.5, 1.25, PI / 2.0, 1.0), 2.4, 0.8, soft);
     let end = *path.last().unwrap();
-    shape.ribbon(&spiral([end[0] + 1.0, end[1] - 6.0], 6.0, 1.25, PI / 2.0, -1.0), 2.6, 0.8, soft);
-    // a flourish where it enters the window
-    shape.ribbon(&spiral([14.0, 6.0], 6.5, 1.2, PI, 1.0), 3.2, 0.8, soft);
+    shape.ribbon(&spiral([end[0] + 1.0, end[1] - 5.0], 5.0, 1.25, PI / 2.0, -1.0), 2.4, 0.8, soft);
     // laurel leaves in pairs along the spine, pointing down it
     let mut run = 0.0;
     for w in path.windows(2) {

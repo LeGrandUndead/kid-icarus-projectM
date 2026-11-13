@@ -294,7 +294,19 @@ def top_piece(img):
 _top = top_piece(ORN); _bg = Image.new("RGBA", _top.size, (0, 0, 0, 255)); _bg.paste(_top, (0, 0), _top)
 SWIRL = fit(mask(_bg, BLACK), w=760).transpose(Image.FLIP_LEFT_RIGHT)   # top branch: its cut end (the sheet's edge) goes off the right of the screen
 ORN6, _k6 = art('040', 'MenCmnBgUp0006s')
-SPRIG = fit(mask(ORN6.crop((int(141 * _k6), int(120 * _k6), int(256 * _k6), int(256 * _k6))), BLACK), h=300)  # ink plume
+def only_largest(img):
+    """Keeps only the biggest ink shape of a crop (the atlas packs other
+    sprites right next to it; their edges came along with the crop)."""
+    from scipy import ndimage
+    a = np.asarray(img).copy()
+    solid = a[:, :, 3] > 20
+    labels, n = ndimage.label(ndimage.binary_dilation(solid, iterations=2))
+    if n > 1:
+        sizes = ndimage.sum(solid, labels, range(1, n + 1))
+        a[labels != 1 + int(np.argmax(sizes))] = 0
+    out = Image.fromarray(a)
+    return out.crop(out.getchannel('A').getbbox())
+SPRIG = fit(only_largest(mask(ORN6.crop((int(141 * _k6), int(120 * _k6), int(256 * _k6), int(256 * _k6))), BLACK)), h=300)  # ink plume
 CTRL = controls_v4()
 FLASH = fx_tex('doll_008_doll', 'ptc_cmn_flashA'); HANE = fx_tex('demo_024_demo', 'ptc_c05_040_hane')
 

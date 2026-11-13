@@ -5,12 +5,13 @@
 //! pack, `KIU_MENU_PACK`, rebuilt from the player's ROM at 4x), cut along
 //! its own outline, at a place laid out for a 16:9 window
 //! (doc/UI_DESIGN_RULES.md). A vine in the art's own style binds them
-//! (menu_vine); they sway, can be dragged and pushed into each other, and
-//! spring back to their place on it (menu_motion).
+//! (menu_vine); they sway together in a slow breeze (menu_motion). They do
+//! not follow the pointer: pointing lights a button (by its own outline),
+//! clicking presses it.
 //!
-//! Pointing at a button selects it in the game (menu_motion::Nav walks the
-//! game's cursor there with the D-pad), so the game's heading, art, caption
-//! and sounds follow the pointer; clicking it touches the game's real
+//! Moving the pointer onto a button selects it at once on the PC (the gold,
+//! the PC scene's heading and character), while the game's own cursor
+//! walks there out of sight with the D-pad (menu_motion::Nav); clicking it touches the game's real
 //! button on its hidden lower screen (top_menus::Tap). The game still
 //! decides what happens; keyboard and controller keep working, and light
 //! the same buttons.
@@ -272,9 +273,28 @@ pub struct Art {
     pub id: u16,
     /// each button, and its glow (with the glow's padding in texture pixels)
     pub buttons: Vec<(egui::TextureHandle, egui::TextureHandle, f32)>,
+    /// each button's outline for pointing: its glow's coverage (the shape
+    /// grown by a few pixels), so a button answers only over its own art,
+    /// not the empty corners of its rectangle
+    pub masks: Vec<Mask>,
     /// texture pixels per sheet pixel
     pub density: f32,
     pub back: Option<(egui::TextureHandle, egui::TextureHandle, f32, f32)>,
+}
+
+/// Where a button can be pointed at: coverage, one byte per glow pixel.
+pub struct Mask { pub width: usize, pub height: usize, pub coverage: Vec<u8> }
+
+impl Mask {
+    fn of(p: &Picture) -> Mask {
+        Mask { width: p.width, height: p.height, coverage: (0..p.width * p.height).map(|i| p.rgba[i * 4 + 3]).collect() }
+    }
+    /// Whether `uv` (0..1 across the glow's rectangle) is on the button.
+    pub fn covers(&self, uv: [f32; 2]) -> bool {
+        if !(0.0..1.0).contains(&uv[0]) || !(0.0..1.0).contains(&uv[1]) { return false; }
+        let (x, y) = ((uv[0] * self.width as f32) as usize, (uv[1] * self.height as f32) as usize);
+        self.coverage[y * self.width + x] > 90
+    }
 }
 
 fn texture(ctx: &egui::Context, name: &str, p: &Picture) -> egui::TextureHandle {
@@ -287,9 +307,11 @@ impl Art {
         let pack = pack()?;
         let sheet = load(&pack.join(screen.sheet))?;
         let density = sheet.width as f32 / screen.sheet_size as f32;
+        let mut masks = Vec::new();
         let buttons = cut_buttons(&sheet, screen).iter().zip(screen.buttons).map(|(p, b)| {
             let pad = (p.height.min(p.width) as f32 * 0.14) as usize;
             let glow = p.glow(pad);
+            masks.push(Mask::of(&glow));
             (texture(ctx, &format!("kiu-{}-{}", screen.id, b.name), p), texture(ctx, &format!("kiu-{}-{}-glow", screen.id, b.name), &glow), pad as f32)
         }).collect();
         let back = load(&pack.join(BACK_SHEET)).map(|p| {
@@ -298,7 +320,7 @@ impl Art {
             (texture(ctx, "kiu-back", &p), texture(ctx, "kiu-back-glow", &p.glow(pad)), pad as f32, k)
         });
         log::info!("Main menu redrawn from the menu art pack ({}x)", density);
-        Some(Art { id: screen.id, buttons, density, back })
+        Some(Art { id: screen.id, buttons, masks, density, back })
     }
 }
 
@@ -308,6 +330,12 @@ impl Art {
 pub struct Live {
     pub motion: Motion,
     pub nav: Nav,
+    /// the button pressed (the buttons do not follow the pointer)
+    press: Option<usize>,
+    /// each button's eased hover (0 rest, 1 pointed) and gold (0 off, 1 lit)
+    ease: Vec<[f32; 2]>,
+    /// the button the pointer was on last frame
+    last_pointed: Option<usize>,
 }
 
 /// What the pointer did on a redrawn screen this frame.
@@ -321,6 +349,8 @@ pub struct Output {
     pub touch: Option<(u16, u16)>,
     /// the choice the pointer rests on (its node in the game's map)
     pub pointed: Option<usize>,
+    /// the pointer has just moved onto this choice (select it)
+    pub entered: Option<usize>,
 }
 
 /// The buttons' home rectangles, in units.
@@ -370,7 +400,52 @@ pub fn show(ctx: &egui::Context, screen: &Screen, art: &Art, live: &mut Live, wi
     let pointer_units = pointer.map(|p| [(p.x - window.min.x) / unit, (p.y - window.min.y) / unit]);
     let homes = homes(screen, art);
     live.motion.step(dt, &homes, pointer_units);
-    let selected = live.nav.current;
+    let (pressed, released, down) = ctx.input(|i| (i.pointer.primary_pressed(), i.pointer.primary_released(), i.pointer.primary_down()));
+    let shown = presence.iter().map(|p| p.1).fold(0.0f32, f32::max).min(1.0);
+    // which button is under the pointer: by its outline, the top one first
+    // (later buttons and the held one are drawn on top)
+    let placed: Vec<egui::Rect> = (0..homes.len()).map(|i| {
+        let r = live.motion.rect(i, homes[i]); let dx = presence.get(i).map_or(0.0, |p| p.0);
+        egui::Rect::from_min_max(window.min + egui::vec2(r[0] + dx, r[1]) * unit, window.min + egui::vec2(r[2] + dx, r[3]) * unit)
+    }).collect();
+    let hit = |i: usize, p: egui::Pos2| -> bool {
+        let (b, (tex, _, pad)) = (&screen.buttons[i], &art.buttons[i]);
+        let rect = placed[i];
+        let glow = rect.expand(pad * rect.width() / tex.size()[0] as f32);
+        // undo the button's tilt about its centre
+        let local = rect.center() + egui::emath::Rot2::from_angle(-b.tilt.to_radians()) * (p - rect.center());
+        art.masks[i].covers([(local.x - glow.min.x) / glow.width(), (local.y - glow.min.y) / glow.height()])
+    };
+    let mut top: Vec<usize> = (0..screen.buttons.len()).rev().collect();
+    if let Some(h) = live.motion.held() { top.retain(|&i| i != h); top.insert(0, h); }
+    let over = if shown > 0.5 && interactive { pointer.and_then(|p| top.iter().copied().find(|&i| presence.get(i).map_or(1.0, |q| q.1) > 0.5 && hit(i, p))) } else { None };
+    // a click: pressed and released on the same button's own shape
+    if interactive {
+        if pressed { live.press = over; }
+        if released {
+            if let Some(i) = live.press.filter(|&i| over == Some(i)) {
+                out.touch = Some(screen.buttons[i].touch); out.clicked = Some((screen.buttons[i].node, placed[i].center()));
+            }
+            live.press = None;
+        }
+    } else { live.press = None; }
+    let _ = down;
+    let pointing = over;
+    out.pointed = pointing.map(|i| screen.buttons[i].node);
+    // only moving onto a button selects it, so keys and the pad keep
+    // working while the pointer rests on one
+    if pointing != live.last_pointed { out.entered = out.pointed; }
+    live.last_pointed = pointing;
+    // the selection shown: the pointer's at once, else where the game's
+    // cursor is going (it catches up out of sight, menu_motion::Nav)
+    let selected = out.entered.or(live.nav.heading());
+    // hover and gold ease in and out (about 8 frames) rather than pop
+    live.ease.resize(screen.buttons.len(), [0.0; 2]);
+    let follow = 1.0 - (-dt.clamp(0.0, 0.1) * 22.0).exp();
+    for (i, e) in live.ease.iter_mut().enumerate() {
+        let want = [(pointing == Some(i)) as u8 as f32, (selected == Some(screen.buttons[i].node)) as u8 as f32];
+        for k in 0..2 { e[k] += (want[k] - e[k]) * follow; }
+    }
     egui::Area::new(egui::Id::new(("kiu-native-menu", screen.id))).order(egui::Order::Foreground).fixed_pos(window.min).show(ctx, |ui| {
         let painter = ui.painter().clone();
         let to_points = |r: [f32; 4]| egui::Rect::from_min_max(window.min + egui::vec2(r[0], r[1]) * unit, window.min + egui::vec2(r[2], r[3]) * unit);
@@ -378,7 +453,6 @@ pub fn show(ctx: &egui::Context, screen: &Screen, art: &Art, live: &mut Live, wi
             let r = live.motion.rect(i, homes[i]); let dx = presence.get(i).map_or(0.0, |p| p.0);
             [r[0] + dx, r[1], r[2] + dx, r[3]]
         }).collect();
-        let shown = presence.iter().map(|p| p.1).fold(0.0f32, f32::max).min(1.0);
         if shown <= 0.01 { return; }
         // the vine, its soft shadow first
         let vine = crate::menu_vine::vine(&now, 1.2 / unit);
@@ -392,15 +466,12 @@ pub fn show(ctx: &egui::Context, screen: &Screen, art: &Art, live: &mut Live, wi
             let rect = to_points(now[i]);
             let alpha = presence.get(i).map_or(1.0, |p| p.1);
             if alpha <= 0.01 { continue; }
-            let sense = if interactive { egui::Sense::click_and_drag() } else { egui::Sense::hover() };
-            let response = ui.interact(rect, egui::Id::new(("kiu-native", screen.id, i)), sense);
-            if response.drag_started() { if let Some(p) = pointer_units { live.motion.grab(i, p, homes[i]); } }
-            if response.drag_stopped() { live.motion.release(); }
-            if response.clicked() { out.touch = Some(b.touch); out.clicked = Some((b.node, rect.center())); }
-            let pointed = response.hovered() || live.motion.held() == Some(i);
-            if pointed { out.pointed = Some(b.node); }
-            let lit = selected == Some(b.node);
-            let grow = if response.is_pointer_button_down_on() && !response.dragged() { 0.97 } else if pointed { 1.05 } else { 1.0 };
+            // claims the pointer over the button (so the game's own pointer
+            // handling stays out), the pressing is ours (above)
+            let _ = ui.interact(rect, egui::Id::new(("kiu-native", screen.id, i)), egui::Sense::hover());
+            let [hover, gold] = live.ease[i];
+            let lit = gold > 0.02;
+            let grow = if live.press == Some(i) && over == Some(i) { 0.97 } else { 1.0 + 0.05 * hover };
             let rect = egui::Rect::from_center_size(rect.center(), rect.size() * grow);
             let px = rect.width() / tex.size()[0] as f32;
             let lift = if live.motion.held() == Some(i) { 2.0 } else { 1.0 };
@@ -409,10 +480,10 @@ pub fn show(ctx: &egui::Context, screen: &Screen, art: &Art, live: &mut Live, wi
             painter.add(quad(glow.id(), shadow, b.tilt, fade(egui::Color32::from_black_alpha(110))));
             if lit {
                 let pulse = 0.78 + 0.22 * (time * 3.5).sin();
-                painter.add(quad(glow.id(), rect.expand(pad * px), b.tilt, fade(GOLD.gamma_multiply(pulse))));
+                painter.add(quad(glow.id(), rect.expand(pad * px), b.tilt, fade(GOLD.gamma_multiply(pulse * gold))));
             }
             // the others step back a little
-            let tint = if lit || selected.is_none() { egui::Color32::WHITE } else { egui::Color32::from_gray(196) };
+            let tint = if selected.is_none() { egui::Color32::WHITE } else { egui::Color32::from_gray((196.0 + 59.0 * gold) as u8) };
             painter.add(quad(tex.id(), rect, b.tilt, fade(tint)));
         }
         if let Some((tex, glow, pad, k)) = &art.back {
@@ -431,6 +502,7 @@ pub fn show(ctx: &egui::Context, screen: &Screen, art: &Art, live: &mut Live, wi
         }
     });
     if !ctx.input(|i| i.pointer.any_down()) { live.motion.release(); }
+    if out.clicked.is_some() || out.back { live.nav.stop(); }
     out
 }
 
