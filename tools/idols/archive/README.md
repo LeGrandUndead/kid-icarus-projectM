@@ -13,3 +13,12 @@ builder), `../render/stage_backgrounds.py` and `../render/stage_view.py`.
   builder (scene_pack.py) and the measuring scripts (motion_stats.py,
   colour_stats.py). They ran from a work folder laid out by hand (see their
   README) and exec'd one another; they are not maintained.
+- `renders/`: render scripts only the mock-ups used: `freeze.py` (Pit's
+  idol leap frozen at every angle, to turn toward the pointer; with
+  `chars.py`, the main menu's idol animations at a fixed framing) and
+  `fly.py` (Pit's flight turning toward the pointer, then flying at the
+  camera on click). `render/sky.py` stayed: its timeline drives the
+  current Pit renders.
+
+The mock-ups' design notes (motion, colour, light) are in the project doc
+claude/DESIGN_ANIMATION_BIBLE.md.
