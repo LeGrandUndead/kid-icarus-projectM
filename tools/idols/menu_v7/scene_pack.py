@@ -79,6 +79,14 @@ for mode, (h, cx, feet) in SIZE.items():
     if not os.path.exists(REF[mode][0]): print('no reference yet for mode', mode); continue
     ref = Image.open(REF[mode][0]).getchannel('A').point(lambda a: 255 if a > 40 else 0).getbbox()
     k = h / (ref[3] - ref[1]); PLACE[mode] = (k, cx - (ref[0] + ref[2]) / 2 * k, feet - ref[3] * k)
+# Pit's new loop (glance, barrel roll) sweeps wider than the old poster pose:
+# measured over the whole loop, his wings reached x 690-2070 and y -50-970.
+# Shrink him about his flight centre and move him into the window so the
+# whole wingspan stays on screen.
+FIT0 = dict(scale=0.82, about=(1380, 460), move=(-90, 40))
+if 0 in PLACE:
+    k, x0, y0 = PLACE[0]; sc = FIT0['scale']; (ax, ay), (mx, my) = FIT0['about'], FIT0['move']
+    PLACE[0] = (k * sc, ax + (x0 - ax) * sc + mx, ay + (y0 - ay) * sc + my)
 b190 = Image.open(f'{R}/poster_tog_buf/0190_post.png').getbbox(); k1, x1, y1 = PLACE[1]
 IMPACT = (int(x1 + (b190[0] + b190[2]) / 2 * k1), int(y1 + (b190[1] + 0.45 * (b190[3] - b190[1])) * k1))
 RAYS[1] = G.backlight_rays((W, H), IMPACT[0], IMPACT[1], PAL[1]['key'], n=24, length=1700, strength=TUNE['rays'])
