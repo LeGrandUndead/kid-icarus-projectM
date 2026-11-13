@@ -75,6 +75,11 @@ use manifest::Manifest;
 use manifest::{Character, Seq};
 use timeline::idle_index;
 
+/// A character placed for drawing this frame: its frame, rectangle (design
+/// pixels), the half of the screen it is kept to during a change of mode,
+/// its mode and how far its column has moved (for its near particles).
+struct PlacedCharacter { frame: Shown, rect: [f32; 4], clip: Option<Half>, mode: usize, dy: f32 }
+
 /// What the scene is doing.
 #[derive(Clone, Copy, PartialEq, Debug)]
 enum Phase {
@@ -472,11 +477,11 @@ impl Scene {
             }
             Some((fr, r))
         };
-        let mut chars: Vec<(Shown, [f32; 4], Option<Half>, usize, f32)> = Vec::new();
+        let mut chars: Vec<PlacedCharacter> = Vec::new();
         if !impact_frame {
             if self.changed.is_none() {
                 let slide = track(v, &[(0.0, 1500.0, Ease::Out), (9.0, 1500.0, Ease::Out), (23.0, 0.0, Ease::OutBack)]);
-                if let Some((t, r)) = content(self, cv, cur, slide, 0.0, 0.0) { chars.push((t, r, None, cur, 0.0)); }
+                if let Some((frame, rect)) = content(self, cv, cur, slide, 0.0, 0.0) { chars.push(PlacedCharacter { frame, rect, clip: None, mode: cur, dy: 0.0 }); }
             } else if swapping {
                 // the column of scenes: one screen and an ink gutter apart
                 let step = H + GUTTER;
@@ -493,10 +498,10 @@ impl Scene {
                     (Half { a: 0.0, b: 1.0, c: -old_dy }, Half { a: 0.0, b: -1.0, c: H + new_dy })
                 };
                 cv.clips.push(old_side);
-                if let Some((t, r)) = content(self, cv, prev, 0.0, old_dy, old_c) { chars.push((t, r, Some(old_side), prev, old_c)); }
+                if let Some((frame, rect)) = content(self, cv, prev, 0.0, old_dy, old_c) { chars.push(PlacedCharacter { frame, rect, clip: Some(old_side), mode: prev, dy: old_c }); }
                 cv.clips.pop();
                 cv.clips.push(new_side);
-                if let Some((t, r)) = content(self, cv, cur, 0.0, new_dy, new_c) { chars.push((t, r, Some(new_side), cur, new_c)); }
+                if let Some((frame, rect)) = content(self, cv, cur, 0.0, new_dy, new_c) { chars.push(PlacedCharacter { frame, rect, clip: Some(new_side), mode: cur, dy: new_c }); }
                 cv.clips.pop();
                 // the ink gutter between them
                 let gy = if d > 0.0 { H + old_dy } else { old_dy - GUTTER };
@@ -504,7 +509,7 @@ impl Scene {
                 ink_gutter(cv, gy, self.changed.map_or(0, |t| (t * 10.0) as u32));
                 cv.clips.pop();
             } else {
-                if let Some((t, r)) = content(self, cv, cur, 0.0, 0.0, 0.0) { chars.push((t, r, None, cur, 0.0)); }
+                if let Some((frame, rect)) = content(self, cv, cur, 0.0, 0.0, 0.0) { chars.push(PlacedCharacter { frame, rect, clip: None, mode: cur, dy: 0.0 }); }
             }
         }
         // the window's edge: ink, with the mode's colour inside it
@@ -522,12 +527,12 @@ impl Scene {
                 cv.frame(&fr, [fr.at[0] + vx_hit + 1.7 * cx, fr.at[1] + 1.7 * cy, fr.size[0], fr.size[1]], Color32::from_rgba_premultiplied(0, 0, 0, 255));
             }
         } else {
-            for (t, r, side, m, dy) in &chars {
-                if let Some(h) = side { cv.clips.push(*h); }
-                cv.frame(t, *r, Color32::WHITE);
-                if side.is_some() { cv.clips.pop(); }
+            for c in &chars {
+                if let Some(h) = c.clip { cv.clips.push(h); }
+                cv.frame(&c.frame, c.rect, Color32::WHITE);
+                if c.clip.is_some() { cv.clips.pop(); }
                 // the near particles, in front of the character, in the window
-                if v >= 14.0 { cv.clips.push(panel_clip); self.particles(cv, *m, v, *dy, true); cv.clips.pop(); }
+                if v >= 14.0 { cv.clips.push(panel_clip); self.particles(cv, c.mode, v, c.dy, true); cv.clips.pop(); }
             }
             // the kick lands: flash, feathers, a white flash over everything
             if let Some(t) = after_hit.filter(|&t| t >= 2.0).map(|t| t - 2.0) {

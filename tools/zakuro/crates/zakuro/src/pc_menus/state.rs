@@ -105,7 +105,7 @@ impl PcMenus {
         if watched != 0 || fresh {
             self.live.nav.observe(screen.selected(watched), screen.any_selected(watched));
         }
-        if self.live.nav.current.is_none() && frame % 300 == 0 {
+        if self.live.nav.current.is_none() && frame.is_multiple_of(300) {
             log::debug!("Redrawn menu: the game's selection is not known yet (upper art {watched:#06b})");
         }
     }

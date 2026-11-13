@@ -60,7 +60,7 @@ impl Canvas {
         let rot = |x: f32, y: f32| [pivot[0] + (x - pivot[0]) * c - (y - pivot[1]) * s, pivot[1] + (x - pivot[0]) * s + (y - pivot[1]) * c];
         let [x, y, w, h] = r;
         let pts = [Vx { p: rot(x, y), uv: [0.0, 0.0], c: tint }, Vx { p: rot(x + w, y), uv: [uv[0], 0.0], c: tint },
-                   Vx { p: rot(x + w, y + h), uv: uv, c: tint }, Vx { p: rot(x, y + h), uv: [0.0, uv[1]], c: tint }];
+                   Vx { p: rot(x + w, y + h), uv, c: tint }, Vx { p: rot(x, y + h), uv: [0.0, uv[1]], c: tint }];
         self.poly(tex, &pts);
     }
     /// A character frame over the rectangle.
