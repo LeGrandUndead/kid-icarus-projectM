@@ -92,16 +92,16 @@ const MAIN_MENU_MAP: [[usize; 4]; 8] = [
 ];
 
 /// The main menu: Solo, Together, Vault and Options hang from a vine on
-/// the left of the section's art, clear of its heading and of the
-/// caption's black ground. One scale for all four (the art's own
-/// proportions keep Solo first), 10 units between them, inside the safe
+/// the left, under the PC scene's heading (menu_scene) and clear of its
+/// black ground band (from 201 units), as in the v11 design. One scale for
+/// all four (the art's own proportions keep Solo first), inside the safe
 /// margins. StreetPass and AR Cards (3DS only) are left out.
 pub const MAIN_MENU: Screen = Screen { id: 40, sheet: "256x256-701C2B1F2A647930.png", sheet_size: 256,
     buttons: &[
-        Button { name: "Solo", sheet: [1, 1, 193, 86], turned: false, at: [22.0, 22.0], scale: 0.34, tilt: -2.0, touch: (104, 52), node: 0 },
-        Button { name: "Together", sheet: [1, 91, 184, 180], turned: false, at: [28.0, 60.9], scale: 0.34, tilt: 2.0, touch: (224, 128), node: 1 },
-        Button { name: "Vault", sheet: [0, 182, 118, 255], turned: false, at: [22.0, 101.16], scale: 0.34, tilt: -1.5, touch: (64, 140), node: 2 },
-        Button { name: "Options", sheet: [203, 1, 255, 174], turned: true, at: [28.0, 135.98], scale: 0.34, tilt: 1.5, touch: (142, 211), node: 3 },
+        Button { name: "Solo", sheet: [1, 1, 193, 86], turned: false, at: [18.0, 60.3], scale: 0.40, tilt: -2.0, touch: (104, 52), node: 0 },
+        Button { name: "Together", sheet: [1, 91, 184, 180], turned: false, at: [26.0, 97.7], scale: 0.40, tilt: 2.0, touch: (224, 128), node: 1 },
+        Button { name: "Vault", sheet: [0, 182, 118, 255], turned: false, at: [18.0, 136.6], scale: 0.40, tilt: -1.5, touch: (64, 140), node: 2 },
+        Button { name: "Options", sheet: [203, 1, 255, 174], turned: true, at: [26.0, 171.2], scale: 0.40, tilt: 1.5, touch: (142, 211), node: 3 },
     ],
     graph: Graph { edges: &MAIN_MENU_MAP },
     // menu040/MenCmnBgUp0007Sg, 0002Ml, 0007Cl, 0007Op: the section art
@@ -313,6 +313,10 @@ pub struct Live {
 /// What the pointer did on a redrawn screen this frame.
 #[derive(Default)]
 pub struct Output {
+    /// a button was clicked: its choice, and its centre (points)
+    pub clicked: Option<(usize, egui::Pos2)>,
+    /// the Back arrow was clicked
+    pub back: bool,
     /// a click asked for this touch on the lower screen
     pub touch: Option<(u16, u16)>,
     /// the choice the pointer rests on (its node in the game's map)
@@ -350,9 +354,16 @@ fn vine_mesh(shape: &crate::menu_vine::Shape, origin: egui::Pos2, unit: f32, off
     egui::Shape::mesh(mesh)
 }
 
+/// The gold of the selection (the only thing in the menu that uses it).
+const GOLD: egui::Color32 = egui::Color32::from_rgb(255, 208, 84);
+
 /// Draws a redrawn screen over the window (`window`, in egui points).
-/// `selected`: the game's selected choice (its node), lit with a glow.
-pub fn show(ctx: &egui::Context, screen: &Screen, art: &Art, live: &mut Live, window: egui::Rect) -> Output {
+/// The game's selected choice (`live.nav.current`) is lit with a gold glow,
+/// the others step back. `presence(i)`: button i's horizontal offset in
+/// units and its opacity (a scene's entrance and exit, menu_scene);
+/// `interactive`: false while the scene is leaving.
+pub fn show(ctx: &egui::Context, screen: &Screen, art: &Art, live: &mut Live, window: egui::Rect,
+            presence: &[(f32, f32)], interactive: bool) -> Output {
     let unit = window.height() / 240.0;
     let mut out = Output::default();
     let (time, dt, pointer) = ctx.input(|i| (i.time as f32, i.stable_dt, i.pointer.latest_pos()));
@@ -363,21 +374,29 @@ pub fn show(ctx: &egui::Context, screen: &Screen, art: &Art, live: &mut Live, wi
     egui::Area::new(egui::Id::new(("kiu-native-menu", screen.id))).order(egui::Order::Foreground).fixed_pos(window.min).show(ctx, |ui| {
         let painter = ui.painter().clone();
         let to_points = |r: [f32; 4]| egui::Rect::from_min_max(window.min + egui::vec2(r[0], r[1]) * unit, window.min + egui::vec2(r[2], r[3]) * unit);
-        let now: Vec<[f32; 4]> = (0..homes.len()).map(|i| live.motion.rect(i, homes[i])).collect();
+        let now: Vec<[f32; 4]> = (0..homes.len()).map(|i| {
+            let r = live.motion.rect(i, homes[i]); let dx = presence.get(i).map_or(0.0, |p| p.0);
+            [r[0] + dx, r[1], r[2] + dx, r[3]]
+        }).collect();
+        let shown = presence.iter().map(|p| p.1).fold(0.0f32, f32::max).min(1.0);
+        if shown <= 0.01 { return; }
         // the vine, its soft shadow first
         let vine = crate::menu_vine::vine(&now, 1.2 / unit);
-        painter.add(vine_mesh(&vine, window.min, unit, egui::vec2(1.0, 1.6) * unit, 0.3));
-        painter.add(vine_mesh(&vine, window.min, unit, egui::Vec2::ZERO, 1.0));
+        painter.add(vine_mesh(&vine, window.min, unit, egui::vec2(1.0, 1.6) * unit, 0.3 * shown));
+        painter.add(vine_mesh(&vine, window.min, unit, egui::Vec2::ZERO, shown));
         // the buttons, the held one on top
         let mut order: Vec<usize> = (0..screen.buttons.len()).collect();
         if let Some(held) = live.motion.held() { order.retain(|&i| i != held); order.push(held); }
         for i in order {
             let (b, (tex, glow, pad)) = (&screen.buttons[i], &art.buttons[i]);
             let rect = to_points(now[i]);
-            let response = ui.interact(rect, egui::Id::new(("kiu-native", screen.id, i)), egui::Sense::click_and_drag());
+            let alpha = presence.get(i).map_or(1.0, |p| p.1);
+            if alpha <= 0.01 { continue; }
+            let sense = if interactive { egui::Sense::click_and_drag() } else { egui::Sense::hover() };
+            let response = ui.interact(rect, egui::Id::new(("kiu-native", screen.id, i)), sense);
             if response.drag_started() { if let Some(p) = pointer_units { live.motion.grab(i, p, homes[i]); } }
             if response.drag_stopped() { live.motion.release(); }
-            if response.clicked() { out.touch = Some(b.touch); }
+            if response.clicked() { out.touch = Some(b.touch); out.clicked = Some((b.node, rect.center())); }
             let pointed = response.hovered() || live.motion.held() == Some(i);
             if pointed { out.pointed = Some(b.node); }
             let lit = selected == Some(b.node);
@@ -386,17 +405,21 @@ pub fn show(ctx: &egui::Context, screen: &Screen, art: &Art, live: &mut Live, wi
             let px = rect.width() / tex.size()[0] as f32;
             let lift = if live.motion.held() == Some(i) { 2.0 } else { 1.0 };
             let shadow = rect.translate(egui::vec2(0.9, 1.4) * unit * lift).expand(pad * px * 0.6);
-            painter.add(quad(glow.id(), shadow, b.tilt, egui::Color32::from_black_alpha(110)));
+            let fade = |c: egui::Color32| c.gamma_multiply(alpha);
+            painter.add(quad(glow.id(), shadow, b.tilt, fade(egui::Color32::from_black_alpha(110))));
             if lit {
                 let pulse = 0.78 + 0.22 * (time * 3.5).sin();
-                painter.add(quad(glow.id(), rect.expand(pad * px), b.tilt, egui::Color32::from_white_alpha((255.0 * pulse) as u8)));
+                painter.add(quad(glow.id(), rect.expand(pad * px), b.tilt, fade(GOLD.gamma_multiply(pulse))));
             }
-            painter.add(quad(tex.id(), rect, b.tilt, egui::Color32::WHITE));
+            // the others step back a little
+            let tint = if lit || selected.is_none() { egui::Color32::WHITE } else { egui::Color32::from_gray(196) };
+            painter.add(quad(tex.id(), rect, b.tilt, fade(tint)));
         }
         if let Some((tex, glow, pad, k)) = &art.back {
             let size = egui::vec2(tex.size()[0] as f32, tex.size()[1] as f32) / *k * BACK_SCALE * unit;
             let rect = egui::Rect::from_min_size(window.min + egui::vec2(BACK_AT[0], BACK_AT[1]) * unit, size);
-            let response = ui.interact(rect, egui::Id::new(("kiu-native-back", screen.id)), egui::Sense::click());
+            let sense = if interactive { egui::Sense::click() } else { egui::Sense::hover() };
+            let response = ui.interact(rect, egui::Id::new(("kiu-native-back", screen.id)), sense);
             let grow = if response.is_pointer_button_down_on() { 0.97 } else if response.hovered() { 1.06 } else { 1.0 };
             let rect = egui::Rect::from_center_size(rect.center(), rect.size() * grow);
             if response.hovered() {
@@ -404,7 +427,7 @@ pub fn show(ctx: &egui::Context, screen: &Screen, art: &Art, live: &mut Live, wi
                 painter.add(quad(glow.id(), rect.expand(pad * px), 0.0, egui::Color32::from_white_alpha(230)));
             }
             painter.add(quad(tex.id(), rect, 0.0, egui::Color32::WHITE));
-            if response.clicked() { out.touch = Some(back_touch(screen.id)); }
+            if response.clicked() { out.touch = Some(back_touch(screen.id)); out.back = true; }
         }
     });
     if !ctx.input(|i| i.pointer.any_down()) { live.motion.release(); }
@@ -461,17 +484,18 @@ mod tests {
             assert!(b.at[0] + w * b.scale < 426.0 && b.at[1] + h * b.scale <= 240.0, "{}", b.name);
             assert!(b.touch.0 < 320 && b.touch.1 < 240);
         }
-        // the column does not reach the caption's black ground (from 165),
-        // one scale, even gaps, inside the safe margin
+        // the column sits under the heading (to 58 units) and above the
+        // scene's black ground band (from 201), one scale, no overlaps,
+        // inside the safe margin
         let mut bottom: Option<f32> = None;
         for b in MAIN_MENU.buttons {
             let h = if b.turned { b.sheet[2] - b.sheet[0] } else { b.sheet[3] - b.sheet[1] } as f32 * b.scale;
-            if let Some(previous) = bottom { assert!((b.at[1] - previous - 10.0f32).abs() < 0.2, "{}", b.name); }
+            if let Some(previous) = bottom { assert!(b.at[1] > previous, "{}", b.name); }
             bottom = Some(b.at[1] + h);
             assert_eq!(b.scale, MAIN_MENU.buttons[0].scale);
-            assert!(b.at[0] >= 12.0 && b.at[1] >= 12.0);
+            assert!(b.at[0] >= 12.0 && b.at[1] >= 58.0);
         }
-        assert!(bottom.unwrap() < 165.0);
+        assert!(bottom.unwrap() < 201.0);
         assert_eq!(MAIN_MENU.selected(0b0010), Some(1));
         assert_eq!(MAIN_MENU.selected(0b0110), None, "two cross-fading");
         assert_eq!(MAIN_MENU.selected(0b10000), None, "not one of the choices");

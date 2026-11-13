@@ -18,6 +18,7 @@ mod kiu_launcher;
 mod rom_prefetch;
 mod top_menus;
 mod native_menu;
+mod menu_scene;
 mod menu_motion;
 mod menu_vine;
 mod menu_capture;
@@ -144,6 +145,8 @@ fn start(options: cli::Options, linked: Option<Linked>) {
         native_art: None,
         native_art_failed: false,
         native_live: native_menu::Live::default(),
+        menu_scene: None,
+        menu_scene_failed: false,
         native_watched: 0,
         tap: top_menus::Tap::default(),
         released_for_menu: false,
@@ -423,6 +426,10 @@ struct App {
     native_art_failed: bool,
     /// the redrawn menu's moving buttons and the game's cursor
     native_live: native_menu::Live,
+    /// the main menu's scene drawn by the PC behind the buttons (menu_scene),
+    /// kept while it plays its exit after the game has left the menu
+    menu_scene: Option<menu_scene::Scene>,
+    menu_scene_failed: bool,
     native_watched: u32,
     /// a touch the top-screen buttons asked for, given over a few frames
     tap: top_menus::Tap,
@@ -1458,15 +1465,42 @@ impl App {
             }
         }
         let native = native.zip(self.native_art.as_ref()).filter(|(s, a)| s.id == a.id);
+        // the main menu's scene: made when the menu appears, told when the
+        // game leaves it (it then plays its exit and ends by itself)
+        if self.native_screen == Some(40) && game.is_some() {
+            if self.menu_scene.is_none() && !self.menu_scene_failed {
+                self.menu_scene = menu_scene::pack().and_then(|root| menu_scene::Scene::load(&gui.ctx, &root));
+                if self.menu_scene.is_none() {
+                    self.menu_scene_failed = true;
+                    log::warn!("The main menu scene needs its pack (menu-pc/scene-040); the game's own upper screen is shown instead");
+                }
+            }
+        } else if let Some(scene) = &mut self.menu_scene {
+            scene.game_left();
+        }
+        let menu_scene = &mut self.menu_scene;
         let native_live = &mut self.native_live;
         let size = window.inner_size();
         let view = layout(size.width, size.height, self.presentation.layout(self.layout, self.experimental_wide)).0;
         let mut tapped = None;
+        let mut scene_done = false;
         let overlay = gui.frame(window, |ui| {
+            let rect = ui.ctx().content_rect();
+            if let Some(scene) = menu_scene.as_mut() {
+                scene.select(native_live.nav.current);
+                scene_done = !scene.show(ui.ctx(), rect);
+            }
             if let Some((screen, art)) = native {
-                let out = native_menu::show(ui.ctx(), screen, art, native_live, ui.ctx().content_rect());
+                let presence: Vec<(f32, f32)> = (0..screen.buttons.len())
+                    .map(|i| menu_scene.as_ref().map_or((0.0, 1.0), |s| s.button_presence(i))).collect();
+                let interactive = menu_scene.as_ref().is_none_or(|s| s.interactive());
+                let out = native_menu::show(ui.ctx(), screen, art, native_live, rect, &presence, interactive);
                 native_live.nav.want(out.pointed);
                 tapped = tapped.or(out.touch);
+                if let Some(scene) = menu_scene.as_mut() {
+                    if let Some((node, at)) = out.clicked { scene.confirm(node, Some(at), rect); }
+                    if out.back { scene.back(); }
+                }
             }
             if let (Some(menu), Some(v)) = (top_menu, view) {
                 let ppp = ui.ctx().pixels_per_point();
@@ -1486,6 +1520,10 @@ impl App {
             menus.message(ui.ctx());
         });
         self.library.changed = false;
+        if scene_done {
+            log::info!("Main menu scene: finished");
+            self.menu_scene = None;
+        }
         if let Some(at) = tapped {
             log::info!("Top-screen menu: touch {at:?}");
             self.tap.start(at);

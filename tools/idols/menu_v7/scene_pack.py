@@ -1,0 +1,130 @@
+# The main menu's scene pack for the game (zakuro: menu_scene.rs): every layer
+# of the v11 mock-up (menu_v11.py), made once from the player's ROM data, in
+# 1920x1080 reference pixels. Nothing here is committed: the pack is written
+# to <out> and copied to build/texture-work/menu-pc/scene-040 on the PC.
+#
+#   python3 scene_pack.py <out>          (run in the menu_v7 work folder)
+#
+# Layers (manifest.json says where each goes):
+#   paper_M, stage_M (opaque), emblem_M, heading_M, caption_M, band, swirl,
+#   sprig, controls (alpha), rays_M, glow_0 (light: added, stored on black),
+#   sprite_* (white particle shapes, tinted at run time),
+#   char_M/NNNN.webp: the character, relit for its stage, light-wrapped,
+#   with its soft glow, cropped; the manifest gives each frame's corner and
+#   the sequences (loop, back-and-forth, one-shot).
+import os, sys, json
+g = {'__name__': 'scene_pack'}
+exec(open('menu_v11.py').read(), g)
+globals().update({k: v for k, v in g.items() if not k.startswith('__')})
+from PIL import Image
+import numpy as np
+
+OUT = sys.argv[1] if sys.argv[1:] else 'scene-040'
+os.makedirs(OUT, exist_ok=True)
+NAMES = ['solo', 'together', 'vault', 'options']
+
+def toml_value(v):
+    if isinstance(v, bool): return 'true' if v else 'false'
+    if isinstance(v, (int, np.integer)): return str(int(v))
+    if isinstance(v, (float, np.floating)): return repr(float(v))
+    if isinstance(v, str): return json.dumps(v)
+    if isinstance(v, (list, tuple)): return '[' + ', '.join(toml_value(x) for x in v) + ']'
+    if isinstance(v, dict): return '{ ' + ', '.join(f'{k} = {toml_value(x)}' for k, x in v.items()) + ' }'
+    raise TypeError(type(v))
+def toml_doc(man):
+    """The manifest as TOML (what the runtime reads): plain keys first, then
+    one [[modes]] table per mode, its character as a sub-table."""
+    out = []
+    for k, v in man.items():
+        if k != 'modes': out.append(f'{k} = {toml_value(v)}')
+    for e in man['modes']:
+        out.append('\n[[modes]]')
+        for k, v in e.items():
+            if k != 'character': out.append(f'{k} = {toml_value(v)}')
+        ch = e.get('character') or {}
+        if ch:
+            out.append('[modes.character]')
+            for k, v in ch.items(): out.append(f'{k} = {toml_value(v)}')
+    return '\n'.join(out) + '\n'
+def save_rgb(img, name, q=92):
+    img.convert('RGB').save(f'{OUT}/{name}.webp', quality=q, method=4)
+    return f'{name}.webp'
+def save_rgba(img, name):
+    img.save(f'{OUT}/{name}.png', optimize=True)
+    return f'{name}.png'
+def light_on_black(img):
+    """An added light layer, as the colour it adds (RGB on black)."""
+    return Image.alpha_composite(Image.new('RGBA', img.size, (0, 0, 0, 255)), img).convert('RGB')
+def cropped(img, name):
+    bb = img.getchannel('A').getbbox()
+    return dict(file=save_rgba(img.crop(bb), name), at=[bb[0], bb[1]])
+
+# --- the characters: which frames each mode plays --------------------------------
+SEQ = {
+    0: dict(dir=f'{R}/solo_loop_buf', idle=dict(range=[0, 359], play='loop'), confirm=dict(range=[1000, 1047])),
+    1: dict(dir=f'{R}/poster_tog_buf', idle=dict(range=[0, 149], play='pingpong'), confirm=dict(range=[150, 215], impact=190)),
+    2: dict(dir=f'{R}/vault_buf', intro=dict(range=[150, 195]), idle=dict(range=[195, 225], play='pingpong'), confirm=dict(range=[225, 259])),
+    3: dict(dir=f'{R}/options_buf', idle=dict(range=[0, 149], play='pingpong'), confirm=dict(range=[150, 249])),
+}
+
+def rest_panel(mode):
+    """The window as it stands at rest, for the light wrap."""
+    win = Image.new('RGBA', (W, H)); o = 60
+    win.paste(STAGE[mode].crop((o, 35, o + W, 35 + H)), (0, 0))
+    if mode == 0: win = G.add(win, GLOW0)
+    return win
+
+def char_frames(mode):
+    seq = SEQ[mode]; k, x0, y0 = PLACE[mode]; panel = rest_panel(mode)
+    os.makedirs(f'{OUT}/char_{mode}', exist_ok=True)
+    frames = {}
+    wanted = sorted({i for part in ('intro', 'idle', 'confirm') if part in seq for i in range(seq[part]['range'][0], seq[part]['range'][1] + 1)})
+    for i in wanted:
+        pre = f'{seq["dir"]}/{i:04d}'
+        if not os.path.exists(pre + '_nrm.png'):
+            print('missing', pre); continue
+        ch = scaled(relight.relight(pre, **LIGHT[mode]), k)
+        pos = (int(x0), int(y0))
+        ch = integrate(ch, mode, panel, pos)
+        pad = 40
+        lay = Image.new('RGBA', (ch.width + 2 * pad, ch.height + 2 * pad))
+        lay.alpha_composite(soft_glow(ch, mix(MODES[mode]['color'], (255, 240, 220), 0.5), 0.5, 22), (pad, pad))
+        lay.alpha_composite(ch, (pad, pad))
+        bb = lay.getchannel('A').getbbox()
+        lay.crop(bb).save(f'{OUT}/char_{mode}/{i:04d}.webp', quality=90, method=4)
+        frames[i] = [pos[0] - pad + bb[0], pos[1] - pad + bb[1]]
+    out = {p: seq[p] for p in ('intro', 'idle', 'confirm') if p in seq}
+    return dict(dir=f'char_{mode}', frames=frames, **out)
+
+if True:
+    man = dict(size=[W, H], band_y=BAND_Y, panel=dict(x0=900, lean=330), impact=list(IMPACT), modes=[])
+    for m in range(4):
+        e = dict(name=NAMES[m], color=list(MODES[m]['color']), key=list(PAL[m]['key']), key_at=list(PAL[m]['at']),
+                 high=list(PAL[m]['high']), deep=list(PAL[m]['deep']),
+                 paper=save_rgb(PAPERS[m], f'paper_{m}'), stage=save_rgb(STAGE[m], f'stage_{m}'), stage_scroll=7 if m == 0 else 0,
+                 emblem=dict(file=save_rgba(EMB[m], f'emblem_{m}'), at=[-180, 0]),
+                 rays=save_rgb(light_on_black(RAYS[m]), f'rays_{m}', 85), rays_at=list(PAL[m]['at'] if m != 1 else IMPACT),
+                 heading=dict(file=save_rgba(HEAD[m], f'heading_{m}'), base=[100 + HEAD[m].width / 2, 64 + HEAD[m].height]),
+                 caption=cropped(CAP[m], f'caption_{m}'))
+        if m == 0: e['glow'] = save_rgb(light_on_black(GLOW0), 'glow_0', 85)
+        print('mode', m, 'layers'); sys.stdout.flush()
+        e['character'] = char_frames(m) if not os.environ.get('NOCHAR') else {}
+        print('mode', m, 'frames', len(e['character'].get('frames', {}))); sys.stdout.flush()
+        man['modes'].append(e)
+    man['band'] = cropped(BAND, 'band')
+    man['controls'] = cropped(CTRL, 'controls')
+    man['swirl'] = dict(file=save_rgba(SWIRL, 'swirl'), at=[W - SWIRL.width + 40, -42])
+    man['sprig'] = dict(file=save_rgba(SPRIG, 'sprig'), base=[780, BAND_Y + 40])
+    P = _parts()
+    def white(a, name):
+        a = np.asarray(a, np.float32); cover = a[:, :, :3].mean(2) * a[:, :, 3] / 255
+        out = np.zeros(a.shape[:2] + (4,), np.uint8); out[..., :3] = 255; out[..., 3] = np.clip(cover, 0, 255)
+        return save_rgba(Image.fromarray(out), name)
+    man['sprites'] = dict(feather=white(P['hane'], 'sprite_feather'), spark=white(P['spark'], 'sprite_spark'),
+                          powder=white(P['kona'], 'sprite_powder'), leaves=[white(l, f'sprite_leaf{i}') for i, l in enumerate(P['leaves'])],
+                          flash=white(FLASH, 'sprite_flash'))
+    for e in man['modes']:                       # frames as [index, x, y] rows
+        ch = e['character']
+        if ch: ch['frames'] = [[int(i), int(xy[0]), int(xy[1])] for i, xy in sorted(ch['frames'].items())]
+    open(f'{OUT}/manifest.toml', 'w').write(toml_doc(man))
+    print('pack written:', OUT)
