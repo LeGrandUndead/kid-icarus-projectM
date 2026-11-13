@@ -56,5 +56,5 @@ pub struct Manifest {
 
 /// The scene pack's folder: `scene-040` in the menu art pack.
 pub fn pack() -> Option<PathBuf> {
-    crate::pc_menus::buttons::pack().map(|p| p.join("scene-040")).filter(|p| p.join("manifest.toml").is_file())
+    crate::pc_menus::menu_art_pack().map(|p| p.join("scene-040")).filter(|p| p.join("manifest.toml").is_file())
 }

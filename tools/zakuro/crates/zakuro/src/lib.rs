@@ -18,7 +18,6 @@ mod kiu_launcher;
 mod rom_prefetch;
 mod top_menus;
 mod pc_menus;
-use pc_menus::{buttons as native_menu, motion as menu_motion, scene as menu_scene};
 mod menu_capture;
 mod menu_layouts;
 mod recompile;
@@ -140,11 +139,11 @@ fn start(options: cli::Options, linked: Option<Linked>) {
         space_jump: kiu_jump::SpaceJump::default(),
         top_menu: top_menus::Shown::default(),
         native_screen: None,
-        native_art_coming: native_menu::pack().map(|_| native_menu::prepare()),
+        native_art_coming: pc_menus::menu_art_pack().map(|_| pc_menus::art::prepare()),
         native_arts: Vec::new(),
-        native_live: native_menu::Live::default(),
+        native_live: pc_menus::buttons::Live::default(),
         native_click: None,
-        menu_scene_coming: menu_scene::pack().map(menu_scene::prepare),
+        menu_scene_coming: pc_menus::scene::pack().map(pc_menus::scene::prepare),
         menu_scene_upload: None,
         menu_scene: None,
         native_watched: 0,
@@ -423,19 +422,19 @@ struct App {
     native_screen: Option<u16>,
     /// the redrawn menus' art: prepared on its own thread from start-up,
     /// then uploaded once and kept
-    native_art_coming: Option<std::sync::mpsc::Receiver<Vec<native_menu::Prepared>>>,
-    native_arts: Vec<native_menu::Art>,
+    native_art_coming: Option<std::sync::mpsc::Receiver<Vec<pc_menus::art::Prepared>>>,
+    native_arts: Vec<pc_menus::art::Art>,
     /// the redrawn menu's moving buttons and the game's cursor
-    native_live: native_menu::Live,
+    native_live: pc_menus::buttons::Live,
     /// a click on a redrawn menu's button the game has not answered yet:
     /// where, frames waited, and whether it was given again
     native_click: Option<((u16, u16), u32, bool)>,
     /// the main menu's scene drawn by the PC behind the buttons (menu_scene):
     /// its pack read on its own thread from start-up, uploaded a few layers
     /// a frame, then kept for every visit (it rests between them)
-    menu_scene_coming: Option<std::sync::mpsc::Receiver<Option<menu_scene::Prepared>>>,
-    menu_scene_upload: Option<menu_scene::Upload>,
-    menu_scene: Option<menu_scene::Scene>,
+    menu_scene_coming: Option<std::sync::mpsc::Receiver<Option<pc_menus::scene::Prepared>>>,
+    menu_scene_upload: Option<pc_menus::scene::Upload>,
+    menu_scene: Option<pc_menus::scene::Scene>,
     native_watched: u32,
     /// a touch the top-screen buttons asked for, given over a few frames
     tap: top_menus::Tap,
@@ -1285,12 +1284,12 @@ impl App {
             // pointing at a redrawn menu's button walks the game's cursor
             // there (never during a click: a D-pad press held with the touch
             // can make the game ignore the touch)
-            if let Some(screen) = self.native_screen.and_then(|id| native_menu::SCREENS.iter().find(|s| s.id == id)).filter(|_| self.native_click.is_none()) {
+            if let Some(screen) = self.native_screen.and_then(|id| pc_menus::screens::SCREENS.iter().find(|s| s.id == id)).filter(|_| self.native_click.is_none()) {
                 use zakuro_core::services::hid::PadState;
                 if let Some(dir) = self.native_live.nav.pad(&screen.graph, |n| screen.shows(n)) {
                     input.buttons |= match dir {
-                        menu_motion::Dir::Up => PadState::UP, menu_motion::Dir::Down => PadState::DOWN,
-                        menu_motion::Dir::Left => PadState::LEFT, menu_motion::Dir::Right => PadState::RIGHT,
+                        pc_menus::cursor::Dir::Up => PadState::UP, pc_menus::cursor::Dir::Down => PadState::DOWN,
+                        pc_menus::cursor::Dir::Left => PadState::LEFT, pc_menus::cursor::Dir::Right => PadState::RIGHT,
                     };
                 }
             }
@@ -1329,7 +1328,7 @@ impl App {
         // where the screen's layout says it is redrawn natively
         // (native_menu), or everywhere without a layout file (top_menus)
         self.top_menu.update(&scene, game.frame);
-        if let Some(screen) = self.native_screen.and_then(|id| native_menu::SCREENS.iter().find(|s| s.id == id)) {
+        if let Some(screen) = self.native_screen.and_then(|id| pc_menus::screens::SCREENS.iter().find(|s| s.id == id)) {
             if scene.top_watched != self.native_watched {
                 log::debug!("Redrawn menu: upper art {:#06b} (selected {:?}, cursor {:?})", scene.top_watched, screen.selected(scene.top_watched), self.native_live.nav.current);
                 self.native_watched = scene.top_watched;
@@ -1427,15 +1426,15 @@ impl App {
         zakuro_gpu::kiu_ui::compose::set_composing(recipe.as_ref().is_some_and(|r| r.compose));
         // the screen drawn by the PC itself: the native_menu screen of the
         // menu archive its layout is for
-        let native = recipe.as_ref().filter(|r| r.native).and_then(|r| native_menu::SCREENS.iter()
+        let native = recipe.as_ref().filter(|r| r.native).and_then(|r| pc_menus::screens::SCREENS.iter()
             .find(|s| r.when.iter().any(|w| w.trim_start_matches("menu").parse::<u16>() == Ok(s.id))).map(|s| s.id));
         if native != self.native_screen {
             log::info!("Menu drawn by the PC: {}", native.map_or("none".into(), |id| format!("{id:03}")));
             self.native_screen = native;
             // a fresh screen: its buttons at home, the game's cursor unknown,
             // and its selection art watched on the upper screen
-            self.native_live = native_menu::Live::default();
-            let screen = native.and_then(|id| native_menu::SCREENS.iter().find(|s| s.id == id));
+            self.native_live = pc_menus::buttons::Live::default();
+            let screen = native.and_then(|id| pc_menus::screens::SCREENS.iter().find(|s| s.id == id));
             zakuro_gpu::kiu_ui::watch_top(screen.map_or(&[][..], |s| s.selected_art));
         }
         // a screen that is redrawn: where each of its elements goes in this
@@ -1460,7 +1459,7 @@ impl App {
         // layout asks for it (a laid-out screen is the menus panel, open)
         let native = self.native_screen.filter(|_| game.is_some() && self.presentation.enabled
             && !menus.menu_open && !menus.settings_open)
-            .and_then(|id| native_menu::SCREENS.iter().copied().find(|s| s.id == id));
+            .and_then(|id| pc_menus::screens::SCREENS.iter().copied().find(|s| s.id == id));
         // the plain PC buttons only without a layout file, over the top view
         let top_menu = shown.filter(|_| !self.menu_layouts.active() && self.presentation.access.is_none());
         // the redrawn menus' art and the main menu's scene, read off this
@@ -1480,7 +1479,7 @@ impl App {
         }
         if let Some(rx) = &self.menu_scene_coming {
             match rx.try_recv() {
-                Ok(Some(prepared)) => { self.menu_scene_upload = Some(menu_scene::Upload::new(prepared)); self.menu_scene_coming = None; }
+                Ok(Some(prepared)) => { self.menu_scene_upload = Some(pc_menus::scene::Upload::new(prepared)); self.menu_scene_coming = None; }
                 Ok(None) | Err(std::sync::mpsc::TryRecvError::Disconnected) => {
                     log::warn!("The main menu scene needs its pack (menu-pc/scene-040); the game's own upper screen is shown instead");
                     self.menu_scene_coming = None;
@@ -1517,7 +1516,7 @@ impl App {
                 let presence: Vec<(f32, f32)> = (0..screen.buttons.len())
                     .map(|i| scene.map_or((0.0, 1.0), |s| s.button_presence(i))).collect();
                 let interactive = scene.is_none_or(|s| s.interactive());
-                let out = native_menu::show(ui.ctx(), screen, art, native_live, rect, &presence, interactive);
+                let out = pc_menus::buttons::show(ui.ctx(), screen, art, native_live, rect, &presence, interactive);
                 native_live.nav.want(out.entered);
                 tapped = tapped.or(out.touch);
                 native_tap = native_tap.or(out.touch);

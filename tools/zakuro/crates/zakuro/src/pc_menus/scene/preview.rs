@@ -72,8 +72,8 @@ fn render() {
     let mut textures: HashMap<egui::TextureId, Img> = HashMap::new();
     let mut scene: Option<Scene> = None;
     // the buttons and their vine too, when KIU_MENU_PACK points at the menu art pack
-    let menu = &crate::pc_menus::buttons::MAIN_MENU;
-    let mut art: Option<Option<crate::pc_menus::buttons::Art>> = None;
+    let menu = &crate::pc_menus::screens::MAIN_MENU;
+    let mut art: Option<Option<crate::pc_menus::art::Art>> = None;
     let mut live = crate::pc_menus::buttons::Live::default();
     for f in 0..n {
         let t = f as f64 / 60.0;
@@ -90,7 +90,7 @@ fn render() {
             if f == 452 { s.confirm(1, Some(Pos2::new(281.0, 520.0)), screen); }
             if f >= 500 { s.game_left(); }
             s.show(&ctx, screen);
-            let art = art.get_or_insert_with(|| crate::pc_menus::buttons::Art::load(&ctx, &crate::pc_menus::buttons::MAIN_MENU));
+            let art = art.get_or_insert_with(|| crate::pc_menus::art::Art::load(&ctx, &crate::pc_menus::screens::MAIN_MENU));
             if let Some(art) = art {
                 live.nav.observe(sel, true);
                 let presence: Vec<(f32, f32)> = (0..4).map(|i| s.button_presence(i)).collect();

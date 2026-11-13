@@ -13,7 +13,7 @@ fn timings() {
     let dt = t.elapsed().as_secs_f64() / n as f64;
     println!("char frame decode: {:.1} ms each ({:.2} Mpx)", dt * 1000.0, px as f64 / n as f64 / 1e6);
     let t = std::time::Instant::now();
-    for f in ["paper_1.webp", "stage_1.webp", "rays_1.webp"] { let _ = crate::pc_menus::buttons::load(&root.join(f)).unwrap(); }
+    for f in ["paper_1.webp", "stage_1.webp", "rays_1.webp"] { let _ = crate::pc_menus::picture::load(&root.join(f)).unwrap(); }
     println!("paper+stage+rays decode: {:.0} ms", t.elapsed().as_secs_f64() * 1000.0);
     // the menu as the game runs it: real time, never waiting for frames
     {

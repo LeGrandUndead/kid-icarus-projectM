@@ -11,7 +11,7 @@ use std::sync::{Arc, Condvar, Mutex};
 
 use egui::{Color32, TextureHandle};
 
-use crate::pc_menus::buttons::{load as load_picture, Picture};
+use crate::pc_menus::picture::{load as load_picture, Picture};
 
 use super::manifest::Manifest;
 use super::timeline::idle_index;
