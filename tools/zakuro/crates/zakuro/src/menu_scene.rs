@@ -632,7 +632,7 @@ impl Scene {
         let kx = shake(v, 20.0, 8.0, 7.0, 1);
         let panel_clip = Half::right_of(p0 + pdx, lean);
         let impact_frame = hit.is_some_and(|h| conf_c >= h && conf_c < h + 2.0);
-        let zoom_push = 1.0 + 0.10 * push;
+        let zoom_push = 1.0 + 0.07 * push;
         // the character's frame for a mode now
         let char_index = |s: &Scene, m: usize| -> (i32, Vec<i32>) {
             let c = &s.man.modes[m].character;
@@ -688,9 +688,16 @@ impl Scene {
             let (tex, at) = s.stream.get(ctx, m, i, &ahead)?;
             let sz = tex.size();
             let mut r = [at[0] + slide + vx_hit + 1.7 * cx, at[1] + 1.7 * cy + dy_char, sz[0] as f32, sz[1] as f32];
-            // the confirm's push-in brings the character closer too
+            // a slow breathing push-in on the held pose (key-art camera), and the
+            // confirm's push-in brings the character closer too
+            let breath = 1.0 + 0.025 * (0.5 - 0.5 * (TAU * s.frames_since(s.chosen_at[m]) / 240.0).cos());
+            {
+                let f = [r[0] + r[2] / 2.0, r[1] + r[3]];          // about the feet: they stay on the ground
+                r = [f[0] + (r[0] - f[0]) * breath, f[1] + (r[1] - f[1]) * breath, r[2] * breath, r[3] * breath];
+            }
             if zoom_push > 1.0 {
-                let f = [1350.0, 560.0];
+                // about the character's own middle, so nobody is pushed out of the picture
+                let f = [r[0] + r[2] / 2.0, r[1] + r[3] * 0.55];
                 r = [f[0] + (r[0] - f[0]) * zoom_push, f[1] + (r[1] - f[1]) * zoom_push, r[2] * zoom_push, r[3] * zoom_push];
             }
             if conf == Some(1) && m == 1 {
@@ -723,10 +730,10 @@ impl Scene {
                     (Half { a: 0.0, b: 1.0, c: -old_dy }, Half { a: 0.0, b: -1.0, c: H + new_dy })
                 };
                 cv.clips.push(old_side);
-                if let Some((t, r)) = content(self, cv, prev, 0.0, old_dy, old_c) { chars.push((t, r, None, prev, old_c)); }
+                if let Some((t, r)) = content(self, cv, prev, 0.0, old_dy, old_c) { chars.push((t, r, Some(old_side), prev, old_c)); }
                 cv.clips.pop();
                 cv.clips.push(new_side);
-                if let Some((t, r)) = content(self, cv, cur, 0.0, new_dy, new_c) { chars.push((t, r, None, cur, new_c)); }
+                if let Some((t, r)) = content(self, cv, cur, 0.0, new_dy, new_c) { chars.push((t, r, Some(new_side), cur, new_c)); }
                 cv.clips.pop();
                 // the ink gutter between them
                 let gy = if d > 0.0 { H + old_dy } else { old_dy - GUTTER };

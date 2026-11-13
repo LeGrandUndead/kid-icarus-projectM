@@ -76,6 +76,7 @@ REF = {0: (f'{R}/poster_solo/0060.png', None), 1: (f'{R}/poster_tog_buf/0100_pos
        2: (f'{R}/promo_P02_buf/0100_post.png', 'stand'), 3: (f'{R}/promo_V12_buf/0100_post.png', 'stand')}
 SIZE = {0: (640, 1340, 880), 1: (820, 1390, FEET + 4), 2: (860, 1420, FEET), 3: (800, 1410, FEET)}
 for mode, (h, cx, feet) in SIZE.items():
+    if not os.path.exists(REF[mode][0]): print('no reference yet for mode', mode); continue
     ref = Image.open(REF[mode][0]).getchannel('A').point(lambda a: 255 if a > 40 else 0).getbbox()
     k = h / (ref[3] - ref[1]); PLACE[mode] = (k, cx - (ref[0] + ref[2]) / 2 * k, feet - ref[3] * k)
 b190 = Image.open(f'{R}/poster_tog_buf/0190_post.png').getbbox(); k1, x1, y1 = PLACE[1]
@@ -102,16 +103,20 @@ def char_frames(mode):
         pre = f'{seq["dir"]}/{i:04d}'
         if not os.path.exists(pre + '_nrm.png'):
             print('missing', pre); continue
+        done = f'{OUT}/char_{mode}/{i:04d}.webp'
+        if os.path.exists(done) and os.path.exists(done + '.at'):       # already built (incremental)
+            frames[i] = [int(x) for x in open(done + '.at').read().split()]; continue
         ch = scaled(relight.relight(pre, **LIGHT[mode]), k)
         pos = (int(x0), int(y0))
         ch = integrate(ch, mode, panel, pos)
         pad = 40
         lay = Image.new('RGBA', (ch.width + 2 * pad, ch.height + 2 * pad))
-        lay.alpha_composite(soft_glow(ch, mix(MODES[mode]['color'], (255, 240, 220), 0.5), 0.5, 22), (pad, pad))
+        lay.alpha_composite(soft_glow(ch, mix(MODES[mode]['color'], (255, 240, 220), 0.5), 0.22, 16), (pad, pad))
         lay.alpha_composite(ch, (pad, pad))
         bb = lay.getchannel('A').getbbox()
         lay.crop(bb).save(f'{OUT}/char_{mode}/{i:04d}.webp', quality=90, method=4)
         frames[i] = [pos[0] - pad + bb[0], pos[1] - pad + bb[1]]
+        open(done + '.at', 'w').write(f'{frames[i][0]} {frames[i][1]}')
     out = {p: seq[p] for p in ('intro', 'idle', 'confirm') if p in seq}
     return dict(dir=f'char_{mode}', frames=frames, **out)
 
@@ -127,7 +132,8 @@ if True:
                  caption=cropped(CAP[m], f'caption_{m}'))
         if m == 0: e['glow'] = save_rgb(light_on_black(GLOW0), 'glow_0', 85)
         print('mode', m, 'layers'); sys.stdout.flush()
-        e['character'] = char_frames(m) if not os.environ.get('NOCHAR') else {}
+        only = os.environ.get('MODES')
+        e['character'] = char_frames(m) if not os.environ.get('NOCHAR') and (not only or str(m) in only) else {}
         print('mode', m, 'frames', len(e['character'].get('frames', {}))); sys.stdout.flush()
         man['modes'].append(e)
     man['band'] = cropped(BAND, 'band')
